@@ -156,7 +156,50 @@ class RedisBotProtectionWithSessions {
     }
     
     /**
-     * Генерирует уникальный хеш пользователя на основе браузерного отпечатка
+     * ИСПРАВЛЕННАЯ функция нормализации IPv6
+     */
+    private function normalizeIPv6($ip) {
+        // Проверяем, что это действительно IPv6
+        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            return $ip;
+        }
+        
+        // Используем inet_pton для правильной нормализации
+        $binary = inet_pton($ip);
+        if ($binary === false) {
+            return $ip;
+        }
+        
+        // Преобразуем обратно в стандартную форму
+        $normalized = inet_ntop($binary);
+        return $normalized ?: $ip;
+    }
+    
+    /**
+     * ИСПРАВЛЕННАЯ функция получения части IP для отпечатка
+     */
+    private function getIPFingerprint($ip) {
+        $ip = $this->normalizeIPv6($ip);
+        
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            // Для IPv6 берем последние 4 сегмента (64 бита)
+            $parts = explode(':', $ip);
+            if (count($parts) >= 4) {
+                return implode(':', array_slice($parts, -4));
+            }
+            return substr($ip, -16); // Последние 16 символов как fallback
+        } else {
+            // Для IPv4 берем последние 2 октета
+            $parts = explode('.', $ip);
+            if (count($parts) >= 2) {
+                return end($parts) . '.' . prev($parts); // Последние 2 октета
+            }
+            return $ip;
+        }
+    }
+    
+    /**
+     * ИСПРАВЛЕННАЯ функция генерации уникального хеша пользователя
      */
     private function generateUserHash($ip = null) {
         $ip = $ip ?: $this->getRealIP();
@@ -165,25 +208,88 @@ class RedisBotProtectionWithSessions {
         $acceptEncoding = $_SERVER['HTTP_ACCEPT_ENCODING'] ?? '';
         $accept = $_SERVER['HTTP_ACCEPT'] ?? '';
         
-        // Создаем более стабильный отпечаток браузера
+        // Получаем детальную информацию о браузере
+        $browserInfo = $this->getBrowserFingerprint($userAgent);
+        
+        // Создаем более точный отпечаток браузера
         $fingerprint = $userAgent . '|' . 
                       $acceptLanguage . '|' . 
                       $acceptEncoding . '|' . 
                       $accept . '|' .
+                      $browserInfo['name'] . '|' .
+                      $browserInfo['version'] . '|' .
+                      $browserInfo['platform'] . '|' .
                       $this->secretKey;
         
+        // ИСПРАВЛЕНИЕ: Всегда добавляем session_id для уникальности
+        $sessionId = session_id();
+        if (!$sessionId) {
+            // Если сессия еще не запущена, создаем уникальный идентификатор
+            $sessionId = 'no_session_' . uniqid() . '_' . mt_rand();
+        }
+        
         if ($this->isMobileDevice($userAgent)) {
-    // Для мобильных добавляем последний октет IP для различия браузеров
-    $ipParts = explode('.', $ip);
-    $lastOctet = end($ipParts);
-    $fingerprint .= '|' . $lastOctet; // Добавляем последний октет
-    error_log("Mobile device detected, hash with last IP octet: " . $lastOctet);
-	} else {
-    // Для десктопа используем полный IP
-    $fingerprint .= '|' . $ip;
-	}
+            // Для мобильных добавляем часть IP + session_id
+            $ipPart = $this->getIPFingerprint($ip);
+            $fingerprint .= '|mobile|' . $ipPart . '|' . $sessionId;
+            error_log("Mobile device hash: Browser={$browserInfo['name']}, IP_part=$ipPart, Session=" . substr($sessionId, 0, 8) . "...");
+        } else {
+            // Для десктопа используем полный IP + session_id
+            $fingerprint .= '|desktop|' . $ip . '|' . $sessionId;
+            error_log("Desktop device hash: Browser={$browserInfo['name']}, Full_IP=$ip, Session=" . substr($sessionId, 0, 8) . "...");
+        }
         
         return hash('sha256', $fingerprint);
+    }
+    
+    /**
+     * НОВАЯ функция для получения детального отпечатка браузера
+     */
+    private function getBrowserFingerprint($userAgent) {
+        $browser = [
+            'name' => 'unknown',
+            'version' => 'unknown',
+            'platform' => 'unknown'
+        ];
+        
+        // Определяем браузер
+        if (preg_match('/Chrome\/(\d+\.\d+)/', $userAgent, $matches)) {
+            $browser['name'] = 'Chrome';
+            $browser['version'] = $matches[1];
+        } elseif (preg_match('/Firefox\/(\d+\.\d+)/', $userAgent, $matches)) {
+            $browser['name'] = 'Firefox';
+            $browser['version'] = $matches[1];
+        } elseif (preg_match('/Safari\/(\d+\.\d+)/', $userAgent, $matches)) {
+            if (strpos($userAgent, 'Chrome') === false) {
+                $browser['name'] = 'Safari';
+                $browser['version'] = $matches[1];
+            }
+        } elseif (preg_match('/Edge\/(\d+\.\d+)/', $userAgent, $matches)) {
+            $browser['name'] = 'Edge';
+            $browser['version'] = $matches[1];
+        } elseif (preg_match('/Edg\/(\d+\.\d+)/', $userAgent, $matches)) {
+            $browser['name'] = 'EdgeChromium';
+            $browser['version'] = $matches[1];
+        }
+        
+        // Определяем платформу
+        if (strpos($userAgent, 'Windows NT') !== false) {
+            if (preg_match('/Windows NT (\d+\.\d+)/', $userAgent, $matches)) {
+                $browser['platform'] = 'Windows_' . $matches[1];
+            } else {
+                $browser['platform'] = 'Windows';
+            }
+        } elseif (strpos($userAgent, 'Macintosh') !== false) {
+            $browser['platform'] = 'macOS';
+        } elseif (strpos($userAgent, 'Linux') !== false) {
+            $browser['platform'] = 'Linux';
+        } elseif (strpos($userAgent, 'Android') !== false) {
+            $browser['platform'] = 'Android';
+        } elseif (strpos($userAgent, 'iPhone') !== false || strpos($userAgent, 'iPad') !== false) {
+            $browser['platform'] = 'iOS';
+        }
+        
+        return $browser;
     }
     
     /**
@@ -210,7 +316,8 @@ class RedisBotProtectionWithSessions {
             'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
             'session_id' => session_id(),
             'uri' => $_SERVER['REQUEST_URI'] ?? '',
-            'headers' => $this->collectHeaders()
+            'headers' => $this->collectHeaders(),
+            'browser_info' => $this->getBrowserFingerprint($_SERVER['HTTP_USER_AGENT'] ?? '')
         ];
         
         $blockKey = $this->userHashPrefix . 'blocked:' . $userHash;
@@ -265,7 +372,8 @@ class RedisBotProtectionWithSessions {
                 'ips' => [$this->getRealIP()],
                 'user_agents' => [$_SERVER['HTTP_USER_AGENT'] ?? ''],
                 'session_id' => session_id(),
-                'request_times' => [time()]
+                'request_times' => [time()],
+                'browser_info' => $this->getBrowserFingerprint($_SERVER['HTTP_USER_AGENT'] ?? '')
             ];
             
             $this->redis->setex($trackingKey, $this->ttlSettings['user_hash_tracking'], $data);
@@ -275,28 +383,29 @@ class RedisBotProtectionWithSessions {
     }
     
     /**
-     * Анализирует поведение пользователя по хешу
+     * ИСПРАВЛЕННАЯ функция анализа поведения пользователя по хешу
      */
     private function analyzeUserHashBehavior() {
         $trackingData = $this->trackUserHashActivity();
         
-        if (!$trackingData || $trackingData['requests'] < 3) { // Увеличили с 3 до 5
+        if (!$trackingData || $trackingData['requests'] < 5) { // Увеличили минимум запросов
             return false; // Недостаточно данных для анализа
         }
         
         $score = 0;
         $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
         $isMobile = $this->isMobileDevice($userAgent);
+        $browserInfo = $this->getBrowserFingerprint($userAgent);
         
-        // ВАЖНО: Для мобильных устройств используем НАМНОГО более высокие пороги
-        $blockThreshold = $isMobile ? 50 : 35; // Было 25/12
+        // НАМНОГО более высокие пороги для предотвращения блокировки обычных пользователей
+        $blockThreshold = $isMobile ? 80 : 60; // Было 50/35 - значительно увеличили
         
-        // 1. Подозрительный User-Agent (мягче для мобильных)
+        // 1. Подозрительный User-Agent (еще мягче)
         if ($this->isSuspiciousUserAgent($userAgent)) {
-            $score += $isMobile ? 3 : 10; // Было 6/10 - сильно снизили для мобильных
+            $score += $isMobile ? 5 : 15; // Было 3/10
         }
         
-        // 2. Частота запросов (более мягкие пороги для мобильных)
+        // 2. Частота запросов (очень мягкие пороги)
         $requests = $trackingData['requests'];
         $timeSpent = time() - $trackingData['first_seen'];
         
@@ -304,47 +413,40 @@ class RedisBotProtectionWithSessions {
             $requestsPerMinute = ($requests * 60) / $timeSpent;
             
             if ($isMobile) {
-                // Очень мягкие пороги для мобильных из-за общих IP
-                if ($requestsPerMinute > 100) $score += 8; // Было 40/6
-                elseif ($requestsPerMinute > 60) $score += 5; // Было 25/4
-                elseif ($requestsPerMinute > 40) $score += 3; // Было 15/2
+                // Очень высокие пороги для мобильных
+                if ($requestsPerMinute > 200) $score += 15; // Было 100/8
+                elseif ($requestsPerMinute > 120) $score += 10; // Было 60/5
+                elseif ($requestsPerMinute > 80) $score += 5; // Было 40/3
             } else {
-                if ($requestsPerMinute > 25) $score += 6;
-                elseif ($requestsPerMinute > 12) $score += 4;
-                elseif ($requestsPerMinute > 8) $score += 2;
+                // Высокие пороги для десктопа
+                if ($requestsPerMinute > 100) $score += 15; // Было 25/6
+                elseif ($requestsPerMinute > 60) $score += 10; // Было 12/4
+                elseif ($requestsPerMinute > 40) $score += 5; // Было 8/2
             }
         }
         
-        // 3. Множественные IP адреса - НЕ штрафуем мобильные устройства!
-        $uniqueIPs = array_unique($trackingData['ips'] ?? []);
-        if (!$isMobile) { // Только для десктопа
-            if (count($uniqueIPs) > 3) {
-                $score += 4;
-            } elseif (count($uniqueIPs) > 1) {
-                $score += 2;
-            }
-        }
-        // Для мобильных смена IP - это норма, не штрафуем
+        // 3. НЕ штрафуем за смену IP вообще - это нормально для пользователей
+        // Убрали проверку множественных IP полностью
         
-        // 4. Однообразие в посещении страниц (мягче для мобильных)
+        // 4. Однообразие в посещении страниц (очень мягко)
         $uniquePages = array_unique($trackingData['pages'] ?? []);
         $totalPages = count($trackingData['pages'] ?? []);
         
-        $pageLimit = $isMobile ? 20 : 8; // Увеличили лимит для мобильных
-        if ($totalPages > $pageLimit && count($uniquePages) <= 2) {
-            $score += $isMobile ? 2 : 4;
+        $pageLimit = $isMobile ? 50 : 30; // Значительно увеличили лимиты
+        if ($totalPages > $pageLimit && count($uniquePages) <= 1) { // Только если ОДНА страница
+            $score += $isMobile ? 5 : 10; // Снизили штрафы
         }
         
-        // 5. Регулярность запросов (намного мягче для мобильных)
-        if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 7) { // Увеличили с 5
+        // 5. Регулярность запросов (намного мягче)
+        if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 10) { // Увеличили с 7
             $intervals = [];
-            $times = array_slice($trackingData['request_times'], -7); // Увеличили с 5
+            $times = array_slice($trackingData['request_times'], -10); // Увеличили выборку
             
             for ($i = 1; $i < count($times); $i++) {
                 $intervals[] = $times[$i] - $times[$i-1];
             }
             
-            if (count($intervals) >= 5) { // Увеличили с 3
+            if (count($intervals) >= 8) { // Увеличили минимум интервалов
                 $avgInterval = array_sum($intervals) / count($intervals);
                 $variance = 0;
                 foreach ($intervals as $interval) {
@@ -352,27 +454,28 @@ class RedisBotProtectionWithSessions {
                 }
                 $variance /= count($intervals);
                 
-                // Намного более мягкие пороги для мобильных
-                $varianceThreshold = $isMobile ? 0.5 : 3; // Было 1/2
-                $intervalThreshold = $isMobile ? 3 : 10; // Было 5/10
+                // Намного более строгие требования для блокировки
+                $varianceThreshold = $isMobile ? 0.1 : 0.5; // Намного меньше
+                $intervalThreshold = $isMobile ? 1 : 2; // Намного меньше
                 
                 if ($variance < $varianceThreshold && $avgInterval < $intervalThreshold) {
-                    $score += $isMobile ? 2 : 5; // Было 3/5
+                    $score += $isMobile ? 10 : 20; // Увеличили штраф, но порог стал намного строже
                 }
             }
         }
         
-        // 6. Проверка на повторные нарушения (мягче для мобильных)
+        // 6. Проверка на повторные нарушения (мягче)
         $userHash = $this->generateUserHash();
         $statsKey = $this->userHashPrefix . 'stats:' . $userHash;
         $blockCount = $this->redis->hget($statsKey, 'block_count') ?: 0;
         
-        if ($blockCount > 0) {
-            $score += $isMobile ? 1 : 3; // Снизили штраф для мобильных
+        if ($blockCount > 2) { // Только если более 2 блокировок
+            $score += $isMobile ? 5 : 10; // Снизили штраф
         }
         
         error_log("User hash analysis: Hash=" . substr($userHash, 0, 12) . "..., Score=$score, " .
-                  "Requests=$requests, Mobile=" . ($isMobile ? 'Yes' : 'No') . ", Threshold=$blockThreshold, IPs=" . count($uniqueIPs));
+                  "Requests=$requests, Mobile=" . ($isMobile ? 'Yes' : 'No') . ", Threshold=$blockThreshold, " .
+                  "Browser={$browserInfo['name']}, Session=" . substr(session_id(), 0, 8) . "...");
         
         return $score >= $blockThreshold;
     }
@@ -410,59 +513,88 @@ class RedisBotProtectionWithSessions {
             $this->sendBlockResponse();
         }
         
-        // Остальные проверки (сессия, cookie, IP)
-        if ($this->isSessionBlocked() || $this->isCookieBlocked() || $this->isBlocked($ip)) {
+        // Остальные проверки (сессия, cookie, но НЕ IP для обычных браузеров)
+        if ($this->isSessionBlocked() || $this->isCookieBlocked()) {
             $this->sendBlockResponse();
         }
         
+        // Проверяем блокировку IP только для подозрительных User-Agent
+        if ($this->isBlocked($ip) && $this->isSuspiciousUserAgent($userAgent)) {
+            $this->sendBlockResponse();
+        }
+        
+        // КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Если IP заблокирован ботом, но браузер обычный - пропускаем ВСЕ проверки
+        if ($this->isBlocked($ip) && !$this->isSuspiciousUserAgent($userAgent)) {
+            error_log("IP $ip blocked by bot, but allowing normal browser without cookies: " . substr($userAgent, 0, 50));
+            // Устанавливаем cookie для нового обычного браузера и завершаем
+            if (!isset($_COOKIE[$this->cookieName])) {
+                $this->setVisitorCookie();
+                $this->initTracking($ip);
+                $this->initSession();
+            }
+            return; // Полностью пропускаем все дальнейшие проверки
+        }
+
         // Проверяем валидный cookie
         if ($this->hasValidCookie()) {
-            // Даже с валидным cookie отслеживаем активность по хешу И проверяем на быстрые запросы
+            // Даже с валидным cookie отслеживаем активность по хешу
             $this->trackUserHashActivity();
             $this->updateSessionActivity();
             
-            // ВАЖНО: Проверяем быстрые запросы ТОЛЬКО для явно подозрительного поведения
+            // ИСПРАВЛЕНИЕ: Только для очень подозрительных случаев
             if ($this->shouldAnalyzeIP($ip)) {
                 if ($this->analyzeRequest($ip)) {
-                    // Для пользователей с валидными cookies - дополнительная проверка
-                    $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+                    // Только если User-Agent очень подозрительный - блокируем
                     if ($this->isSuspiciousUserAgent($userAgent)) {
-                        $this->blockUserHash('Suspicious user agent with valid cookie');
+                        $this->blockIP($ip, 'Suspicious user agent with valid cookie');
                         $this->blockSession();
                         $this->blockCookieHash();
                         $this->sendBlockResponse();
                     }
-                    // Если User-Agent не подозрительный - не блокируем пользователей с валидными cookies
                 }
             }
             return;
         }
         
-        // ПРОВЕРКА: анализируем только если есть веские основания
+        // Проверяем только если есть ОЧЕНЬ веские основания
         if ($this->shouldAnalyzeIP($ip)) {
             if ($this->analyzeRequest($ip)) {
-                // Блокируем сессию если есть cookie, иначе IP + хеш пользователя
+                // Блокируем по методам с меньшим воздействием
                 if (isset($_COOKIE[$this->cookieName])) {
                     $this->blockSession();
                     $this->blockCookieHash();
                 } else {
-                    //$this->blockIP($ip);  // Блокировка IP
+                    // Блокируем только IP, не хеш пользователя на этом этапе
+                    $this->blockIP($ip);
                 }
-                $this->blockUserHash('Bot behavior detected via IP analysis');
                 $this->sendBlockResponse();
             }
         }
         
-        // ДОПОЛНИТЕЛЬНЫЙ АНАЛИЗ: проверяем поведение по хешу пользователя
+        // ДОПОЛНИТЕЛЬНЫЙ АНАЛИЗ: очень консервативная проверка поведения по хешу
         if ($this->analyzeUserHashBehavior()) {
+            // ИСПРАВЛЕНИЕ: Если IP уже заблокирован ботом - не блокируем обычные браузеры по хешу
+            if ($this->isBlocked($ip) && !$this->isSuspiciousUserAgent($userAgent)) {
+                error_log("IP $ip already blocked by bot, skipping user hash block for normal browser: " . substr($userAgent, 0, 50));
+                // Устанавливаем cookie для обычного браузера и продолжаем
+                if (!isset($_COOKIE[$this->cookieName])) {
+                    $this->setVisitorCookie();
+                    $this->initTracking($ip);
+                    $this->initSession();
+                }
+                return;
+            }
+            
             $this->blockUserHash('Suspicious user behavior detected');
             
-            // Дополнительно блокируем по старым методам
-            if (isset($_COOKIE[$this->cookieName])) {
-                $this->blockSession();
-                $this->blockCookieHash();
-            } else {
-                $this->blockIP($ip);
+            // Дополнительно блокируем по старым методам только если это подозрительный User-Agent
+            if ($this->isSuspiciousUserAgent($userAgent)) {
+                if (isset($_COOKIE[$this->cookieName])) {
+                    $this->blockSession();
+                    $this->blockCookieHash();
+                } else {
+                    $this->blockIP($ip, 'Suspicious user behavior detected');
+                }
             }
             
             $this->sendBlockResponse();
@@ -522,26 +654,26 @@ class RedisBotProtectionWithSessions {
                 return true;
             }
             
-            // 2. Много запросов (увеличили порог с 2 до 5)
-            if ($requests > 5) {
+            // 2. Много запросов (увеличили порог с 5 до 10)
+            if ($requests > 10) {
                 return true;
             }
             
             // 3. Быстрые запросы - но только если их много
-            if ($timeSpent > 0 && $requests >= 3) { // Минимум 3 запроса для анализа скорости
+            if ($timeSpent > 0 && $requests >= 5) { // Минимум 5 запросов для анализа скорости
                 $requestsPerMinute = ($requests * 60) / $timeSpent;
-                // Увеличили порог с 10 до 20 запросов в минуту
-                if ($requestsPerMinute > 20) {
+                // Увеличили порог с 20 до 40 запросов в минуту
+                if ($requestsPerMinute > 40) {
                     return true;
                 }
             }
             
             // 4. Много запросов за короткое время - но увеличили количество
-            if (isset($data['request_times']) && count($data['request_times']) >= 5) { // Было 3
-                $recentTimes = array_slice($data['request_times'], -5); // Было -3
+            if (isset($data['request_times']) && count($data['request_times']) >= 7) { // Было 5
+                $recentTimes = array_slice($data['request_times'], -7); // Было -5
                 $timeSpan = end($recentTimes) - reset($recentTimes);
-                // Увеличили: 5 запросов за 15 секунд (было 3 за 10)
-                if ($timeSpan <= 15) {
+                // Увеличили: 7 запросов за 20 секунд (было 5 за 15)
+                if ($timeSpan <= 20) {
                     return true;
                 }
             }
@@ -755,16 +887,19 @@ class RedisBotProtectionWithSessions {
         $this->redis->ltrim($logKey, 0, 999);
     }
     
+    /**
+     * ИСПРАВЛЕННАЯ функция получения реального IP с поддержкой IPv4 и IPv6
+     */
     private function getRealIP() {
         $ipHeaders = [
-            'HTTP_CF_CONNECTING_IP',
-            'HTTP_X_REAL_IP',
-            'HTTP_X_FORWARDED_FOR',
-            'HTTP_X_FORWARDED',
-            'HTTP_X_CLUSTER_CLIENT_IP',
-            'HTTP_FORWARDED_FOR',
-            'HTTP_FORWARDED',
-            'REMOTE_ADDR'
+            'HTTP_CF_CONNECTING_IP',     // Cloudflare
+            'HTTP_X_REAL_IP',            // Nginx
+            'HTTP_X_FORWARDED_FOR',      // Load balancers
+            'HTTP_X_FORWARDED',          // Proxy
+            'HTTP_X_CLUSTER_CLIENT_IP',  // Cluster
+            'HTTP_FORWARDED_FOR',        // Proxy
+            'HTTP_FORWARDED',            // RFC 7239
+            'REMOTE_ADDR'                // Direct connection
         ];
         
         foreach ($ipHeaders as $header) {
@@ -772,13 +907,102 @@ class RedisBotProtectionWithSessions {
                 $ips = explode(',', $_SERVER[$header]);
                 $ip = trim($ips[0]);
                 
-                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                    return $ip;
+                // Нормализуем IPv6 перед проверкой
+                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+                    $ip = $this->normalizeIPv6($ip);
+                }
+                
+                // Проверяем валидность IP (IPv4 или IPv6)
+                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                    // Для IPv4 проверяем, что это не приватный/зарезервированный адрес
+                    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                        return $ip;
+                    }
+                } elseif (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+                    // Для IPv6 дополнительно проверяем, что это не локальный адрес
+                    if (!$this->isPrivateIPv6($ip)) {
+                        return $ip;
+                    }
                 }
             }
         }
         
-        return $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+        // Возвращаем REMOTE_ADDR как последний вариант, даже если это приватный IP
+        $remoteAddr = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+        if ($remoteAddr !== 'unknown' && filter_var($remoteAddr, FILTER_VALIDATE_IP)) {
+            if (filter_var($remoteAddr, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+                return $this->normalizeIPv6($remoteAddr);
+            }
+            return $remoteAddr;
+        }
+        
+        return 'unknown';
+    }
+    
+    /**
+     * НОВАЯ функция проверки приватных IPv6 адресов
+     */
+    private function isPrivateIPv6($ip) {
+        $privateRanges = [
+            '::1',              // Loopback
+            'fe80::/10',        // Link-local
+            'fc00::/7',         // Unique local
+            'ff00::/8',         // Multicast
+        ];
+        
+        foreach ($privateRanges as $range) {
+            if ($this->ipInRange($ip, $range)) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * НОВАЯ функция проверки принадлежности IP к диапазону
+     */
+    private function ipInRange($ip, $range) {
+        if (strpos($range, '/') === false) {
+            return $ip === $range;
+        }
+        
+        list($subnet, $prefix) = explode('/', $range);
+        
+        $ipBin = inet_pton($ip);
+        $subnetBin = inet_pton($subnet);
+        
+        if ($ipBin === false || $subnetBin === false) {
+            return false;
+        }
+        
+        $ipFamily = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? AF_INET6 : AF_INET;
+        $subnetFamily = filter_var($subnet, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? AF_INET6 : AF_INET;
+        
+        if ($ipFamily !== $subnetFamily) {
+            return false;
+        }
+        
+        $maxBits = $ipFamily === AF_INET6 ? 128 : 32;
+        $prefix = max(0, min($maxBits, (int)$prefix));
+        
+        $bytesToCheck = intval($prefix / 8);
+        $bitsInLastByte = $prefix % 8;
+        
+        for ($i = 0; $i < $bytesToCheck; $i++) {
+            if ($ipBin[$i] !== $subnetBin[$i]) {
+                return false;
+            }
+        }
+        
+        if ($bitsInLastByte > 0) {
+            $mask = 0xFF << (8 - $bitsInLastByte);
+            if ((ord($ipBin[$bytesToCheck]) & $mask) !== (ord($subnetBin[$bytesToCheck]) & $mask)) {
+                return false;
+            }
+        }
+        
+        return true;
     }
     
     private function isStaticFile() {
@@ -950,27 +1174,30 @@ class RedisBotProtectionWithSessions {
         return false;
     }
     
+    /**
+     * ИСПРАВЛЕННАЯ функция анализа запросов с увеличенными порогами
+     */
     private function analyzeRequest($ip) {
         $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
         $data = $this->redis->get($trackingKey);
         
         if (!$data) {
-            return false; // ИЗМЕНЕНО: Если нет данных - не блокируем сразу
+            return false; // Если нет данных - не блокируем
         }
         
         $score = 0;
         $currentUA = $_SERVER['HTTP_USER_AGENT'] ?? '';
         $isMobile = $this->isMobileDevice($currentUA);
         
-        // Увеличиваем пороги для менее агрессивной блокировки
-        $blockThreshold = $isMobile ? 15 : 12; // Было 12/8
+        // ЗНАЧИТЕЛЬНО увеличиваем пороги
+        $blockThreshold = $isMobile ? 25 : 20; // Было 15/12
         
         // 1. Проверка подозрительного User-Agent (снижаем штраф)
         if ($this->isSuspiciousUserAgent($currentUA)) {
-            $score += $isMobile ? 8 : 15; // Было 10/20
+            $score += $isMobile ? 15 : 25; // Было 8/15
         }
         
-        // 2. Анализ частоты запросов (увеличиваем пороги)
+        // 2. Анализ частоты запросов (значительно увеличиваем пороги)
         $requests = $data['requests'] ?? 0;
         $timeSpent = time() - ($data['first_seen'] ?? time());
         
@@ -978,60 +1205,60 @@ class RedisBotProtectionWithSessions {
             $requestsPerMinute = ($requests * 60) / $timeSpent;
             
             if ($isMobile) {
-                if ($requestsPerMinute > 50) $score += 10; // Было 30/10
-                elseif ($requestsPerMinute > 35) $score += 8; // Было 20/8
-                elseif ($requestsPerMinute > 25) $score += 5; // Было 12/5
+                if ($requestsPerMinute > 80) $score += 15; // Было 50/10
+                elseif ($requestsPerMinute > 60) $score += 12; // Было 35/8
+                elseif ($requestsPerMinute > 40) $score += 8; // Было 25/5
             } else {
-                if ($requestsPerMinute > 40) $score += 10; // Было 20/10
-                elseif ($requestsPerMinute > 25) $score += 8; // Было 12/8
-                elseif ($requestsPerMinute > 15) $score += 5; // Было 8/5
+                if ($requestsPerMinute > 60) $score += 15; // Было 40/10
+                elseif ($requestsPerMinute > 40) $score += 12; // Было 25/8
+                elseif ($requestsPerMinute > 25) $score += 8; // Было 15/5
             }
         }
         
         // 3. Много запросов без cookies (увеличиваем лимиты)
-        $cookieLimit = $isMobile ? 8 : 6; // Было 5/3
+        $cookieLimit = $isMobile ? 15 : 12; // Было 8/6
         if ($requests > $cookieLimit && !isset($_COOKIE[$this->cookieName])) {
-            $score += $isMobile ? 4 : 6; // Было 6/8
+            $score += $isMobile ? 6 : 10; // Было 4/6
         }
         
         // 4. Анализ HTTP заголовков (снижаем штрафы)
         $currentHeaders = $this->collectHeaders();
         
         if (!isset($currentHeaders['HTTP_ACCEPT']) || $currentHeaders['HTTP_ACCEPT'] === '*/*') {
-            $score += $isMobile ? 1 : 3; // Было 2/4
+            $score += $isMobile ? 2 : 4; // Было 1/3
         }
         if (!isset($currentHeaders['HTTP_ACCEPT_LANGUAGE'])) {
-            $score += $isMobile ? 1 : 2; // Было 1/3
+            $score += $isMobile ? 2 : 3; // Было 1/2
         }
         if (!isset($currentHeaders['HTTP_ACCEPT_ENCODING'])) {
-            $score += $isMobile ? 1 : 2; // Было 1/3
+            $score += $isMobile ? 2 : 3; // Было 1/2
         }
         
         // 5. Разнообразие страниц (увеличиваем лимиты)
         $uniquePages = array_unique($data['pages'] ?? []);
         $totalPages = count($data['pages'] ?? []);
         
-        $pageLimit = $isMobile ? 12 : 8; // Было 8/5
+        $pageLimit = $isMobile ? 20 : 15; // Было 12/8
         if ($totalPages > $pageLimit && count($uniquePages) <= 2) {
-            $score += $isMobile ? 2 : 4; // Было 3/5
+            $score += $isMobile ? 3 : 6; // Было 2/4
         }
         
         // 6. Множественные User-Agent (снижаем штраф)
         $uniqueUA = array_unique($data['user_agents'] ?? []);
-        if (count($uniqueUA) > 2) {
-            $score += 5; // Было 8
+        if (count($uniqueUA) > 3) { // Было 2
+            $score += 8; // Было 5
         }
         
         // 7. Анализ регулярности запросов (увеличиваем требования)
-        if (isset($data['request_times']) && count($data['request_times']) >= 5) { // Было 3
+        if (isset($data['request_times']) && count($data['request_times']) >= 8) { // Было 5
             $intervals = [];
-            $lastFive = array_slice($data['request_times'], -5); // Было -3
+            $lastEight = array_slice($data['request_times'], -8); // Было -5
             
-            for ($i = 1; $i < count($lastFive); $i++) {
-                $intervals[] = $lastFive[$i] - $lastFive[$i-1];
+            for ($i = 1; $i < count($lastEight); $i++) {
+                $intervals[] = $lastEight[$i] - $lastEight[$i-1];
             }
             
-            if (count($intervals) >= 4) { // Было 2
+            if (count($intervals) >= 6) { // Было 4
                 $avgInterval = array_sum($intervals) / count($intervals);
                 $variance = 0;
                 foreach ($intervals as $interval) {
@@ -1039,27 +1266,27 @@ class RedisBotProtectionWithSessions {
                 }
                 $variance /= count($intervals);
                 
-                $varianceThreshold = $isMobile ? 1 : 2; // Было 2/3
-                $intervalThreshold = $isMobile ? 5 : 8; // Было 8/12
+                $varianceThreshold = $isMobile ? 2 : 3; // Было 1/2
+                $intervalThreshold = $isMobile ? 8 : 12; // Было 5/8
                 
                 if ($variance < $varianceThreshold && $avgInterval < $intervalThreshold) {
-                    $score += $isMobile ? 3 : 6; // Было 5/8
+                    $score += $isMobile ? 5 : 10; // Было 3/6
                 }
             }
         }
         
         // 8. Проверка очень быстрых запросов (делаем менее агрессивной)
-        if (isset($data['request_times']) && count($data['request_times']) >= 3) { // Было 2
-            $lastThree = array_slice($data['request_times'], -3); // Было -2
-            $timeDiff = end($lastThree) - reset($lastThree);
+        if (isset($data['request_times']) && count($data['request_times']) >= 5) { // Было 3
+            $lastFive = array_slice($data['request_times'], -5); // Было -3
+            $timeDiff = end($lastFive) - reset($lastFive);
             
-            // Если 3 запроса за 3 секунды или меньше (было 2 запроса за 2 секунды)
-            if ($timeDiff <= 3) {
-                $score += $isMobile ? 3 : 6; // Было 5/10
+            // Если 5 запросов за 5 секунд или меньше (было 3 за 3)
+            if ($timeDiff <= 5) {
+                $score += $isMobile ? 5 : 10; // Было 3/6
             }
-            // Если 3 запроса за 1 секунду
-            if ($timeDiff <= 1) {
-                $score += 8; // Было 15
+            // Если 5 запросов за 2 секунды (было 3 за 1)
+            if ($timeDiff <= 2) {
+                $score += 12; // Было 8
             }
         }
         
@@ -1075,7 +1302,26 @@ class RedisBotProtectionWithSessions {
         return $this->redis->exists($blockKey);
     }
     
-    private function blockIP($ip) {
+    /**
+     * НОВАЯ функция: проверяет блокировку IP с учетом User-Agent
+     */
+    private function isBlockedForUserAgent($ip, $userAgent) {
+        if (!$this->isBlocked($ip)) {
+            return false;
+        }
+        
+        // Если IP заблокирован, но User-Agent не подозрительный - разрешаем
+        if (!$this->isSuspiciousUserAgent($userAgent)) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    /**
+     * ИСПРАВЛЕННАЯ функция блокировки IP с дополнительной информацией
+     */
+    private function blockIP($ip, $reason = 'Bot behavior detected') {
         $blockKey = $this->blockPrefix . 'ip:' . hash('md5', $ip);
         
         // Проверяем, был ли IP заблокирован ранее
@@ -1084,10 +1330,13 @@ class RedisBotProtectionWithSessions {
         $blockData = [
             'ip' => $ip,
             'blocked_at' => time(),
+            'blocked_reason' => $reason,
             'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
             'uri' => $_SERVER['REQUEST_URI'] ?? '',
             'session_id' => session_id(),
-            'repeat_offender' => $isRepeatOffender
+            'repeat_offender' => $isRepeatOffender,
+            'is_suspicious_ua' => $this->isSuspiciousUserAgent($_SERVER['HTTP_USER_AGENT'] ?? ''),
+            'browser_info' => $this->getBrowserFingerprint($_SERVER['HTTP_USER_AGENT'] ?? '')
         ];
         
         // Сокращенная блокировка: 30 минут базовая, 2 часа для повторных нарушителей
@@ -1096,7 +1345,7 @@ class RedisBotProtectionWithSessions {
         
         error_log("Bot blocked: IP=$ip, UA=" . ($_SERVER['HTTP_USER_AGENT'] ?? 'unknown') . 
                   ", Session=" . session_id() . ", Repeat: " . ($isRepeatOffender ? 'Yes' : 'No') .
-                  ", Duration: " . ($blockDuration/60) . " minutes");
+                  ", Duration: " . ($blockDuration/60) . " minutes, Reason: $reason");
     }
     
     private function sendBlockResponse() {
