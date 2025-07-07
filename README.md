@@ -420,6 +420,9 @@ $settings['container_yamls'][] = '/path/to/bot_protection_services.yml';
 
 ### **Система готова к работе сразу после установки!**
 
+Крон-задача для очистки Redis
+0 3 * * * cd /home/user/site/bot_protection && php cleanup.php --force >> /var/log/bot-cleanup.log 2>&1
+
 **Версия:** v2.0  
 **Статус:** Стабильная  
 **Совместимость:** PHP 7.4+ / Redis 4.0+  
