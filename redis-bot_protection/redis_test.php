@@ -191,17 +191,6 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
            border-radius: 10px;
            margin: -30px -30px 30px -30px;
        }
-       .version-badge {
-           position: absolute;
-           top: 10px;
-           right: 10px;
-           background: rgba(255, 255, 255, 0.9);
-           color: #007bff;
-           padding: 5px 10px;
-           border-radius: 15px;
-           font-size: 0.8em;
-           font-weight: bold;
-       }
        .status-card {
            background: linear-gradient(135deg, #e8f5e8, #d4edda);
            border: 1px solid #28a745;
@@ -209,7 +198,6 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
            padding: 20px;
            margin: 20px 0;
            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.1);
-           position: relative;
        }
        .status-card.warning {
            background: linear-gradient(135deg, #fff3cd, #ffeaa7);
@@ -247,9 +235,6 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
        .info-box h3 {
            margin-top: 0;
            color: #007bff;
-           display: flex;
-           align-items: center;
-           gap: 10px;
        }
        .metrics {
            display: grid;
@@ -263,10 +248,6 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
            border-radius: 12px;
            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-           transition: transform 0.3s ease;
-       }
-       .metric:hover {
-           transform: translateY(-5px);
        }
        .metric .number {
            font-size: 2.5em;
@@ -478,11 +459,9 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
 </head>
 <body>
    <div class="container">
-       <div class="version-badge">Bot Protection v2.0</div>
-       
        <div class="header">
            <h1>🛡️ Redis MurKir Security System v2.0</h1>
-           <p>Расширенная система защиты с блокировкой по хешу пользователя</p>
+           <p>Система защиты с блокировкой по хешу пользователя</p>
            <div class="redis-status <?php echo $protectionActive ? 'connected' : 'disconnected'; ?>">
                Redis: <?php echo $protectionActive ? 'Connected' : 'Disconnected'; ?>
            </div>
@@ -516,14 +495,6 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
                            <div class="number"><?php echo $redisStats['blocked_user_hashes'] ?? 0; ?></div>
                            <div class="label">Заблокированных хешей</div>
                        </div>
-                       <div class="metric">
-                           <div class="number"><?php echo $redisStats['user_hash_tracking'] ?? 0; ?></div>
-                           <div class="label">Активный трекинг хешей</div>
-                       </div>
-                       <div class="metric">
-                           <div class="number"><?php echo $redisStats['tracking_records']; ?></div>
-                           <div class="label">Записей трекинга IP</div>
-                       </div>
                    </div>
                <?php endif; ?>
            <?php else: ?>
@@ -544,14 +515,6 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
                        <div class="progress-fill" style="width: <?php echo $trustScore; ?>%; background: linear-gradient(90deg, #28a745, #20c997);"></div>
                    </div>
                </div>
-               
-               <?php if ($trustScore > 70): ?>
-                   <div style="color: #28a745; font-weight: bold; margin-top: 10px;">🌟 VIP пользователь - высокий уровень доверия!</div>
-               <?php elseif ($visitInfo && (time() - $visitInfo['first_visit']) < 300): ?>
-                   <div style="color: #007bff; margin-top: 10px;">👋 Добро пожаловать, новый посетитель!</div>
-               <?php else: ?>
-                   <div style="color: #6c757d; margin-top: 10px;">👤 Обычный пользователь</div>
-               <?php endif; ?>
            <?php else: ?>
                <p><strong>⚠️ Пользователь не верифицирован</strong></p>
                <p>Возможно, система защиты не активна или произошла ошибка.</p>
@@ -561,7 +524,7 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
        <!-- Информация о хеше пользователя -->
        <?php if ($userHashInfo): ?>
        <div class="status-card user-hash <?php echo $userHashInfo['blocked'] ? 'error' : ''; ?>">
-           <h2>🔐 Хеш пользователя (новая функция v2.0)</h2>
+           <h2>🔐 Хеш пользователя</h2>
            <div class="info-grid">
                <div>
                    <p><strong>Статус хеша:</strong> 
@@ -601,13 +564,6 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
                </div>
                <?php endif; ?>
            </div>
-           
-           <?php if ($userHashInfo['block_data']): ?>
-           <div>
-               <h4>⚠️ Данные блокировки хеша:</h4>
-               <pre><?php echo json_encode($userHashInfo['block_data'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE); ?></pre>
-           </div>
-           <?php endif; ?>
        </div>
        <?php endif; ?>
 
@@ -629,21 +585,7 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
                        <p><strong>Время до разблокировки:</strong> <?php echo gmdate('H:i:s', $ipInfo['ttl']); ?></p>
                    <?php endif; ?>
                </div>
-               
-               <?php if ($ipInfo['block_data']): ?>
-               <div>
-                   <h4>Данные блокировки IP:</h4>
-                   <pre><?php echo json_encode($ipInfo['block_data'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE); ?></pre>
-               </div>
-               <?php endif; ?>
            </div>
-           
-           <?php if ($ipInfo['tracking_data']): ?>
-           <div>
-               <h4>Данные трекинга IP:</h4>
-               <pre><?php echo json_encode($ipInfo['tracking_data'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE); ?></pre>
-           </div>
-           <?php endif; ?>
        </div>
        <?php endif; ?>
 
@@ -676,7 +618,6 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
            <button class="tab" onclick="showTab('redis-keys')">🔑 Redis ключи</button>
            <button class="tab" onclick="showTab('ttl-settings')">⏱️ TTL настройки</button>
            <button class="tab" onclick="showTab('testing')">🧪 Тестирование</button>
-           <button class="tab" onclick="showTab('debug')">🔍 Debug</button>
        </div>
 
        <!-- Информация о запросе -->
@@ -691,7 +632,6 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
                    <tr><td><strong>Время:</strong></td><td><?php echo date('Y-m-d H:i:s'); ?></td></tr>
                    <tr><td><strong>Session ID:</strong></td><td><span class="redis-key"><?php echo substr(session_id(), 0, 16); ?>...</span></td></tr>
                    <tr><td><strong>URI:</strong></td><td><?php echo htmlspecialchars($_SERVER['REQUEST_URI'] ?? '/'); ?></td></tr>
-                   <tr><td><strong>Referer:</strong></td><td><?php echo htmlspecialchars($_SERVER['HTTP_REFERER'] ?? 'Прямой переход'); ?></td></tr>
                </table>
            </div>
        </div>
@@ -713,22 +653,12 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
            <div class="info-box">
                <h3>🔑 Redis ключи для текущего пользователя</h3>
                
-               <?php if (isset($_COOKIE['visitor_verified'])): ?>
-                   <h4>🍪 Visitor Cookie:</h4>
-                   <div class="redis-key" style="word-break: break-all; margin-bottom: 15px;">
-                       <?php echo htmlspecialchars(substr($_COOKIE['visitor_verified'], 0, 100)); ?>...
-                   </div>
-               <?php else: ?>
-                   <p><strong>❌ Cookie не найдена</strong></p>
-               <?php endif; ?>
-               
                <h4>📋 Структура Redis ключей:</h4>
                <table class="table">
                    <thead>
                        <tr>
                            <th>Тип ключа</th>
                            <th>Префикс</th>
-                           <th>Пример</th>
                            <th>Назначение</th>
                        </tr>
                    </thead>
@@ -736,50 +666,27 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
                        <tr>
                            <td>IP Tracking</td>
                            <td>bot_protection:tracking:ip:</td>
-                           <td><?php echo substr(hash('md5', $currentIP), 0, 8); ?>...</td>
                            <td>Отслеживание активности IP</td>
                        </tr>
                        <tr>
                            <td>IP Block</td>
                            <td>bot_protection:blocked:ip:</td>
-                           <td><?php echo substr(hash('md5', $currentIP), 0, 8); ?>...</td>
                            <td>Блокировка IP адреса</td>
                        </tr>
                        <tr>
                            <td>Session Data</td>
                            <td>bot_protection:session:data:</td>
-                           <td><?php echo substr(session_id(), 0, 8); ?>...</td>
                            <td>Данные сессии</td>
-                       </tr>
-                       <tr>
-                           <td>Session Block</td>
-                           <td>bot_protection:session:blocked:</td>
-                           <td><?php echo substr(session_id(), 0, 8); ?>...</td>
-                           <td>Блокировка сессии</td>
                        </tr>
                        <tr style="background: #e3f2fd;">
                            <td><strong>User Hash Block</strong></td>
                            <td>bot_protection:user_hash:blocked:</td>
-                           <td><?php echo $userHashInfo ? substr($userHashInfo['user_hash'], 0, 8) . '...' : 'N/A'; ?></td>
-                           <td><strong>Блокировка по хешу пользователя (v2.0)</strong></td>
+                           <td><strong>Блокировка по хешу пользователя</strong></td>
                        </tr>
                        <tr style="background: #e3f2fd;">
                            <td><strong>User Hash Tracking</strong></td>
                            <td>bot_protection:user_hash:tracking:</td>
-                           <td><?php echo $userHashInfo ? substr($userHashInfo['user_hash'], 0, 8) . '...' : 'N/A'; ?></td>
-                           <td><strong>Трекинг активности хеша (v2.0)</strong></td>
-                       </tr>
-                       <tr>
-                           <td>Cookie Block</td>
-                           <td>bot_protection:cookie:blocked:</td>
-                           <td>hash_md5...</td>
-                           <td>Блокировка cookie</td>
-                       </tr>
-                       <tr>
-                           <td>rDNS Cache</td>
-                           <td>bot_protection:rdns:cache:</td>
-                           <td><?php echo substr(hash('md5', $currentIP), 0, 8); ?>...</td>
-                           <td>Кеш rDNS запросов</td>
+                           <td><strong>Трекинг активности хеша</strong></td>
                        </tr>
                    </tbody>
                </table>
@@ -791,7 +698,6 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
            <div class="info-box">
                <h3>⏱️ TTL настройки системы</h3>
                <?php if ($ttlSettings): ?>
-                   <p><strong>Оптимизированные временные настройки (v2.0):</strong></p>
                    <table class="table">
                        <thead>
                            <tr>
@@ -829,8 +735,8 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
                                            'rdns_cache' => 'Кеш rDNS запросов',
                                            'logs' => 'Хранение логов',
                                            'cleanup_interval' => 'Интервал очистки',
-                                           'user_hash_blocked' => 'Блокировка хеша пользователя (v2.0)',
-                                           'user_hash_tracking' => 'Трекинг хеша пользователя (v2.0)'
+                                           'user_hash_blocked' => 'Блокировка хеша пользователя',
+                                           'user_hash_tracking' => 'Трекинг хеша пользователя'
                                        ];
                                        echo $descriptions[$key] ?? 'Другие настройки';
                                        ?>
@@ -856,13 +762,6 @@ $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
                    <a href="redis_test.php?page=2" class="btn secondary">📄 Страница 2</a>
                    <a href="redis_test.php?page=3" class="btn secondary">📄 Страница 3</a>
                    <a href="redis_test.php?heavy=1" class="btn secondary">⚡ Тяжелая операция</a>
-                   <a href="redis_test.php?mobile_test=1" class="btn secondary">📱 Тест мобильного</a>
-                   
-                   <?php if (isset($_GET['debug']) && $_GET['debug'] === '1'): ?>
-                       <a href="redis_test.php" class="btn">🔍 Скрыть debug</a>
-                   <?php else: ?>
-                       <a href="redis_test.php?debug=1" class="btn">🔍 Debug режим</a>
-                   <?php endif; ?>
                    
                    <?php if (isset($_GET['admin']) && $_GET['admin'] === '1'): ?>
                        <a href="redis_test.php" class="btn">👁️ Обычный режим</a>
@@ -884,100 +783,28 @@ curl -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
      -c cookies.txt -b cookies.txt \
      "<?php echo (isset($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI']; ?>"
 
-# Тест мобильного User-Agent
-curl -H "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15" \
-     -c mobile_cookies.txt -b mobile_cookies.txt \
-     "<?php echo (isset($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI']; ?>"
-
 # Мониторинг Redis
 redis-cli monitor
 
 # Проверка ключей Redis
 redis-cli keys "bot_protection:*"
 
-# Проверка хешей пользователей (новое в v2.0)
+# Проверка хешей пользователей
 redis-cli keys "bot_protection:user_hash:*"
                </pre>
 
-               <h4>JavaScript тесты в браузере:</h4>
                <div style="margin: 15px 0;">
                    <button onclick="botProtectionTest.simulateBot()" class="btn warning">🤖 Симулировать бота</button>
                    <button onclick="botProtectionTest.simulateHuman()" class="btn success">👤 Симулировать человека</button>
-                   <button onclick="botProtectionTest.testUserHash()" class="btn secondary">🔐 Тест хеша пользователя</button>
-                   <button onclick="botProtectionTest.clearLocalData()" class="btn danger">🧹 Очистить данные</button>
+                   <button onclick="botProtectionTest.testUserHash()" class="btn secondary">🔐 Тест хеша</button>
                </div>
-           </div>
-       </div>
-
-       <!-- Debug информация -->
-       <div id="debug" class="tab-content">
-           <div class="info-box">
-               <h3>🔍 Debug информация v2.0</h3>
-               
-               <h4>Redis Connection Test:</h4>
-               <?php
-               if ($protectionActive) {
-                   echo "<p style='color: green;'>✅ Redis подключение активно</p>";
-                   
-                   try {
-                       $testKey = 'bot_protection:test:' . time();
-                       $redis = new Redis();
-                       $redis->connect('127.0.0.1', 6379);
-                       $redis->setex($testKey, 10, json_encode(['test' => 'data', 'timestamp' => time()]));
-                       $testData = $redis->get($testKey);
-                       $redis->del($testKey);
-                       $redis->close();
-                       
-                       echo "<p style='color: green;'>✅ Redis операции работают корректно</p>";
-                       echo "<pre>" . json_encode(json_decode($testData, true), JSON_PRETTY_PRINT) . "</pre>";
-                       
-                   } catch (Exception $e) {
-                       echo "<p style='color: red;'>❌ Ошибка Redis: " . htmlspecialchars($e->getMessage()) . "</p>";
-                   }
-               } else {
-                   echo "<p style='color: red;'>❌ Redis недоступен</p>";
-               }
-               ?>
-               
-               <h4>User Hash Analysis (v2.0):</h4>
-               <?php if ($userHashInfo): ?>
-                   <pre><?php echo json_encode($userHashInfo, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE); ?></pre>
-               <?php else: ?>
-                   <p style="color: #6c757d;">Информация о хеше пользователя недоступна</p>
-               <?php endif; ?>
-               
-               <h4>Global User Hash Stats:</h4>
-               <?php if ($userHashStats): ?>
-                   <pre><?php echo json_encode($userHashStats, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE); ?></pre>
-               <?php else: ?>
-                   <p style="color: #6c757d;">Статистика хешей недоступна</p>
-               <?php endif; ?>
-               
-               <h4>$_SERVER переменные (HTTP):</h4>
-               <pre><?php 
-               $serverVars = [];
-               foreach ($_SERVER as $key => $value) {
-                   if (strpos($key, 'HTTP_') === 0 || in_array($key, ['REMOTE_ADDR', 'REQUEST_URI', 'REQUEST_METHOD', 'QUERY_STRING'])) {
-                       $serverVars[$key] = $value;
-                   }
-               }
-               echo json_encode($serverVars, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE); 
-               ?></pre>
-               
-               <h4>Все cookies:</h4>
-               <pre><?php echo json_encode($_COOKIE, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE); ?></pre>
-               
-               <?php if ($protectionActive && $redisStats): ?>
-               <h4>Полная статистика Redis v2.0:</h4>
-               <pre><?php echo json_encode($redisStats, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE); ?></pre>
-               <?php endif; ?>
            </div>
        </div>
 
        <!-- Административные действия -->
        <?php if (isset($_GET['admin']) && $_GET['admin'] === '1'): ?>
        <div class="info-box">
-           <h3>⚙️ Административные действия v2.0</h3>
+           <h3>⚙️ Административные действия</h3>
            <div style="margin: 20px 0;">
                <?php
                if (isset($_GET['action']) && $protectionActive) {
@@ -1013,13 +840,6 @@ redis-cli keys "bot_protection:user_hash:*"
                            echo "Удалено элементов: " . ($cleaned !== false ? $cleaned : 'Ошибка');
                            echo "</div>";
                            break;
-                       case 'deep_cleanup':
-                           $cleaned = $protection->deepCleanup();
-                           echo "<div class='status-card'>";
-                           echo "<strong>Глубокая очистка выполнена:</strong><br>";
-                           echo "Удалено элементов: " . ($cleaned !== false ? $cleaned : 'Ошибка');
-                           echo "</div>";
-                           break;
                    }
                }
                ?>
@@ -1028,8 +848,6 @@ redis-cli keys "bot_protection:user_hash:*"
                <a href="redis_test.php?admin=1&action=unblock_session" class="btn success">🔓 Разблокировать сессию</a>
                <a href="redis_test.php?admin=1&action=unblock_user_hash" class="btn success">🔐 Разблокировать хеш</a>
                <a href="redis_test.php?admin=1&action=cleanup" class="btn secondary">🧹 Очистка Redis</a>
-               <a href="redis_test.php?admin=1&action=deep_cleanup" class="btn warning">🗑️ Глубокая очистка</a>
-               <a href="redis-admin.php" class="btn danger">⚙️ Админ панель</a>
                <a href="redis_test.php" class="btn">👁️ Обычный режим</a>
            </div>
        </div>
@@ -1055,7 +873,7 @@ redis-cli keys "bot_protection:user_hash:*"
        
        <p style="text-align: center; color: #6c757d;">
            <small>
-               🛡️ Redis MurKir Security System v2.0 with User Hash Support | 
+               🛡️ Redis MurKir Security System v2.0 | 
                Generated: <?php echo date('Y-m-d H:i:s'); ?> | 
                PHP: <?php echo PHP_VERSION; ?> | 
                Session: <?php echo substr(session_id(), 0, 8); ?>... |
@@ -1080,12 +898,11 @@ redis-cli keys "bot_protection:user_hash:*"
            event.target.classList.add('active');
        }
 
-       // Активность пользователя для демонстрации человеческого поведения
+       // Активность пользователя
        let userActivity = {
            mouseMovements: 0,
            clicks: 0,
            scrolls: 0,
-           keyPresses: 0,
            startTime: Date.now(),
            lastActivity: Date.now()
        };
@@ -1102,40 +919,8 @@ redis-cli keys "bot_protection:user_hash:*"
            userActivity.scrolls++;
            userActivity.lastActivity = Date.now();
        });
-       document.addEventListener('keydown', () => {
-           userActivity.keyPresses++;
-           userActivity.lastActivity = Date.now();
-       });
 
-       // Обновление прогресс-баров
-       function updateProgressBars() {
-           document.querySelectorAll('.progress-fill').forEach(bar => {
-               const width = parseInt(bar.style.width);
-               if (width > 0) {
-                   bar.style.width = width + '%';
-               }
-           });
-       }
-
-       // Анимация метрик
-       function animateMetrics() {
-           document.querySelectorAll('.metric .number').forEach(element => {
-               const finalValue = parseInt(element.textContent);
-               let currentValue = 0;
-               const increment = finalValue / 20;
-               
-               const timer = setInterval(() => {
-                   currentValue += increment;
-                   if (currentValue >= finalValue) {
-                       currentValue = finalValue;
-                       clearInterval(timer);
-                   }
-                   element.textContent = Math.floor(currentValue);
-               }, 50);
-           });
-       }
-
-       // Кастомные функции для тестирования v2.0
+       // Кастомные функции для тестирования
        window.botProtectionTest = {
            // Симуляция bot-подобного поведения
            simulateBot: function() {
@@ -1159,7 +944,7 @@ redis-cli keys "bot_protection:user_hash:*"
                        fetch(window.location.origin + window.location.pathname + page + '&human_test=' + index)
                            .then(response => console.log(`Human request ${index}: ${response.status}`))
                            .catch(err => console.log(`Human request ${index} failed:`, err));
-                   }, index * 2000 + Math.random() * 1000); // Случайные интервалы
+                   }, index * 2000 + Math.random() * 1000);
                });
            },
            
@@ -1173,29 +958,6 @@ redis-cli keys "bot_protection:user_hash:*"
                        this.showNotification('🔐 Тест хеша пользователя выполнен', 'info');
                    })
                    .catch(err => console.log('Hash test failed:', err));
-           },
-           
-           // Получение статистики Redis v2.0
-           getRedisStats: function() {
-               return <?php echo json_encode($redisStats); ?>;
-           },
-           
-           // Информация о текущем IP
-           getCurrentIPInfo: function() {
-               return <?php echo json_encode($ipInfo); ?>;
-           },
-           
-           // Информация о хеше пользователя
-           getUserHashInfo: function() {
-               return <?php echo json_encode($userHashInfo); ?>;
-           },
-           
-           // Очистка локальных данных
-           clearLocalData: function() {
-               localStorage.clear();
-               sessionStorage.clear();
-               console.log('🧹 Local storage cleared');
-               this.showNotification('🧹 Локальные данные очищены', 'success');
            },
            
            // Показ уведомлений
@@ -1233,48 +995,22 @@ redis-cli keys "bot_protection:user_hash:*"
            }
        };
 
-       // Мониторинг активности пользователя
-       setInterval(() => {
-           const timeSpent = Math.floor((Date.now() - userActivity.startTime) / 1000);
-           const timeSinceLastActivity = Math.floor((Date.now() - userActivity.lastActivity) / 1000);
-           
-           console.log('👤 User Activity v2.0:', {
-               ...userActivity,
-               timeSpent: timeSpent + 's',
-               timeSinceLastActivity: timeSinceLastActivity + 's',
-               activityScore: userActivity.mouseMovements + userActivity.clicks + userActivity.scrolls + userActivity.keyPresses,
-               isActive: timeSinceLastActivity < 30
-           });
-       }, 15000);
-
-       // Автообновление страницы для демонстрации (только в demo режиме)
-       if (window.location.search.includes('demo=1')) {
-           let countdown = 60;
-           const countdownElement = document.createElement('div');
-           countdownElement.style.cssText = `
-               position: fixed;
-               top: 20px;
-               left: 20px;
-               background: rgba(0, 123, 255, 0.9);
-               color: white;
-               padding: 10px 15px;
-               border-radius: 8px;
-               font-weight: bold;
-               z-index: 1000;
-           `;
-           document.body.appendChild(countdownElement);
-
-           const updateCountdown = () => {
-               countdownElement.textContent = `🔄 Auto-refresh in ${countdown}s`;
-               countdown--;
+       // Анимация метрик
+       function animateMetrics() {
+           document.querySelectorAll('.metric .number').forEach(element => {
+               const finalValue = parseInt(element.textContent);
+               let currentValue = 0;
+               const increment = finalValue / 20;
                
-               if (countdown < 0) {
-                   window.location.reload();
-               }
-           };
-
-           updateCountdown();
-           setInterval(updateCountdown, 1000);
+               const timer = setInterval(() => {
+                   currentValue += increment;
+                   if (currentValue >= finalValue) {
+                       currentValue = finalValue;
+                       clearInterval(timer);
+                   }
+                   element.textContent = Math.floor(currentValue);
+               }, 50);
+           });
        }
 
        // Копирование Redis ключей в буфер обмена
@@ -1300,7 +1036,6 @@ redis-cli keys "bot_protection:user_hash:*"
        // Запускаем анимации после загрузки
        document.addEventListener('DOMContentLoaded', () => {
            setTimeout(animateMetrics, 300);
-           updateProgressBars();
            
            // Показываем приветственное сообщение
            setTimeout(() => {
@@ -1313,78 +1048,17 @@ redis-cli keys "bot_protection:user_hash:*"
                <?php elseif ($isVerified && $trustScore > 70): ?>
                botProtectionTest.showNotification('🌟 Добро пожаловать, VIP пользователь!', 'success');
                <?php elseif ($isMobile): ?>
-               botProtectionTest.showNotification('📱 Мобильное устройство обнаружено. Система v2.0 оптимизирована для мобильных!', 'info');
+               botProtectionTest.showNotification('📱 Мобильное устройство обнаружено!', 'info');
                <?php else: ?>
-               botProtectionTest.showNotification('🛡️ Bot Protection v2.0 с поддержкой хеш-блокировки активна!', 'info');
+               botProtectionTest.showNotification('🛡️ Bot Protection v2.0 активна!', 'info');
                <?php endif; ?>
            }, 1000);
-       });
-
-       // Обработка ошибок JavaScript
-       window.addEventListener('error', (e) => {
-           console.error('JavaScript Error:', e.error);
-           botProtectionTest.showNotification('❌ Произошла ошибка JavaScript', 'error');
-       });
-
-       // Детектор бездействия пользователя
-       let idleTimer;
-       let idleTime = 0;
-       const maxIdleTime = 300; // 5 минут
-
-       function resetIdleTimer() {
-           idleTime = 0;
-           clearTimeout(idleTimer);
-           idleTimer = setTimeout(() => {
-               console.log('👤 User is idle for 5 minutes');
-               botProtectionTest.showNotification('😴 Вы неактивны уже 5 минут', 'info');
-           }, maxIdleTime * 1000);
-       }
-
-       // Сбрасываем таймер при любой активности
-       ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'].forEach(event => {
-           document.addEventListener(event, resetIdleTimer, true);
-       });
-
-       resetIdleTimer(); // Инициализируем таймер
-
-       // Мониторинг производительности страницы
-       window.addEventListener('load', () => {
-           const loadTime = performance.timing.loadEventEnd - performance.timing.navigationStart;
-           console.log(`📊 Page load time: ${loadTime}ms`);
-           
-           if (loadTime > 3000) {
-               botProtectionTest.showNotification('⚠️ Страница загружалась медленно (' + Math.round(loadTime/1000) + 's)', 'warning');
-           }
-
-           // Показываем информацию о системе
-           console.log(`
-█▀▀▄ █▀▀█ ▀▀█▀▀   █▀▀█ █▀▀█ █▀▀█ ▀▀█▀▀ █▀▀ █▀▀ ▀▀█▀▀ ─▀─ █▀▀█ █▀▀▄   ▄█    █
-█▀▀▄ █  █   █     █  █ █▄▄▀ █  █   █   █▄▄ █     █    ▀█▀ █  █ █  █    █      █
-▀▀▀  ▀▀▀▀   ▀     █▀▀▀ ▀ ▀▀ ▀▀▀▀   ▀   ▀▀▀ ▀▀▀   ▀   ▀▀▀ ▀▀▀▀ ▀  ▀   ▀▀▀    ▀
-
-Version 2.0 - User Hash Protection System
-Test Page Loaded Successfully!
-
-New Features:
-✅ User Hash Blocking & Tracking
-✅ Mobile Device Optimization  
-✅ Enhanced TTL Settings
-✅ Improved Performance
-✅ Advanced Analytics
-
-Device: <?php echo $isMobile ? 'Mobile' : 'Desktop'; ?>
-Protection: <?php echo $protectionActive ? 'Active' : 'Inactive'; ?>
-User Hash: <?php echo $userHashInfo ? (strlen($userHashInfo['user_hash']) > 0 ? 'Generated' : 'N/A') : 'N/A'; ?>
-           `);
        });
 
        // Клавиатурные сочетания
        document.addEventListener('keydown', (e) => {
            if (e.ctrlKey || e.metaKey) {
                switch(e.key) {
-                   case 'r':
-                       // Разрешаем обычное обновление
-                       break;
                    case '1':
                        e.preventDefault();
                        showTab('request-info');
@@ -1405,10 +1079,6 @@ User Hash: <?php echo $userHashInfo ? (strlen($userHashInfo['user_hash']) > 0 ? 
                        e.preventDefault();
                        showTab('testing');
                        break;
-                   case '6':
-                       e.preventDefault();
-                       showTab('debug');
-                       break;
                    case 'b':
                        e.preventDefault();
                        botProtectionTest.simulateBot();
@@ -1421,155 +1091,10 @@ User Hash: <?php echo $userHashInfo ? (strlen($userHashInfo['user_hash']) > 0 ? 
            }
        });
 
-       // Показываем горячие клавиши
-       setTimeout(() => {
-           botProtectionTest.showNotification('💡 Горячие клавиши: Ctrl+1-6 (табы), Ctrl+B (бот), Ctrl+H (человек)', 'info');
-       }, 3000);
-
-       // Живые обновления счетчиков
-       function updateCounters() {
-           const stats = document.querySelectorAll('.metric .number');
-           stats.forEach(stat => {
-               const currentValue = parseInt(stat.textContent);
-               if (currentValue > 0) {
-                   stat.style.animation = 'pulse 0.5s ease-in-out';
-                   setTimeout(() => {
-                       stat.style.animation = '';
-                   }, 500);
-               }
-           });
-       }
-
-       // Добавляем CSS анимацию для hover эффектов
-       const style = document.createElement('style');
-       style.textContent = `
-           @keyframes pulse {
-               0% { transform: scale(1); }
-               50% { transform: scale(1.05); }
-               100% { transform: scale(1); }
-           }
-           
-           .metric:hover .number {
-               color: #0056b3;
-               transition: color 0.3s ease;
-           }
-           
-           .table tr:hover {
-               background: #f1f3f4 !important;
-               transform: scale(1.01);
-               transition: all 0.2s ease;
-           }
-           
-           .btn:active {
-               transform: scale(0.95) translateY(-2px);
-           }
-           
-           .redis-key:hover, .hash-display:hover {
-               background: #007bff !important;
-               color: white !important;
-               transition: all 0.3s ease;
-           }
-           
-           .tab:hover:not(.active) {
-               background: rgba(0, 123, 255, 0.1);
-               color: #007bff;
-           }
-           
-           .status-card {
-               transition: transform 0.3s ease;
-           }
-           
-           .status-card:hover {
-               transform: translateY(-2px);
-           }
-           
-           .progress-fill {
-               background: linear-gradient(90deg, #28a745, #20c997) !important;
-               box-shadow: 0 2px 4px rgba(40, 167, 69, 0.3);
-           }
-       `;
-       document.head.appendChild(style);
-
-       // Функция для тестирования производительности
-       window.botProtectionTest.performanceTest = function() {
-           console.log('🚀 Starting performance test...');
-           const startTime = performance.now();
-           
-           // Серия быстрых запросов
-           const requests = [];
-           for (let i = 0; i < 10; i++) {
-               requests.push(
-                   fetch(window.location.href + '?perf_test=' + i + '&t=' + Date.now())
-                       .then(response => ({
-                           request: i,
-                           status: response.status,
-                           time: performance.now() - startTime
-                       }))
-               );
-           }
-           
-           Promise.all(requests).then(results => {
-               console.log('Performance test results:', results);
-               const avgTime = results.reduce((sum, r) => sum + r.time, 0) / results.length;
-               this.showNotification(`🚀 Тест производительности: ${avgTime.toFixed(2)}ms`, 'info');
-           });
-       };
-
-       // Функция для анализа хеша пользователя
-       window.botProtectionTest.analyzeUserHash = function() {
-           const userAgent = navigator.userAgent;
-           const language = navigator.language;
-           const platform = navigator.platform;
-           const cookiesEnabled = navigator.cookieEnabled;
-           
-           const fingerprint = {
-               userAgent: userAgent,
-               language: language,
-               platform: platform,
-               cookiesEnabled: cookiesEnabled,
-               screenResolution: screen.width + 'x' + screen.height,
-               timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-               timestamp: Date.now()
-           };
-           
-           console.log('🔍 Browser fingerprint analysis:', fingerprint);
-           this.showNotification('🔍 Анализ отпечатка браузера выполнен (см. консоль)', 'info');
-           
-           return fingerprint;
-       };
-
-       // Инициализация завершена
-       updateCounters();
-       
        console.log('🛡️ Bot Protection Test Page v2.0 loaded successfully');
-       console.log('Available functions:', Object.keys(window.botProtectionTest));
        console.log('Redis Status:', <?php echo $protectionActive ? 'true' : 'false'; ?>);
        console.log('User Hash Info:', <?php echo json_encode($userHashInfo ? true : false); ?>);
        console.log('Mobile Device:', <?php echo $isMobile ? 'true' : 'false'; ?>);
-       
-       // Автоматический тест на готовность системы
-       setTimeout(() => {
-           console.log('🔬 Running system readiness check...');
-           
-           const checks = {
-               redis: <?php echo $protectionActive ? 'true' : 'false'; ?>,
-               session: <?php echo $isVerified ? 'true' : 'false'; ?>,
-               userHash: <?php echo $userHashInfo ? 'true' : 'false'; ?>,
-               protection: true
-           };
-           
-           const passed = Object.values(checks).filter(Boolean).length;
-           const total = Object.keys(checks).length;
-           
-           console.log(`✅ System readiness: ${passed}/${total} checks passed`);
-           console.log('Check details:', checks);
-           
-           if (passed === total) {
-               console.log('🎉 All systems operational!');
-           } else {
-               console.log('⚠️ Some systems may need attention');
-           }
-       }, 2000);
    </script>
 </body>
 </html>
