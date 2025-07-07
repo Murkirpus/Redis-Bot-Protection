@@ -546,374 +546,894 @@ if ($isLoggedIn && $redis) {
  <title>🛡️ Redis MurKir Security - Admin Panel v2.0</title>
  <style>
      * {
-         box-sizing: border-box;
-         margin: 0;
-         padding: 0;
-     }
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
 
-     body {
-         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-         min-height: 100vh;
-         color: #333;
-     }
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    color: #333;
+}
 
-     .login-container {
-         display: flex;
-         justify-content: center;
-         align-items: center;
-         min-height: 100vh;
-         padding: 20px;
-     }
+.login-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+}
 
-     .login-form {
-         background: white;
-         padding: 40px;
-         border-radius: 15px;
-         box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-         max-width: 400px;
-         width: 100%;
-     }
+.login-form {
+    background: white;
+    padding: 40px;
+    border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    max-width: 400px;
+    width: 100%;
+}
 
-     .login-form h1 {
-         text-align: center;
-         margin-bottom: 30px;
-         color: #007bff;
-     }
+.login-form h1 {
+    text-align: center;
+    margin-bottom: 30px;
+    color: #007bff;
+}
 
-     .form-group {
-         margin-bottom: 20px;
-     }
+.form-group {
+    margin-bottom: 20px;
+}
 
-     .form-group label {
-         display: block;
-         margin-bottom: 5px;
-         font-weight: bold;
-     }
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
 
-     .form-group input {
-         width: 100%;
-         padding: 12px;
-         border: 1px solid #ddd;
-         border-radius: 8px;
-         font-size: 16px;
-     }
+.form-group input {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 16px;
+}
 
-     .btn {
-         background: linear-gradient(135deg, #007bff, #0056b3);
-         color: white;
-         padding: 12px 24px;
-         border: none;
-         border-radius: 8px;
-         cursor: pointer;
-         font-size: 16px;
-         transition: all 0.3s ease;
-         text-decoration: none;
-         display: inline-block;
-         margin: 5px;
-     }
+.btn {
+    background: linear-gradient(135deg, #007bff, #0056b3);
+    color: white;
+    padding: 12px 24px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: all 0.3s ease;
+    text-decoration: none;
+    display: inline-block;
+    margin: 5px;
+}
 
-     .btn:hover {
-         transform: translateY(-2px);
-         box-shadow: 0 4px 15px rgba(0, 123, 255, 0.3);
-     }
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.3);
+}
 
-     .btn.btn-danger {
-         background: linear-gradient(135deg, #dc3545, #c82333);
-     }
+.btn.btn-danger {
+    background: linear-gradient(135deg, #dc3545, #c82333);
+}
 
-     .btn.btn-success {
-         background: linear-gradient(135deg, #28a745, #1e7e34);
-     }
+.btn.btn-success {
+    background: linear-gradient(135deg, #28a745, #1e7e34);
+}
 
-     .btn.btn-warning {
-         background: linear-gradient(135deg, #ffc107, #e0a800);
-         color: #212529;
-     }
+.btn.btn-warning {
+    background: linear-gradient(135deg, #ffc107, #e0a800);
+    color: #212529;
+}
 
-     .btn.btn-secondary {
-         background: linear-gradient(135deg, #6c757d, #495057);
-     }
+.btn.btn-secondary {
+    background: linear-gradient(135deg, #6c757d, #495057);
+}
 
-     .btn.btn-info {
-         background: linear-gradient(135deg, #17a2b8, #138496);
-     }
+.btn.btn-info {
+    background: linear-gradient(135deg, #17a2b8, #138496);
+}
 
-     .btn-small {
-         padding: 6px 12px;
-         font-size: 12px;
-     }
+.btn-small {
+    padding: 6px 12px;
+    font-size: 12px;
+}
 
-     .admin-container {
-         max-width: 1400px;
-         margin: 0 auto;
-         padding: 20px;
-     }
+.admin-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+}
 
-     .header {
-         background: white;
-         padding: 20px;
-         border-radius: 15px;
-         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-         margin-bottom: 20px;
-         display: flex;
-         justify-content: space-between;
-         align-items: center;
-     }
+.header {
+    background: white;
+    padding: 20px;
+    border-radius: 15px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
 
-     .stats-grid {
-         display: grid;
-         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-         gap: 20px;
-         margin-bottom: 30px;
-     }
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
 
-     .stat-card {
-         background: white;
-         padding: 20px;
-         border-radius: 12px;
-         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-         text-align: center;
-         transition: transform 0.3s ease;
-     }
+.stat-card {
+    background: white;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    text-align: center;
+    transition: transform 0.3s ease;
+}
 
-     .stat-card:hover {
-         transform: translateY(-5px);
-     }
+.stat-card:hover {
+    transform: translateY(-5px);
+}
 
-     .stat-number {
-         font-size: 2.5em;
-         font-weight: bold;
-         color: #007bff;
-         margin-bottom: 5px;
-     }
+.stat-number {
+    font-size: 2.5em;
+    font-weight: bold;
+    color: #007bff;
+    margin-bottom: 5px;
+}
 
-     .stat-label {
-         color: #6c757d;
-         font-weight: 500;
-     }
+.stat-label {
+    color: #6c757d;
+    font-weight: 500;
+}
 
-     .section {
-         background: white;
-         margin-bottom: 30px;
-         border-radius: 15px;
-         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-         overflow: hidden;
-     }
+.section {
+    background: white;
+    margin-bottom: 30px;
+    border-radius: 15px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    overflow: hidden;
+}
 
-     .section-header {
-         background: linear-gradient(135deg, #007bff, #0056b3);
-         color: white;
-         padding: 20px;
-         font-size: 1.2em;
-         font-weight: bold;
-         display: flex;
-         justify-content: space-between;
-         align-items: center;
-     }
+.section-header {
+    background: linear-gradient(135deg, #007bff, #0056b3);
+    color: white;
+    padding: 20px;
+    font-size: 1.2em;
+    font-weight: bold;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
 
-     .section-content {
-         padding: 20px;
-     }
+.section-content {
+    padding: 20px;
+}
 
-     .table {
-         width: 100%;
-         border-collapse: collapse;
-         margin-top: 10px;
-     }
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+}
 
-     .table th,
-     .table td {
-         padding: 12px;
-         text-align: left;
-         border-bottom: 1px solid #dee2e6;
-     }
+.table th,
+.table td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #dee2e6;
+}
 
-     .table th {
-         background: #f8f9fa;
-         font-weight: bold;
-         color: #495057;
-     }
+.table th {
+    background: #f8f9fa;
+    font-weight: bold;
+    color: #495057;
+}
 
-     .table tr:hover {
-         background: #f8f9fa;
-     }
+.table tr:hover {
+    background: #f8f9fa;
+}
 
-     .status-badge {
-         padding: 4px 8px;
-         border-radius: 4px;
-         font-size: 0.8em;
-         font-weight: bold;
-     }
+.status-badge {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.8em;
+    font-weight: bold;
+}
 
-     .status-blocked {
-         background: #f8d7da;
-         color: #721c24;
-     }
+.status-blocked {
+    background: #f8d7da;
+    color: #721c24;
+}
 
-     .status-tracking {
-         background: #fff3cd;
-         color: #856404;
-     }
+.status-tracking {
+    background: #fff3cd;
+    color: #856404;
+}
 
-     .status-active {
-         background: #d4edda;
-         color: #155724;
-     }
+.status-active {
+    background: #d4edda;
+    color: #155724;
+}
 
-     .status-user-hash {
-         background: #e2e3e5;
-         color: #383d41;
-     }
+.status-user-hash {
+    background: #e2e3e5;
+    color: #383d41;
+}
 
-     .ip-info {
-         font-family: monospace;
-         background: #f8f9fa;
-         padding: 4px 8px;
-         border-radius: 4px;
-         font-size: 0.9em;
-     }
+.ip-info {
+    font-family: monospace;
+    background: #f8f9fa;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
 
-     .error-message {
-         background: #f8d7da;
-         color: #721c24;
-         padding: 15px;
-         border-radius: 8px;
-         border: 1px solid #f5c6cb;
-         margin-bottom: 20px;
-     }
+.error-message {
+    background: #f8d7da;
+    color: #721c24;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #f5c6cb;
+    margin-bottom: 20px;
+}
 
-     .success-message {
-         background: #d4edda;
-         color: #155724;
-         padding: 15px;
-         border-radius: 8px;
-         border: 1px solid #c3e6cb;
-         margin-bottom: 20px;
-     }
+.success-message {
+    background: #d4edda;
+    color: #155724;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #c3e6cb;
+    margin-bottom: 20px;
+}
 
-     .tabs {
-         display: flex;
-         background: #f8f9fa;
-         border-radius: 8px;
-         padding: 5px;
-         margin-bottom: 20px;
-         flex-wrap: wrap;
-     }
+.tabs {
+    display: flex;
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 5px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
 
-     .tab {
-         flex: 1;
-         text-align: center;
-         padding: 10px;
-         background: transparent;
-         border: none;
-         border-radius: 6px;
-         cursor: pointer;
-         transition: all 0.3s ease;
-         min-width: 120px;
-         font-size: 0.9em;
-     }
+.tab {
+    flex: 1;
+    text-align: center;
+    padding: 10px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    min-width: 120px;
+    font-size: 0.9em;
+}
 
-     .tab.active {
-         background: white;
-         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-         color: #007bff;
-         font-weight: bold;
-     }
+.tab.active {
+    background: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    color: #007bff;
+    font-weight: bold;
+}
 
-     .tab-content {
-         display: none;
-     }
+.tab-content {
+    display: none;
+}
 
-     .tab-content.active {
-         display: block;
-     }
+.tab-content.active {
+    display: block;
+}
 
-     .actions {
-         margin-bottom: 20px;
-     }
+.actions {
+    margin-bottom: 20px;
+}
 
-     .search-box {
-         width: 100%;
-         max-width: 300px;
-         padding: 10px;
-         border: 1px solid #ddd;
-         border-radius: 8px;
-         margin-bottom: 15px;
-     }
+.search-box {
+    width: 100%;
+    max-width: 300px;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    margin-bottom: 15px;
+}
 
-     .manual-block-form {
-         background: #f8f9fa;
-         padding: 20px;
-         border-radius: 8px;
-         margin-bottom: 20px;
-     }
+.manual-block-form {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
 
-     .manual-block-form h4 {
-         margin-bottom: 15px;
-         color: #495057;
-     }
+.manual-block-form h4 {
+    margin-bottom: 15px;
+    color: #495057;
+}
 
-     .form-row {
-         display: flex;
-         gap: 10px;
-         margin-bottom: 15px;
-     }
+.form-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
 
-     .form-row input {
-         flex: 1;
-         padding: 8px 12px;
-         border: 1px solid #ddd;
-         border-radius: 6px;
-     }
+.form-row input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
 
-     .version-info {
-         position: fixed;
-         top: 10px;
-         left: 10px;
-         background: rgba(0, 123, 255, 0.9);
-         color: white;
-         padding: 5px 10px;
-         border-radius: 15px;
-         font-size: 0.8em;
-         z-index: 1000;
-     }
+.version-info {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    background: rgba(0, 123, 255, 0.9);
+    color: white;
+    padding: 5px 10px;
+    border-radius: 15px;
+    font-size: 0.8em;
+    z-index: 1000;
+}
 
-     @media (max-width: 768px) {
-         .admin-container {
-             padding: 10px;
-         }
-		 .header {
-             flex-direction: column;
-             gap: 10px;
-         }
-         
-         .stats-grid {
-             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-         }
-         
-         .table {
-             font-size: 0.9em;
-         }
-         
-         .table th,
-         .table td {
-             padding: 8px;
-         }
+/* Таблица для мобильных устройств */
+.table-responsive {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
 
-         .tabs {
-             flex-direction: column;
-         }
+/* Базовые медиа-запросы */
+@media (max-width: 1024px) {
+    .admin-container {
+        padding: 15px;
+    }
+    
+    .stats-grid {
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 15px;
+    }
+    
+    .stat-number {
+        font-size: 2em;
+    }
+}
 
-         .tab {
-             flex: none;
-             margin: 2px 0;
-         }
+@media (max-width: 768px) {
+    .admin-container {
+        padding: 10px;
+    }
+    
+    .header {
+        flex-direction: column;
+        gap: 15px;
+        text-align: center;
+    }
+    
+    .header h1 {
+        font-size: 1.5em;
+        margin-bottom: 10px;
+    }
+    
+    .stats-grid {
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 10px;
+    }
+    
+    .stat-card {
+        padding: 15px;
+    }
+    
+    .stat-number {
+        font-size: 1.8em;
+    }
+    
+    .section-header {
+        padding: 15px;
+        font-size: 1.1em;
+    }
+    
+    .section-content {
+        padding: 15px;
+        overflow-x: auto;
+    }
+    
+    /* Компактные таблицы для мобильных */
+    .table {
+        min-width: 100%;
+        font-size: 0.75em;
+        display: table;
+    }
+    
+    .table th,
+    .table td {
+        padding: 6px 4px;
+        word-break: break-word;
+        white-space: nowrap;
+        min-width: 60px;
+    }
+    
+    /* Конкретные настройки для разных колонок */
+    .table th:first-child,
+    .table td:first-child {
+        min-width: 80px; /* IP адрес */
+        white-space: normal;
+    }
+    
+    .table th:nth-child(2),
+    .table td:nth-child(2) {
+        min-width: 100px; /* Hostname */
+        max-width: 100px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    
+    .table th:nth-child(3),
+    .table td:nth-child(3) {
+        min-width: 90px; /* Дата */
+        font-size: 0.7em;
+    }
+    
+    .table th:nth-child(4),
+    .table td:nth-child(4) {
+        min-width: 50px; /* TTL */
+    }
+    
+    .table th:nth-child(5),
+    .table td:nth-child(5) {
+        min-width: 80px; /* User-Agent */
+        max-width: 80px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    .table th:last-child,
+    .table td:last-child {
+        min-width: 90px; /* Действия */
+        position: sticky;
+        right: 0;
+        background: white;
+        box-shadow: -2px 0 4px rgba(0,0,0,0.1);
+        z-index: 1;
+    }
+    
+    .table th:last-child {
+        background: #f8f9fa;
+    }
+    
+    .table tr:hover td:last-child {
+        background: #f8f9fa;
+    }
+    
+    /* Горизонтальная прокрутка с фиксированной кнопкой */
+    .table-container {
+        position: relative;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        max-width: 100%;
+    }
+    
+    /* Улучшенные элементы в таблице */
+    .ip-info {
+        font-size: 0.7em;
+        padding: 2px 4px;
+        display: block;
+        word-break: break-all;
+    }
+    
+    .status-badge {
+        font-size: 0.65em;
+        padding: 2px 4px;
+        display: inline-block;
+        max-width: 100%;
+        text-align: center;
+    }
+    
+    .btn-small {
+        padding: 4px 6px;
+        font-size: 0.65em;
+        white-space: nowrap;
+        min-width: 70px;
+    }
+    
+    /* Альтернативный вид - карточки */
+    .table-cards {
+        display: none;
+    }
+    
+    .show-cards .table-container {
+        display: none;
+    }
+    
+    .show-cards .table-cards {
+        display: block;
+    }
+    
+    .table-card {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        padding: 15px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .table-card-header {
+        font-weight: bold;
+        color: #007bff;
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 2px solid #007bff;
+        font-size: 1em;
+    }
+    
+    .table-card-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 8px;
+        padding: 5px 0;
+        border-bottom: 1px solid #e9ecef;
+        gap: 10px;
+    }
+    
+    .table-card-row:last-of-type {
+        border-bottom: none;
+        margin-bottom: 0;
+    }
+    
+    .table-card-label {
+        font-weight: 600;
+        color: #495057;
+        font-size: 0.85em;
+        flex: 0 0 35%;
+        min-width: 0;
+    }
+    
+    .table-card-value {
+        flex: 1;
+        text-align: right;
+        font-size: 0.85em;
+        word-break: break-word;
+        min-width: 0;
+    }
+    
+    .table-card-actions {
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 2px solid #dee2e6;
+        text-align: center;
+    }
+    
+    .table-card-actions .btn {
+        width: 100%;
+        margin: 0;
+    }
+    
+    /* Переключатель вида таблицы */
+    .table-view-toggle {
+        margin-bottom: 10px;
+        text-align: right;
+    }
+    
+    .table-view-toggle button {
+        background: #6c757d;
+        color: white;
+        border: none;
+        padding: 6px 12px;
+        border-radius: 4px;
+        font-size: 0.8em;
+        cursor: pointer;
+    }
+    
+    .table-view-toggle button:hover {
+        background: #5a6268;
+    }
+    
+    /* Tabs для мобильных */
+    .tabs {
+        flex-direction: column;
+        gap: 5px;
+    }
+    
+    .tab {
+        flex: none;
+        margin: 0;
+        padding: 12px;
+        border-radius: 8px;
+        font-size: 1em;
+    }
+    
+    /* Form elements */
+    .form-row {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .form-row input {
+        width: 100%;
+    }
+    
+    .form-row .btn {
+        width: 100%;
+        margin: 5px 0;
+    }
+    
+    .manual-block-form {
+        padding: 15px;
+    }
+    
+    .actions {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .actions .btn {
+        width: 100%;
+        margin: 0;
+        text-align: center;
+    }
+    
+    .search-box {
+        max-width: 100%;
+        margin-bottom: 20px;
+    }
+}
 
-         .form-row {
-             flex-direction: column;
-         }
-     }
+@media (max-width: 480px) {
+    .admin-container {
+        padding: 5px;
+    }
+    
+    .login-form {
+        padding: 25px;
+    }
+    
+    .header {
+        padding: 15px;
+    }
+    
+    .header h1 {
+        font-size: 1.3em;
+    }
+    
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+    
+    .stat-card {
+        padding: 12px;
+    }
+    
+    .stat-number {
+        font-size: 1.5em;
+    }
+    
+    .stat-label {
+        font-size: 0.8em;
+    }
+    
+    .section-header {
+        padding: 12px;
+        font-size: 1em;
+    }
+    
+    .section-content {
+        padding: 12px;
+    }
+    
+    .table-card {
+        padding: 12px;
+        margin-bottom: 12px;
+    }
+    
+    .table-card-header {
+        font-size: 1em;
+    }
+    
+    .table-card-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 5px;
+    }
+    
+    .table-card-label {
+        flex: none;
+    }
+    
+    .table-card-value {
+        text-align: left;
+    }
+    
+    .tab {
+        padding: 10px;
+        font-size: 0.9em;
+    }
+    
+    .btn {
+        padding: 10px 16px;
+        font-size: 14px;
+    }
+    
+    .btn-small {
+        padding: 6px 10px;
+        font-size: 11px;
+    }
+    
+    .version-info {
+        font-size: 0.7em;
+        padding: 3px 8px;
+    }
+}
+
+/* Дополнительные утилиты для мобильных */
+.mobile-only {
+    display: none;
+}
+
+.desktop-only {
+    display: block;
+}
+
+/* Карточки скрыты по умолчанию на десктопе */
+.table-cards {
+    display: none;
+}
+
+/* Переключатель вида скрыт на десктопе */
+.table-view-toggle {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .mobile-only {
+        display: block;
+    }
+    
+    .desktop-only {
+        display: none;
+    }
+    
+    /* Показываем переключатель на мобильных */
+    .table-view-toggle {
+        display: block;
+    }
+    
+    /* По умолчанию показываем таблицы, карточки скрыты */
+    .table-cards {
+        display: none;
+    }
+    
+    /* Когда активен режим карточек */
+    .show-cards .table-container {
+        display: none;
+    }
+    
+    .show-cards .table-cards {
+        display: block;
+    }
+}
+
+/* Улучшенная прокрутка */
+.table-container {
+    position: relative;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #007bff #f1f1f1;
+}
+
+.table-container::-webkit-scrollbar {
+    height: 8px;
+}
+
+.table-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+    background: #007bff;
+    border-radius: 4px;
+}
+
+.table-container::-webkit-scrollbar-thumb:hover {
+    background: #0056b3;
+}
+
+/* Sticky заголовки для длинных таблиц */
+@media (min-width: 769px) {
+    .table-sticky th {
+        position: sticky;
+        top: 0;
+        background: #f8f9fa;
+        z-index: 10;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+}
+
+/* Анимации для улучшения UX */
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); }
+}
+
+.stat-card:hover .stat-number {
+    color: #0056b3;
+    transition: color 0.3s ease;
+}
+
+.table tr:hover {
+    background: #f1f3f4 !important;
+    transform: scale(1.01);
+    transition: all 0.2s ease;
+}
+
+.btn:active {
+    transform: scale(0.95);
+}
+
+.search-box:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+    outline: none;
+}
+
+/* Улучшения для touch устройств */
+@media (hover: none) and (pointer: coarse) {
+    .btn {
+        min-height: 44px;
+        min-width: 44px;
+    }
+    
+    .tab {
+        min-height: 44px;
+    }
+    
+    .table-card {
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+    }
+    
+    .table-card:active {
+        background-color: #e9ecef;
+    }
+}
+
+/* Фиксированные размеры для важных элементов */
+.critical-action {
+    min-height: 48px;
+    font-weight: bold;
+}
+
+/* Улучшенная читаемость на маленьких экранах */
+@media (max-width: 480px) {
+    body {
+        font-size: 14px;
+        line-height: 1.5;
+    }
+    
+    .ip-info {
+        word-break: break-all;
+        font-size: 0.8em;
+    }
+    
+    .status-badge {
+        display: block;
+        text-align: center;
+        margin: 2px 0;
+    }
+}
  </style>
 </head>
 <body>
@@ -1080,15 +1600,21 @@ if ($isLoggedIn && $redis) {
              </div>
 
              <!-- Заблокированные IP -->
-             <div id="blocked-ips" class="tab-content active">
-                 <div class="section">
-                     <div class="section-header">
-                         🚫 Заблокированные IP адреса (<?php echo count($blockedIPs); ?>)
-                     </div>
-                     <div class="section-content">
-                         <input type="text" class="search-box" placeholder="🔍 Поиск по IP или hostname..." onkeyup="filterTable(this, 'blocked-ips-table')">
-                         
-                         <table class="table" id="blocked-ips-table">
+             <!-- Заблокированные IP -->
+<div id="blocked-ips" class="tab-content active">
+    <div class="section">
+        <div class="section-header">
+            🚫 Заблокированные IP адреса (<?php echo count($blockedIPs); ?>)
+        </div>
+        <div class="section-content">
+            <input type="text" class="search-box" placeholder="🔍 Поиск по IP или hostname..." onkeyup="filterTable(this, 'blocked-ips-table')">
+            
+            <div class="table-view-toggle mobile-only">
+                <button onclick="toggleTableView(this)">📱 Карточки</button>
+            </div>
+
+            <div class="table-container">
+                <table class="table" id="blocked-ips-table">
                              <thead>
                                  <tr>
                                      <th>IP адрес</th>
@@ -1151,27 +1677,99 @@ if ($isLoggedIn && $redis) {
                                      </tr>
                                  <?php endforeach; ?>
                              </tbody>
-                         </table>
-                         
-                         <?php if (empty($blockedIPs)): ?>
-                             <p style="text-align: center; color: #6c757d; padding: 20px;">
-                                 ✅ Нет заблокированных IP адресов
-                             </p>
-                         <?php endif; ?>
+                    </table>
+                </div>
+
+                <!-- Вид карточек для мобильных -->
+                <div class="table-cards">
+                    <?php foreach ($blockedIPs as $ip): ?>
+                        <div class="table-card">
+                            <div class="table-card-header">
+                                🚫 <?php echo htmlspecialchars($ip['ip']); ?>
+                            </div>
+                            <div class="table-card-row">
+                                <div class="table-card-label">Hostname:</div>
+                                <div class="table-card-value">
+                                    <?php if ($ip['hostname'] !== 'N/A' && $ip['hostname'] !== 'Timeout/N/A' && $ip['hostname'] !== 'rDNS disabled'): ?>
+                                        <?php echo htmlspecialchars($ip['hostname']); ?>
+                                    <?php else: ?>
+                                        <span style="color: #6c757d;"><?php echo htmlspecialchars($ip['hostname']); ?></span>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                            <div class="table-card-row">
+                                <div class="table-card-label">Заблокирован:</div>
+                                <div class="table-card-value"><?php echo date('Y-m-d H:i:s', $ip['blocked_at']); ?></div>
+                            </div>
+                            <div class="table-card-row">
+                                <div class="table-card-label">TTL:</div>
+                                <div class="table-card-value">
+                                    <?php if ($ip['ttl'] > 0): ?>
+                                        <span class="status-badge status-blocked">
+                                            <?php echo gmdate('H:i:s', $ip['ttl']); ?>
+                                        </span>
+                                    <?php else: ?>
+                                        <span class="status-badge status-active">Постоянно</span>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                            <div class="table-card-row">
+                                <div class="table-card-label">User-Agent:</div>
+                                <div class="table-card-value">
+                                    <span title="<?php echo htmlspecialchars($ip['user_agent']); ?>">
+                                        <?php echo htmlspecialchars(substr($ip['user_agent'], 0, 30)); ?>
+                                        <?php if (strlen($ip['user_agent']) > 30) echo '...'; ?>
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="table-card-row">
+                                <div class="table-card-label">Повторное нарушение:</div>
+                                <div class="table-card-value">
+                                    <?php if ($ip['repeat_offender']): ?>
+                                        <span class="status-badge status-blocked">Да</span>
+                                    <?php else: ?>
+                                        <span class="status-badge status-tracking">Нет</span>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                            <div class="table-card-actions">
+                                <form method="POST">
+                                    <input type="hidden" name="action" value="unblock_ip">
+                                    <input type="hidden" name="key" value="<?php echo htmlspecialchars($ip['key']); ?>">
+                                    <button type="submit" class="btn btn-success" onclick="return confirm('Разблокировать IP?');">
+                                        🔓 Разблокировать
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+                
+                <?php if (empty($blockedIPs)): ?>
+                    <p style="text-align: center; color: #6c757d; padding: 20px;">
+                        ✅ Нет заблокированных IP адресов
+                    </p>
+                <?php endif; ?>
                      </div>
                  </div>
              </div>
 
              <!-- Заблокированные сессии -->
-             <div id="blocked-sessions" class="tab-content">
-                 <div class="section">
-                     <div class="section-header">
-                         🔒 Заблокированные сессии (<?php echo count($blockedSessions); ?>)
-                     </div>
-                     <div class="section-content">
-                         <input type="text" class="search-box" placeholder="🔍 Поиск по Session ID или IP..." onkeyup="filterTable(this, 'blocked-sessions-table')">
-                         
-                         <table class="table" id="blocked-sessions-table">
+             <!-- Заблокированные сессии -->
+<div id="blocked-sessions" class="tab-content">
+    <div class="section">
+        <div class="section-header">
+            🔒 Заблокированные сессии (<?php echo count($blockedSessions); ?>)
+        </div>
+        <div class="section-content">
+            <input type="text" class="search-box" placeholder="🔍 Поиск по Session ID или IP..." onkeyup="filterTable(this, 'blocked-sessions-table')">
+            
+            <div class="table-view-toggle mobile-only">
+                <button onclick="toggleTableView(this)">📱 Карточки</button>
+            </div>
+
+            <div class="table-container">
+                <table class="table" id="blocked-sessions-table">
                              <thead>
                                  <tr>
                                      <th>Session ID</th>
@@ -1223,13 +1821,69 @@ if ($isLoggedIn && $redis) {
                                      </tr>
                                  <?php endforeach; ?>
                              </tbody>
-                         </table>
-                         
-                         <?php if (empty($blockedSessions)): ?>
-                             <p style="text-align: center; color: #6c757d; padding: 20px;">
-                                 ✅ Нет заблокированных сессий
-                             </p>
-                         <?php endif; ?>
+                    </table>
+                </div>
+
+                <!-- Вид карточек для мобильных -->
+                <div class="table-cards">
+                    <?php foreach ($blockedSessions as $session): ?>
+                        <div class="table-card">
+                            <div class="table-card-header">
+                                🔒 Session: <?php echo htmlspecialchars(substr($session['session_id'], 0, 16)); ?>...
+                            </div>
+                            <div class="table-card-row">
+                                <div class="table-card-label">IP адрес:</div>
+                                <div class="table-card-value">
+                                    <span class="ip-info"><?php echo htmlspecialchars($session['ip']); ?></span>
+                                </div>
+                            </div>
+                            <div class="table-card-row">
+                                <div class="table-card-label">Заблокирован:</div>
+                                <div class="table-card-value"><?php echo date('Y-m-d H:i:s', $session['blocked_at']); ?></div>
+                            </div>
+                            <div class="table-card-row">
+                                <div class="table-card-label">TTL:</div>
+                                <div class="table-card-value">
+                                    <?php if ($session['ttl'] > 0): ?>
+                                        <span class="status-badge status-blocked">
+                                            <?php echo gmdate('H:i:s', $session['ttl']); ?>
+                                        </span>
+                                    <?php else: ?>
+                                        <span class="status-badge status-active">Постоянно</span>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                            <div class="table-card-row">
+                                <div class="table-card-label">User-Agent:</div>
+                                <div class="table-card-value">
+                                    <span title="<?php echo htmlspecialchars($session['user_agent']); ?>">
+                                        <?php echo htmlspecialchars(substr($session['user_agent'], 0, 30)); ?>
+                                        <?php if (strlen($session['user_agent']) > 30) echo '...'; ?>
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="table-card-row">
+                                <div class="table-card-label">Причина:</div>
+                                <div class="table-card-value"><?php echo htmlspecialchars($session['blocked_reason']); ?></div>
+                            </div>
+                            <div class="table-card-actions">
+                                <form method="POST">
+                                    <input type="hidden" name="action" value="unblock_session">
+                                    <input type="hidden" name="key" value="<?php echo htmlspecialchars($session['key']); ?>">
+                                    <button type="submit" class="btn btn-success" onclick="return confirm('Разблокировать сессию?');">
+                                        🔓 Разблокировать
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+                
+                <?php if (empty($blockedSessions)): ?>
+                    <p style="text-align: center; color: #6c757d; padding: 20px;">
+                        ✅ Нет заблокированных сессий
+                    </p>
+                <?php endif; ?>
                      </div>
                  </div>
              </div>
@@ -1241,9 +1895,14 @@ if ($isLoggedIn && $redis) {
                          🍪 Заблокированные cookies (<?php echo count($blockedCookies); ?>)
                      </div>
                      <div class="section-content">
-                         <input type="text" class="search-box" placeholder="🔍 Поиск по IP или hash..." onkeyup="filterTable(this, 'blocked-cookies-table')">
-                         
-                         <table class="table" id="blocked-cookies-table">
+    <input type="text" class="search-box" placeholder="🔍 Поиск по IP или hash..." onkeyup="filterTable(this, 'blocked-cookies-table')">
+    
+    <div class="table-view-toggle mobile-only">
+        <button onclick="toggleTableView(this)">📱 Карточки</button>
+    </div>
+
+    <div class="table-container">
+        <table class="table" id="blocked-cookies-table">
                              <thead>
                                  <tr>
                                      <th>Cookie Hash</th>
@@ -1299,13 +1958,73 @@ if ($isLoggedIn && $redis) {
                                      </tr>
                                  <?php endforeach; ?>
                              </tbody>
-                         </table>
-                         
-                         <?php if (empty($blockedCookies)): ?>
-                             <p style="text-align: center; color: #6c757d; padding: 20px;">
-                                 ✅ Нет заблокированных cookies
-                             </p>
-                         <?php endif; ?>
+                </table>
+            </div>
+
+            <!-- Вид карточек для мобильных -->
+            <div class="table-cards">
+                <?php foreach ($blockedCookies as $cookie): ?>
+                    <div class="table-card">
+                        <div class="table-card-header">
+                            🍪 Cookie: <?php echo htmlspecialchars(substr($cookie['cookie_hash'], 0, 16)); ?>...
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">IP адрес:</div>
+                            <div class="table-card-value">
+                                <span class="ip-info"><?php echo htmlspecialchars($cookie['ip']); ?></span>
+                            </div>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">Session ID:</div>
+                            <div class="table-card-value">
+                                <span class="ip-info" title="<?php echo htmlspecialchars($cookie['session_id']); ?>">
+                                    <?php echo htmlspecialchars(substr($cookie['session_id'], 0, 12)); ?>...
+                                </span>
+                            </div>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">Заблокирован:</div>
+                            <div class="table-card-value"><?php echo date('Y-m-d H:i:s', $cookie['blocked_at']); ?></div>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">TTL:</div>
+                            <div class="table-card-value">
+                                <?php if ($cookie['ttl'] > 0): ?>
+                                    <span class="status-badge status-blocked">
+                                        <?php echo gmdate('H:i:s', $cookie['ttl']); ?>
+                                    </span>
+                                <?php else: ?>
+                                    <span class="status-badge status-active">Постоянно</span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">URI:</div>
+                            <div class="table-card-value">
+                                <span title="<?php echo htmlspecialchars($cookie['uri']); ?>">
+                                    <?php echo htmlspecialchars(substr($cookie['uri'], 0, 25)); ?>
+                                    <?php if (strlen($cookie['uri']) > 25) echo '...'; ?>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="table-card-actions">
+                            <form method="POST">
+                                <input type="hidden" name="action" value="unblock_cookie">
+                                <input type="hidden" name="key" value="<?php echo htmlspecialchars($cookie['key']); ?>">
+                                <button type="submit" class="btn btn-success" onclick="return confirm('Разблокировать cookie?');">
+                                    🔓 Разблокировать
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+            
+            <?php if (empty($blockedCookies)): ?>
+                <p style="text-align: center; color: #6c757d; padding: 20px;">
+                    ✅ Нет заблокированных cookies
+                </p>
+            <?php endif; ?>
                      </div>
                  </div>
              </div>
@@ -1317,9 +2036,14 @@ if ($isLoggedIn && $redis) {
                          👤 Заблокированные хеши пользователей (<?php echo count($blockedUserHashes); ?>)
                      </div>
                      <div class="section-content">
-                         <input type="text" class="search-box" placeholder="🔍 Поиск по хешу или IP..." onkeyup="filterTable(this, 'blocked-user-hashes-table')">
-                         
-                         <table class="table" id="blocked-user-hashes-table">
+    <input type="text" class="search-box" placeholder="🔍 Поиск по хешу или IP..." onkeyup="filterTable(this, 'blocked-user-hashes-table')">
+    
+    <div class="table-view-toggle mobile-only">
+        <button onclick="toggleTableView(this)">📱 Карточки</button>
+    </div>
+
+    <div class="table-container">
+        <table class="table" id="blocked-user-hashes-table">
                              <thead>
                                  <tr>
                                      <th>Хеш пользователя</th>
@@ -1382,13 +2106,82 @@ if ($isLoggedIn && $redis) {
                                      </tr>
                                  <?php endforeach; ?>
                              </tbody>
-                         </table>
-                         
-                         <?php if (empty($blockedUserHashes)): ?>
-                             <p style="text-align: center; color: #6c757d; padding: 20px;">
-                                 ✅ Нет заблокированных хешей пользователей
-                             </p>
-                         <?php endif; ?>
+                </table>
+            </div>
+
+            <!-- Вид карточек для мобильных -->
+            <div class="table-cards">
+                <?php foreach ($blockedUserHashes as $hash): ?>
+                    <div class="table-card">
+                        <div class="table-card-header">
+                            👤 Hash: <?php echo htmlspecialchars($hash['hash_short']); ?>...
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">IP адрес:</div>
+                            <div class="table-card-value">
+                                <span class="ip-info"><?php echo htmlspecialchars($hash['ip'] ?? 'N/A'); ?></span>
+                            </div>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">Hostname:</div>
+                            <div class="table-card-value">
+                                <?php if ($hash['hostname'] !== 'N/A' && $hash['hostname'] !== 'Timeout/N/A' && $hash['hostname'] !== 'rDNS disabled'): ?>
+                                    <span title="<?php echo htmlspecialchars($hash['hostname']); ?>">
+                                        <?php echo htmlspecialchars(substr($hash['hostname'], 0, 25)); ?>
+                                        <?php if (strlen($hash['hostname']) > 25) echo '...'; ?>
+                                    </span>
+                                <?php else: ?>
+                                    <span style="color: #6c757d;"><?php echo htmlspecialchars($hash['hostname']); ?></span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">Заблокирован:</div>
+                            <div class="table-card-value"><?php echo date('Y-m-d H:i:s', $hash['blocked_at']); ?></div>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">TTL:</div>
+                            <div class="table-card-value">
+                                <?php if ($hash['ttl'] > 0): ?>
+                                    <span class="status-badge status-blocked">
+                                        <?php echo gmdate('H:i:s', $hash['ttl']); ?>
+                                    </span>
+                                <?php else: ?>
+                                    <span class="status-badge status-active">Постоянно</span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">User-Agent:</div>
+                            <div class="table-card-value">
+                                <span title="<?php echo htmlspecialchars($hash['user_agent'] ?? ''); ?>">
+                                    <?php echo htmlspecialchars(substr($hash['user_agent'] ?? '', 0, 30)); ?>
+                                    <?php if (strlen($hash['user_agent'] ?? '') > 30) echo '...'; ?>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">Причина:</div>
+                            <div class="table-card-value"><?php echo htmlspecialchars($hash['blocked_reason'] ?? 'N/A'); ?></div>
+                        </div>
+                        <div class="table-card-actions">
+                            <form method="POST">
+                                <input type="hidden" name="action" value="unblock_user_hash">
+                                <input type="hidden" name="key" value="<?php echo htmlspecialchars($hash['key']); ?>">
+                                <button type="submit" class="btn btn-success" onclick="return confirm('Разблокировать хеш пользователя?');">
+                                    🔓 Разблокировать
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+            
+            <?php if (empty($blockedUserHashes)): ?>
+                <p style="text-align: center; color: #6c757d; padding: 20px;">
+                    ✅ Нет заблокированных хешей пользователей
+                </p>
+            <?php endif; ?>
                      </div>
                  </div>
              </div>
@@ -1942,6 +2735,19 @@ if ($isLoggedIn && $redis) {
 Version 2.0 - Full User Hash Support + Fast rDNS
 Admin Panel Loaded Successfully!
          `);
+		 // Функция переключения вида таблицы
+function toggleTableView(button) {
+    const section = button.closest('.section-content');
+    const isCards = section.classList.contains('show-cards');
+    
+    if (isCards) {
+        section.classList.remove('show-cards');
+        button.textContent = '📱 Карточки';
+    } else {
+        section.classList.add('show-cards');
+        button.textContent = '📊 Таблица';
+    }
+}
      </script>
  <?php endif; ?>
 </body>
