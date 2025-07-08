@@ -418,254 +418,274 @@ class RedisBotProtectionWithSessions {
    * ИСПРАВЛЕННАЯ функция анализа поведения пользователя по хешу
    * Использует более точные алгоритмы и стабильный хеш
    */
-  private function analyzeUserHashBehavior() {
-      $trackingData = $this->trackUserHashActivity();
-      
-      if (!$trackingData || $trackingData['requests'] < 3) {
-          return false; // Недостаточно данных для анализа
-      }
-      
-      $score = 0;
-      $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
-      $isMobile = $this->isMobileDevice($userAgent);
-      $browserInfo = $this->getBrowserFingerprint($userAgent);
-      
-      // Адаптивные пороги в зависимости от типа устройства
-      $blockThreshold = $isMobile ? 10 : 8;
-      
-      // 1. Подозрительный User-Agent - основной индикатор бота
-      if ($this->isSuspiciousUserAgent($userAgent)) {
-          $score += $isMobile ? 12 : 15;
-          error_log("Suspicious UA detected: +15 points");
-      }
-      
-      // 2. Анализ частоты запросов
-      $requests = $trackingData['requests'];
-      $timeSpent = time() - $trackingData['first_seen'];
-      
-      if ($timeSpent > 0) {
-          $requestsPerMinute = ($requests * 60) / $timeSpent;
-          
-          if ($isMobile) {
-              // Более мягкие пороги для мобильных (они могут быть активнее)
-              if ($requestsPerMinute > 150) $score += 15;
-              elseif ($requestsPerMinute > 100) $score += 10;
-              elseif ($requestsPerMinute > 60) $score += 5;
-          } else {
-              // Более строгие пороги для десктопа
-              if ($requestsPerMinute > 80) $score += 15;
-              elseif ($requestsPerMinute > 50) $score += 10;
-              elseif ($requestsPerMinute > 30) $score += 5;
-          }
-          
-          if ($score > 0) {
-              error_log("High request rate: {$requestsPerMinute}/min, +{$score} points");
-          }
-      }
-      
-      // 3. Анализ разнообразия страниц
-      $uniquePages = array_unique($trackingData['pages'] ?? []);
-      $totalPages = count($trackingData['pages'] ?? []);
-      
-      if ($totalPages > 20) {
-          $pageVariety = count($uniquePages) / $totalPages;
-          
-          // Если посещает одну и ту же страницу слишком часто
-          if ($pageVariety < 0.1) { // Менее 10% уникальных страниц
-              $score += $isMobile ? 5 : 8;
-              error_log("Low page variety: {$pageVariety}, +{$score} points");
-          }
-      }
-      
-      // 4. Анализ регулярности запросов (для выявления скриптов)
-      if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 10) {
-          $intervals = [];
-          $times = array_slice($trackingData['request_times'], -10);
-          
-          for ($i = 1; $i < count($times); $i++) {
-              $intervals[] = $times[$i] - $times[$i-1];
-          }
-          
-          if (count($intervals) >= 9) {
-              $avgInterval = array_sum($intervals) / count($intervals);
-              $variance = 0;
-              foreach ($intervals as $interval) {
-                  $variance += pow($interval - $avgInterval, 2);
-              }
-              $variance /= count($intervals);
-              $stdDev = sqrt($variance);
-              
-              // Слишком регулярные запросы = вероятно скрипт
-              if ($stdDev < 1 && $avgInterval < 5 && $avgInterval > 0.5) {
-                  $score += $isMobile ? 8 : 12;
-                  error_log("Too regular requests: stdDev={$stdDev}, avgInterval={$avgInterval}, +{$score} points");
-              }
-          }
-      }
-      
-      // 5. Быстрые последовательные запросы
-      if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 5) {
-          $lastFive = array_slice($trackingData['request_times'], -5);
-          $timeDiff = end($lastFive) - reset($lastFive);
-          
-          if ($timeDiff <= 3) { // 5 запросов за 3 секунды
-              $score += $isMobile ? 8 : 12;
-              error_log("Rapid fire requests: 5 requests in {$timeDiff}s, +{$score} points");
-          }
-      }
-      
-      // 6. Множественные IP-адреса (возможная ротация прокси)
-      $uniqueIPs = array_unique($trackingData['ips'] ?? []);
-      if (count($uniqueIPs) > 5) {
-          $score += 10; // Одинаково для мобильных и десктопа
-          error_log("Multiple IPs detected: " . count($uniqueIPs) . " IPs, +10 points");
-      }
-      
-      // 7. Проверка на повторные нарушения
-      $userHash = $this->generateUserHash();
-      $statsKey = $this->userHashPrefix . 'stats:' . $userHash;
-      $blockCount = $this->redis->hget($statsKey, 'block_count') ?: 0;
-      
-      if ($blockCount > 0) {
-          $score += $blockCount * 3; // +3 за каждую предыдущую блокировку
-          error_log("Repeat offender: {$blockCount} previous blocks, +{$score} points");
-      }
-      
-      // Финальное логирование
-      error_log("User hash analysis complete: Hash=" . substr($userHash, 0, 12) . "..., " .
-                "Score={$score}/{$blockThreshold}, Requests={$requests}, " .
-                "Mobile=" . ($isMobile ? 'Yes' : 'No') . ", " .
-                "Browser={$browserInfo['name']} {$browserInfo['version']}, " .
-                "Platform={$browserInfo['platform']}, " .
-                "UniquePages=" . count($uniquePages) . "/" . $totalPages . ", " .
-                "UniqueIPs=" . count($uniqueIPs));
-      
-      return $score >= $blockThreshold;
-  }
+  /**
+ * ИСПРАВЛЕННАЯ функция анализа поведения пользователя по хешу
+ * НЕ блокирует IP для браузеров, повышены пороги блокировки
+ */
+private function analyzeUserHashBehavior() {
+    $trackingData = $this->trackUserHashActivity();
+    
+    if (!$trackingData || $trackingData['requests'] < 8) { // Увеличили с 5 до 8
+        return false; // Недостаточно данных для анализа
+    }
+    
+    $score = 0;
+    $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+    $isMobile = $this->isMobileDevice($userAgent);
+    $browserInfo = $this->getBrowserFingerprint($userAgent);
+    
+    // ПОВЫШЕННЫЕ пороги блокировки
+    $blockThreshold = $isMobile ? 20 : 18; // Было 15/12
+    
+    // 1. Подозрительный User-Agent - основной индикатор бота
+    if ($this->isSuspiciousUserAgent($userAgent)) {
+        $score += $isMobile ? 15 : 20; // Увеличили с 10/13
+        error_log("Suspicious UA detected: +20 points");
+    }
+    
+    // 2. Анализ частоты запросов (увеличили пороги)
+    $requests = $trackingData['requests'];
+    $timeSpent = time() - $trackingData['first_seen'];
+    
+    if ($timeSpent > 0) {
+        $requestsPerMinute = ($requests * 60) / $timeSpent;
+        
+        if ($isMobile) {
+            // Более мягкие пороги для мобильных
+            if ($requestsPerMinute > 300) $score += 12; // Было 200/12
+            elseif ($requestsPerMinute > 200) $score += 8; // Было 150/10
+            elseif ($requestsPerMinute > 120) $score += 4; // Было 100/6
+        } else {
+            // Пороги для десктопа
+            if ($requestsPerMinute > 250) $score += 12; // Было 150/12
+            elseif ($requestsPerMinute > 150) $score += 8; // Было 100/10
+            elseif ($requestsPerMinute > 80) $score += 4; // Было 60/6
+        }
+        
+        if ($score > 0) {
+            error_log("High request rate: {$requestsPerMinute}/min, +{$score} points");
+        }
+    }
+    
+    // 3. Анализ разнообразия страниц (увеличили лимиты)
+    $uniquePages = array_unique($trackingData['pages'] ?? []);
+    $totalPages = count($trackingData['pages'] ?? []);
+    
+    if ($totalPages > 60) { // Было 40
+        $pageVariety = count($uniquePages) / $totalPages;
+        
+        // Если посещает одну и ту же страницу слишком часто
+        if ($pageVariety < 0.05) { // Было 0.08
+            $score += $isMobile ? 3 : 4; // Было 4/6
+            error_log("Low page variety: {$pageVariety}, +{$score} points");
+        }
+    }
+    
+    // 4. Анализ регулярности запросов (увеличили требования)
+    if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 15) { // Было 10
+        $intervals = [];
+        $times = array_slice($trackingData['request_times'], -20); // Было -15
+        
+        for ($i = 1; $i < count($times); $i++) {
+            $intervals[] = $times[$i] - $times[$i-1];
+        }
+        
+        if (count($intervals) >= 15) { // Было 12
+            $avgInterval = array_sum($intervals) / count($intervals);
+            $variance = 0;
+            foreach ($intervals as $interval) {
+                $variance += pow($interval - $avgInterval, 2);
+            }
+            $variance /= count($intervals);
+            $stdDev = sqrt($variance);
+            
+            // Слишком регулярные запросы = вероятно скрипт
+            if ($stdDev < 0.5 && $avgInterval < 2 && $avgInterval > 0.2) { // Более строгие условия
+                $score += $isMobile ? 5 : 7; // Было 6/9
+                error_log("Too regular requests: stdDev={$stdDev}, avgInterval={$avgInterval}, +{$score} points");
+            }
+        }
+    }
+    
+    // 5. Быстрые последовательные запросы (более строгие условия)
+    if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 10) { // Было 7
+        $lastTen = array_slice($trackingData['request_times'], -10); // Было -7
+        $timeDiff = end($lastTen) - reset($lastTen);
+        
+        if ($timeDiff <= 3) { // 10 запросов за 3 секунды (было 7 за 2)
+            $score += $isMobile ? 6 : 8; // Было 6/9
+            error_log("Rapid fire requests: 10 requests in {$timeDiff}s, +{$score} points");
+        }
+        
+        // Экстремально быстрые запросы
+        if ($timeDiff <= 1) { // 10 запросов за 1 секунду
+            $score += 10;
+            error_log("Extremely rapid requests: 10 requests in {$timeDiff}s, +10 points");
+        }
+    }
+    
+    // 6. Множественные IP-адреса (возможная ротация прокси)
+    $uniqueIPs = array_unique($trackingData['ips'] ?? []);
+    if (count($uniqueIPs) > 15) { // Было 10
+        $score += 8; // Было 7
+        error_log("Multiple IPs detected: " . count($uniqueIPs) . " IPs, +8 points");
+    }
+    
+    // 7. Проверка на повторные нарушения
+    $userHash = $this->generateUserHash();
+    $statsKey = $this->userHashPrefix . 'stats:' . $userHash;
+    $blockCount = $this->redis->hget($statsKey, 'block_count') ?: 0;
+    
+    if ($blockCount > 2) { // Было 1
+        $score += $blockCount * 3; // Было 2
+        error_log("Repeat offender: {$blockCount} previous blocks, +{$score} points");
+    }
+    
+    // Финальное логирование
+    error_log("User hash analysis complete: Hash=" . substr($userHash, 0, 12) . "..., " .
+              "Score={$score}/{$blockThreshold}, Requests={$requests}, " .
+              "Mobile=" . ($isMobile ? 'Yes' : 'No') . ", " .
+              "Browser={$browserInfo['name']} {$browserInfo['version']}, " .
+              "Platform={$browserInfo['platform']}, " .
+              "UniquePages=" . count($uniquePages) . "/" . $totalPages . ", " .
+              "UniqueIPs=" . count($uniqueIPs));
+    
+    return $score >= $blockThreshold;
+}
   
   /**
    * ИСПРАВЛЕННАЯ основная функция защиты с правильной логикой блокировки
    */
-  public function protect() {
-      // Исключаем статические файлы
-      if ($this->isStaticFile()) {
-          return;
-      }
-      
-      // Запускаем сессию
-      $this->startSession();
-      
-      $ip = $this->getRealIP();
-      $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
-      
-      // Проверяем легитимные боты
-      if ($this->isLegitimateBot($userAgent)) {
-          $this->logBotVisit($ip, $userAgent, 'legitimate');
-          return;
-      }
-      
-      // Проверяем поисковики
-      if ($this->isVerifiedSearchEngine($ip, $userAgent)) {
-          $this->logSearchEngineVisit($ip, $userAgent);
-          return;
-      }
-      
-      // 1. ПРОВЕРКА: блокировка по хешу пользователя (приоритетная)
-      if ($this->isUserHashBlocked()) {
-          error_log("Request blocked by user hash: IP=$ip");
-          $this->sendBlockResponse();
-      }
-      
-      // 2. ПРОВЕРКА: блокировка сессии и cookie
-      if ($this->isSessionBlocked() || $this->isCookieBlocked()) {
-          $this->sendBlockResponse();
-      }
-      
-      // 3. ПРОВЕРКА: блокировка IP только для подозрительных User-Agent
-      if ($this->isBlocked($ip) && $this->isSuspiciousUserAgent($userAgent)) {
-          $this->sendBlockResponse();
-      }
-      
-      // 4. ПРОВЕРКА: валидный cookie
-      if ($this->hasValidCookie()) {
-          // Даже с валидным cookie отслеживаем активность по хешу
-          $this->trackUserHashActivity();
-          $this->updateSessionActivity();
-          
-          // Анализируем поведение только в критических случаях
-          if ($this->shouldAnalyzeIP($ip)) {
-              if ($this->analyzeRequest($ip)) {
-                  // ИСПРАВЛЕНИЕ: блокируем только ботов по IP, браузеры - по хешу
-                  if ($this->isSuspiciousUserAgent($userAgent)) {
-                      $this->blockIP($ip, 'Suspicious user agent with valid cookie');
-                      $this->blockSession();
-                      $this->blockCookieHash();
-                  } else {
-                      // Для браузеров НЕ блокируем IP
-                      $this->blockUserHash('Browser behavior detected with valid cookie');
-                      $this->blockSession();
-                      $this->blockCookieHash();
-                  }
-                  $this->sendBlockResponse();
-              }
-          }
-          return;
-      }
-      
-      // 5. АНАЛИЗ ДЛЯ НОВЫХ ПОЛЬЗОВАТЕЛЕЙ: проверяем только если есть веские основания
-      if ($this->shouldAnalyzeIP($ip)) {
-          if ($this->analyzeRequest($ip)) {
-              // ИСПРАВЛЕНИЕ: дифференцированная блокировка
-              if ($this->isSuspiciousUserAgent($userAgent)) {
-                  // Подозрительный User-Agent = блокируем IP + остальное
-                  $this->blockIP($ip, 'Suspicious user agent detected');
-                  if (isset($_COOKIE[$this->cookieName])) {
-                      $this->blockSession();
-                      $this->blockCookieHash();
-                  }
-              } else {
-                  // Обычный браузер = НЕ блокируем IP, только остальное
-                  if (isset($_COOKIE[$this->cookieName])) {
-                      $this->blockSession();
-                      $this->blockCookieHash();
-                  } else {
-                      // Новый пользователь браузера - только блокировка по хешу
-                      $this->blockUserHash('Browser behavior detected without cookie');
-                  }
-              }
-              $this->sendBlockResponse();
-          }
-		  }
-      
-      // 6. АНАЛИЗ ПОВЕДЕНИЯ ПО ХЕШУ: основная защита для браузеров
-      if ($this->analyzeUserHashBehavior()) {
-          $this->blockUserHash('Suspicious user behavior detected');
-          
-          // IP блокируем ТОЛЬКО для реальных ботов
-          if ($this->isSuspiciousUserAgent($userAgent)) {
-              $this->blockIP($ip, 'Bot behavior confirmed by user hash analysis');
-              if (isset($_COOKIE[$this->cookieName])) {
-                  $this->blockSession();
-                  $this->blockCookieHash();
-              }
-          } else {
-              // Для браузеров НЕ блокируем IP вообще - только хеш + сессия/cookie
-              if (isset($_COOKIE[$this->cookieName])) {
-                  $this->blockSession();
-                  $this->blockCookieHash();
-              }
-          }
-          
-          $this->sendBlockResponse();
-      }
-      
-      // 7. ИНИЦИАЛИЗАЦИЯ: если дошли сюда - устанавливаем cookie и инициализируем
-      if (!isset($_COOKIE[$this->cookieName])) {
-          $this->setVisitorCookie();
-          $this->initTracking($ip);
-          $this->initSession();
-      }
-  }
+  /**
+ * ИСПРАВЛЕННАЯ основная функция защиты - НЕ блокирует IP для браузеров
+ */
+public function protect() {
+    // Исключаем статические файлы
+    if ($this->isStaticFile()) {
+        return;
+    }
+    
+    // Запускаем сессию
+    $this->startSession();
+    
+    $ip = $this->getRealIP();
+    $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+    
+    // Проверяем легитимные боты
+    if ($this->isLegitimateBot($userAgent)) {
+        $this->logBotVisit($ip, $userAgent, 'legitimate');
+        return;
+    }
+    
+    // Проверяем поисковики
+    if ($this->isVerifiedSearchEngine($ip, $userAgent)) {
+        $this->logSearchEngineVisit($ip, $userAgent);
+        return;
+    }
+    
+    // 1. ПРОВЕРКА: блокировка по хешу пользователя (приоритетная)
+    if ($this->isUserHashBlocked()) {
+        error_log("Request blocked by user hash: IP=$ip");
+        $this->sendBlockResponse();
+    }
+    
+    // 2. ПРОВЕРКА: блокировка сессии и cookie
+    if ($this->isSessionBlocked() || $this->isCookieBlocked()) {
+        $this->sendBlockResponse();
+    }
+    
+    // 3. ПРОВЕРКА: блокировка IP ТОЛЬКО для подозрительных User-Agent
+    if ($this->isBlocked($ip) && $this->isSuspiciousUserAgent($userAgent)) {
+        $this->sendBlockResponse();
+    }
+    
+    // 4. ПРОВЕРКА: валидный cookie
+    if ($this->hasValidCookie()) {
+        // Даже с валидным cookie отслеживаем активность по хешу
+        $this->trackUserHashActivity();
+        $this->updateSessionActivity();
+        
+        // Анализируем поведение только в критических случаях
+        if ($this->shouldAnalyzeIP($ip)) {
+            if ($this->analyzeRequest($ip)) {
+                // ИСПРАВЛЕНИЕ: дифференцированная блокировка
+                if ($this->isSuspiciousUserAgent($userAgent)) {
+                    // Подозрительный User-Agent = блокируем IP + остальное
+                    $this->blockIP($ip, 'Suspicious user agent with valid cookie');
+                    $this->blockSession();
+                    $this->blockCookieHash();
+                    $this->blockUserHash('Bot with valid cookie');
+                } else {
+                    // Браузер = НЕ блокируем IP, только остальное
+                    $this->blockUserHash('Browser behavior detected with valid cookie');
+                    $this->blockSession();
+                    $this->blockCookieHash();
+                    // БЕЗ $this->blockIP() для браузеров!
+                }
+                $this->sendBlockResponse();
+            }
+        }
+        return;
+    }
+    
+    // 5. АНАЛИЗ ДЛЯ НОВЫХ ПОЛЬЗОВАТЕЛЕЙ: проверяем только если есть веские основания
+    if ($this->shouldAnalyzeIP($ip)) {
+        if ($this->analyzeRequest($ip)) {
+            // ИСПРАВЛЕНИЕ: дифференцированная блокировка
+            if ($this->isSuspiciousUserAgent($userAgent)) {
+                // Подозрительный User-Agent = блокируем IP + остальное
+                $this->blockIP($ip, 'Suspicious user agent detected');
+                if (isset($_COOKIE[$this->cookieName])) {
+                    $this->blockSession();
+                    $this->blockCookieHash();
+                }
+                $this->blockUserHash('Bot detected');
+            } else {
+                // Обычный браузер = НЕ блокируем IP, только остальное
+                if (isset($_COOKIE[$this->cookieName])) {
+                    $this->blockSession();
+                    $this->blockCookieHash();
+                } else {
+                    // Новый пользователь браузера - только блокировка по хешу
+                    $this->blockUserHash('Browser behavior detected without cookie');
+                }
+                // БЕЗ $this->blockIP() для браузеров!
+            }
+            $this->sendBlockResponse();
+        }
+    }
+    
+    // 6. АНАЛИЗ ПОВЕДЕНИЯ ПО ХЕШУ: основная защита для браузеров
+    if ($this->analyzeUserHashBehavior()) {
+        // ИСПРАВЛЕНИЕ: НЕ блокируем IP для браузеров
+        if ($this->isSuspiciousUserAgent($userAgent)) {
+            // Реальный бот - блокируем всё включая IP
+            $this->blockIP($ip, 'Bot behavior confirmed by user hash analysis');
+            $this->blockUserHash('Bot confirmed');
+            if (isset($_COOKIE[$this->cookieName])) {
+                $this->blockSession();
+                $this->blockCookieHash();
+            }
+        } else {
+            // Браузер ведет себя как бот - НЕ блокируем IP
+            $this->blockUserHash('Browser acting like bot');
+            if (isset($_COOKIE[$this->cookieName])) {
+                $this->blockSession();
+                $this->blockCookieHash();
+            }
+            // БЕЗ $this->blockIP() для браузеров!
+        }
+        
+        $this->sendBlockResponse();
+    }
+    
+    // 7. ИНИЦИАЛИЗАЦИЯ: если дошли сюда - устанавливаем cookie и инициализируем
+    if (!isset($_COOKIE[$this->cookieName])) {
+        $this->setVisitorCookie();
+        $this->initTracking($ip);
+        $this->initSession();
+    }
+}
   
   private function isSessionBlocked() {
       $sessionId = session_id();
@@ -1230,126 +1250,131 @@ class RedisBotProtectionWithSessions {
   /**
    * ИСПРАВЛЕННАЯ функция анализа запросов - НЕ блокирует IP для браузеров
    */
-  private function analyzeRequest($ip) {
-      $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
-      $data = $this->redis->get($trackingKey);
-      
-      if (!$data) {
-          return false; // Если нет данных - не блокируем
-      }
-      
-      $score = 0;
-      $currentUA = $_SERVER['HTTP_USER_AGENT'] ?? '';
-      $isMobile = $this->isMobileDevice($currentUA);
-      
-      // Понизили пороги для более чувствительной блокировки
-      $blockThreshold = $isMobile ? 8 : 6; // Было 15/12 - еще больше снизили
-      
-      // 1. Проверка подозрительного User-Agent (снижаем штраф)
-      if ($this->isSuspiciousUserAgent($currentUA)) {
-          $score += $isMobile ? 15 : 25; // Было 8/15
-      }
-      
-      // 2. Анализ частоты запросов (значительно увеличиваем пороги)
-      $requests = $data['requests'] ?? 0;
-      $timeSpent = time() - ($data['first_seen'] ?? time());
-      
-      if ($timeSpent > 0) {
-          $requestsPerMinute = ($requests * 60) / $timeSpent;
-          
-          if ($isMobile) {
-              if ($requestsPerMinute > 80) $score += 15; // Было 50/10
-              elseif ($requestsPerMinute > 60) $score += 12; // Было 35/8
-              elseif ($requestsPerMinute > 40) $score += 8; // Было 25/5
-          } else {
-              if ($requestsPerMinute > 60) $score += 15; // Было 40/10
-              elseif ($requestsPerMinute > 40) $score += 12; // Было 25/8
-              elseif ($requestsPerMinute > 25) $score += 8; // Было 15/5
-          }
-      }
-      
-      // 3. Много запросов без cookies (увеличиваем лимиты)
-      $cookieLimit = $isMobile ? 15 : 12; // Было 8/6
-      if ($requests > $cookieLimit && !isset($_COOKIE[$this->cookieName])) {
-          $score += $isMobile ? 6 : 10; // Было 4/6
-      }
-      
-      // 4. Анализ HTTP заголовков (снижаем штрафы)
-      $currentHeaders = $this->collectHeaders();
-      
-      if (!isset($currentHeaders['HTTP_ACCEPT']) || $currentHeaders['HTTP_ACCEPT'] === '*/*') {
-          $score += $isMobile ? 2 : 4; // Было 1/3
-      }
-      if (!isset($currentHeaders['HTTP_ACCEPT_LANGUAGE'])) {
-          $score += $isMobile ? 2 : 3; // Было 1/2
-      }
-      if (!isset($currentHeaders['HTTP_ACCEPT_ENCODING'])) {
-          $score += $isMobile ? 2 : 3; // Было 1/2
-      }
-      
-      // 5. Разнообразие страниц (увеличиваем лимиты)
-      $uniquePages = array_unique($data['pages'] ?? []);
-      $totalPages = count($data['pages'] ?? []);
-      
-      $pageLimit = $isMobile ? 20 : 15; // Было 12/8
-      if ($totalPages > $pageLimit && count($uniquePages) <= 2) {
-          $score += $isMobile ? 3 : 6; // Было 2/4
-      }
-      
-      // 6. Множественные User-Agent (снижаем штраф)
-      $uniqueUA = array_unique($data['user_agents'] ?? []);
-      if (count($uniqueUA) > 3) { // Было 2
-          $score += 8; // Было 5
-      }
-      
-      // 7. Анализ регулярности запросов (увеличиваем требования)
-      if (isset($data['request_times']) && count($data['request_times']) >= 8) { // Было 5
-          $intervals = [];
-          $lastEight = array_slice($data['request_times'], -8); // Было -5
-          
-          for ($i = 1; $i < count($lastEight); $i++) {
-              $intervals[] = $lastEight[$i] - $lastEight[$i-1];
-          }
-          
-          if (count($intervals) >= 6) { // Было 4
-              $avgInterval = array_sum($intervals) / count($intervals);
-              $variance = 0;
-              foreach ($intervals as $interval) {
-                  $variance += pow($interval - $avgInterval, 2);
-              }
-              $variance /= count($intervals);
-              
-              $varianceThreshold = $isMobile ? 2 : 3; // Было 1/2
-              $intervalThreshold = $isMobile ? 8 : 12; // Было 5/8
-              
-              if ($variance < $varianceThreshold && $avgInterval < $intervalThreshold) {
-                  $score += $isMobile ? 5 : 10; // Было 3/6
-              }
-          }
-      }
-	  // 8. Проверка очень быстрых запросов (делаем менее агрессивной)
-      if (isset($data['request_times']) && count($data['request_times']) >= 5) { // Было 3
-          $lastFive = array_slice($data['request_times'], -5); // Было -3
-          $timeDiff = end($lastFive) - reset($lastFive);
-          
-          // Если 5 запросов за 5 секунд или меньше (было 3 за 3)
-          if ($timeDiff <= 5) {
-              $score += $isMobile ? 5 : 10; // Было 3/6
-          }
-          // Если 5 запросов за 2 секунды (было 3 за 1)
-          if ($timeDiff <= 2) {
-              $score += 12; // Было 8
-          }
-      }
-      
-      // Логируем для отладки
-      error_log("Bot analysis: IP=$ip, UA=" . substr($currentUA, 0, 50) . ", Score=$score, Requests=$requests, Mobile=" . 
-                ($isMobile ? 'Yes' : 'No') . ", Threshold=$blockThreshold, SuspiciousUA=" . 
-                ($this->isSuspiciousUserAgent($currentUA) ? 'Yes' : 'No'));
-      
-      // ВАЖНО: Функция НЕ блокирует IP напрямую, только возвращает true/false
-      return $score >= $blockThreshold;
-  }
+  /**
+ * ИСПРАВЛЕННАЯ функция анализа запросов - повышены пороги блокировки
+ * Функция только анализирует, НЕ блокирует
+ */
+private function analyzeRequest($ip) {
+    $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
+    $data = $this->redis->get($trackingKey);
+    
+    if (!$data) {
+        return false; // Если нет данных - не блокируем
+    }
+    
+    $score = 0;
+    $currentUA = $_SERVER['HTTP_USER_AGENT'] ?? '';
+    $isMobile = $this->isMobileDevice($currentUA);
+    
+    // ПОВЫШЕННЫЕ пороги блокировки
+    $blockThreshold = $isMobile ? 20 : 18; // Было 12/10
+    
+    // 1. Проверка подозрительного User-Agent
+    if ($this->isSuspiciousUserAgent($currentUA)) {
+        $score += $isMobile ? 15 : 20; // Было 12/18
+    }
+    
+    // 2. Анализ частоты запросов (значительно увеличили пороги)
+    $requests = $data['requests'] ?? 0;
+    $timeSpent = time() - ($data['first_seen'] ?? time());
+    
+    if ($timeSpent > 0) {
+        $requestsPerMinute = ($requests * 60) / $timeSpent;
+        
+        if ($isMobile) {
+            if ($requestsPerMinute > 180) $score += 12; // Было 120/12
+            elseif ($requestsPerMinute > 120) $score += 8; // Было 90/10
+            elseif ($requestsPerMinute > 80) $score += 4; // Было 60/6
+        } else {
+            if ($requestsPerMinute > 150) $score += 12; // Было 100/12
+            elseif ($requestsPerMinute > 100) $score += 8; // Было 70/10
+            elseif ($requestsPerMinute > 60) $score += 4; // Было 45/6
+        }
+    }
+    
+    // 3. Много запросов без cookies (увеличили лимиты)
+    $cookieLimit = $isMobile ? 35 : 30; // Было 25/20
+    if ($requests > $cookieLimit && !isset($_COOKIE[$this->cookieName])) {
+        $score += $isMobile ? 3 : 4; // Было 4/6
+    }
+    
+    // 4. Анализ HTTP заголовков (снизили штрафы)
+    $currentHeaders = $this->collectHeaders();
+    
+    if (!isset($currentHeaders['HTTP_ACCEPT']) || $currentHeaders['HTTP_ACCEPT'] === '*/*') {
+        $score += $isMobile ? 1 : 2; // Было 2/3
+    }
+    if (!isset($currentHeaders['HTTP_ACCEPT_LANGUAGE'])) {
+        $score += $isMobile ? 1 : 2; // Было 2/3
+    }
+    if (!isset($currentHeaders['HTTP_ACCEPT_ENCODING'])) {
+        $score += $isMobile ? 1 : 2; // Было 2/3
+    }
+    
+    // 5. Разнообразие страниц (увеличили лимиты)
+    $uniquePages = array_unique($data['pages'] ?? []);
+    $totalPages = count($data['pages'] ?? []);
+    
+    $pageLimit = $isMobile ? 50 : 40; // Было 30/25
+    if ($totalPages > $pageLimit && count($uniquePages) <= 2) {
+        $score += $isMobile ? 2 : 3; // Было 3/5
+    }
+    
+    // 6. Множественные User-Agent (снизили штраф)
+    $uniqueUA = array_unique($data['user_agents'] ?? []);
+    if (count($uniqueUA) > 8) { // Было 5
+        $score += 4; // Было 6
+    }
+    
+    // 7. Анализ регулярности запросов (увеличили требования)
+    if (isset($data['request_times']) && count($data['request_times']) >= 15) { // Было 10
+        $intervals = [];
+        $lastFifteen = array_slice($data['request_times'], -15); // Было -10
+        
+        for ($i = 1; $i < count($lastFifteen); $i++) {
+            $intervals[] = $lastFifteen[$i] - $lastFifteen[$i-1];
+        }
+        
+        if (count($intervals) >= 12) { // Было 8
+            $avgInterval = array_sum($intervals) / count($intervals);
+            $variance = 0;
+            foreach ($intervals as $interval) {
+                $variance += pow($interval - $avgInterval, 2);
+            }
+            $variance /= count($intervals);
+            
+            $varianceThreshold = $isMobile ? 1.0 : 1.5; // Было 1.5/2
+            $intervalThreshold = $isMobile ? 3 : 5; // Было 5/8
+            
+            if ($variance < $varianceThreshold && $avgInterval < $intervalThreshold) {
+                $score += $isMobile ? 3 : 5; // Было 4/7
+            }
+        }
+    }
+    
+    // 8. Проверка очень быстрых запросов (более строгие условия)
+    if (isset($data['request_times']) && count($data['request_times']) >= 10) { // Было 7
+        $lastTen = array_slice($data['request_times'], -10); // Было -7
+        $timeDiff = end($lastTen) - reset($lastTen);
+        
+        // Если 10 запросов за 5 секунд или меньше (было 7 за 4)
+        if ($timeDiff <= 5) {
+            $score += $isMobile ? 3 : 5; // Было 4/7
+        }
+        // Если 10 запросов за 2 секунды (было 7 за 2)
+        if ($timeDiff <= 2) {
+            $score += 6; // Было 8
+        }
+    }
+    
+    // Логируем для отладки
+    error_log("Bot analysis: IP=$ip, UA=" . substr($currentUA, 0, 50) . ", Score=$score, Requests=$requests, Mobile=" . 
+              ($isMobile ? 'Yes' : 'No') . ", Threshold=$blockThreshold, SuspiciousUA=" . 
+              ($this->isSuspiciousUserAgent($currentUA) ? 'Yes' : 'No'));
+    
+    // ВАЖНО: Функция НЕ блокирует ничего, только возвращает true/false
+    return $score >= $blockThreshold;
+}
   
   private function isBlocked($ip) {
       $blockKey = $this->blockPrefix . 'ip:' . hash('md5', $ip);
