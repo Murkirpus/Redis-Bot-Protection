@@ -1,5 +1,3 @@
-Screenshot 2025-07-10 163228.png
-![Главная страница](./images/Screenshot 2025-07-10 163228.png)
 <img src="./images/Screenshot 2025-07-10 163228.png" alt="Демонстрация" width="600">
  
  # Redis MurKir Security v2.0 - Полное описание системы
