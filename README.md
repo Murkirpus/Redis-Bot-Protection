@@ -1,5 +1,5 @@
 assets/images/Screenshot 2025-07-10 163228.png
-https://github.com/Murkirpus/Redis-Bot-Protection/blob/main/assets/images/Screenshot%202025-07-10%20163228.png?raw=true
+https://github.com/Murkirpus/Redis-Bot-Protection/blob/main/assets/images/Screenshot%202025-07-10%20163228.png
  
  # Redis MurKir Security v2.0 - Полное описание системы
 
