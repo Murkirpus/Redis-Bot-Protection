@@ -22,12 +22,12 @@ class RedisBotProtectionWithSessions {
      'session_data' => 3600,         // было 7200 (2ч) → 1 час  
      'session_blocked' => 10800,     // было 21600 (6ч) → 3 часа
      'cookie_blocked' => 7200,       // было 14400 (4ч) → 2 часа
-     'ip_blocked' => 900,            // было 1800 (30мин) → 15 мин
-     'ip_blocked_repeat' => 3600,    // было 7200 (2ч) → 1 час
+     'ip_blocked' => 86400,            // было 1800 (30мин) → 15 мин
+     'ip_blocked_repeat' => 259200,    // было 7200 (2ч) → 1 час
      'rdns_cache' => 900,            // было 1800 (30мин) → 15 мин
      'logs' => 86400,                // было 172800 (2дня) → 1 день
      'cleanup_interval' => 900,      // было 1800 (30мин) → 15 мин
-     'user_hash_blocked' => 3600,    // было 7200 (2ч) → 1 час
+     'user_hash_blocked' => 172800,    // было 7200 (2ч) → 1 час
      'user_hash_tracking' => 1800,   // было 3600 (1ч) → 30 мин
      'user_hash_stats' => 172800,    // было 604800 (7дней) → 2 дня
  ];
@@ -1313,8 +1313,8 @@ class RedisBotProtectionWithSessions {
      
      // 6. Множественные User-Agent (снизили штраф)
      $uniqueUA = array_unique($data['user_agents'] ?? []);
-     if (count($uniqueUA) > 8) { // Было 5
-         $score += 4; // Было 6
+     if (count($uniqueUA) > 5) { // Было 8
+         $score += 8; // Было 4
      }
      
      // 7. Анализ регулярности запросов (увеличили требования)
