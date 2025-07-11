@@ -24,7 +24,7 @@ class RedisBotProtectionWithSessions {
      'cookie_blocked' => 7200,       // было 14400 (4ч) → 2 часа
      'ip_blocked' => 86400,            // было 1800 (30мин) → 15 мин
      'ip_blocked_repeat' => 259200,    // было 7200 (2ч) → 1 час
-     'rdns_cache' => 900,            // было 1800 (30мин) → 15 мин
+     'rdns_cache' => 86400,            // было 1800 (30мин) → 15 мин
      'logs' => 86400,                // было 172800 (2дня) → 1 день
      'cleanup_interval' => 900,      // было 1800 (30мин) → 15 мин
      'user_hash_blocked' => 172800,    // было 7200 (2ч) → 1 час
