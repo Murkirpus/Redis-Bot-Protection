@@ -10,7 +10,7 @@ define('ADMIN_PASSWORD', 'murkir.pp.ua');
 // Настройки rDNS
 define('ENABLE_RDNS', true); // включить/выключить rDNS
 define('RDNS_TIMEOUT', 1); // 1 секунда таймаут
-define('RDNS_CACHE_TTL', 3600); // 1 час кеш
+define('RDNS_CACHE_TTL', 86400); // 1 час кеш
 
 // Проверка авторизации
 if (isset($_POST['login'])) {
