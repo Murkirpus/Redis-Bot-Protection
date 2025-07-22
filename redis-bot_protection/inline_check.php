@@ -1,38 +1,35 @@
 <?php
 // /var/www/your-site/bot_protection/redis_inline_check.php
 
-class RedisBotProtectionWithSessions {
+class RedisBotProtectionNoSessions {
  private $redis;
  private $cookieName = 'visitor_verified';
- private $secretKey = 'your_secret_key_here_change_this';
+ private $secretKey = 'your_secret_key_here_change_this12345!@#$';
  private $cookieLifetime = 86400 * 30; // 30 дней
  
- // Префиксы для Redis ключей
+ // Префиксы для Redis ключей (БЕЗ sessionPrefix)
  private $redisPrefix = 'bot_protection:';
  private $trackingPrefix = 'tracking:';
  private $blockPrefix = 'blocked:';
- private $sessionPrefix = 'session:';
  private $cookiePrefix = 'cookie:';
  private $rdnsPrefix = 'rdns:';
- private $userHashPrefix = 'user_hash:'; // Префикс для блокировки по хешу пользователя
+ private $userHashPrefix = 'user_hash:';
  
- // ОПТИМИЗИРОВАННЫЕ TTL (в секундах) - сократил в 2-4 раза
+ // ОПТИМИЗИРОВАННЫЕ TTL (в секундах) - БЕЗ сессий
  private $ttlSettings = [
-     'tracking_ip' => 1800,          // было 3600 (1ч) → 30 мин
-     'session_data' => 3600,         // было 7200 (2ч) → 1 час  
-     'session_blocked' => 10800,     // было 21600 (6ч) → 3 часа
-     'cookie_blocked' => 7200,       // было 14400 (4ч) → 2 часа
-     'ip_blocked' => 86400,            // было 1800 (30мин) → 15 мин
-     'ip_blocked_repeat' => 259200,    // было 7200 (2ч) → 1 час
-     'rdns_cache' => 86400,            // было 1800 (30мин) → 15 мин
-     'logs' => 86400,                // было 172800 (2дня) → 1 день
-     'cleanup_interval' => 900,      // было 1800 (30мин) → 15 мин
-     'user_hash_blocked' => 172800,    // было 7200 (2ч) → 1 час
-     'user_hash_tracking' => 1800,   // было 3600 (1ч) → 30 мин
-     'user_hash_stats' => 172800,    // было 604800 (7дней) → 2 дня
+     'tracking_ip' => 1800,          // 30 мин
+     'cookie_blocked' => 7200,       // 2 часа
+     'ip_blocked' => 86400,          // 24 часа
+     'ip_blocked_repeat' => 259200,  // 3 дня
+     'rdns_cache' => 900,            // 15 мин
+     'logs' => 86400,                // 1 день
+     'cleanup_interval' => 900,      // 15 мин
+     'user_hash_blocked' => 172800,  // 2 дня
+     'user_hash_tracking' => 1800,   // 30 мин
+     'user_hash_stats' => 172800,    // 2 дня
  ];
  
- // Разрешенные поисковики с их rDNS паттернами
+ // РАСШИРЕННЫЙ список поисковиков с точными паттернами
  private $allowedSearchEngines = [
      'googlebot' => [
          'user_agent_patterns' => ['googlebot', 'google'],
@@ -73,6 +70,18 @@ class RedisBotProtectionWithSessions {
      'applebot' => [
          'user_agent_patterns' => ['applebot'],
          'rdns_patterns' => ['.applebot.apple.com']
+     ],
+     'amazonbot' => [
+         'user_agent_patterns' => ['amazonbot'],
+         'rdns_patterns' => ['.amazon.com']
+     ],
+     'petalbot' => [
+         'user_agent_patterns' => ['petalbot'],
+         'rdns_patterns' => ['.petalsearch.com']
+     ],
+     'sogou' => [
+         'user_agent_patterns' => ['sogou'],
+         'rdns_patterns' => ['.sogou.com']
      ]
  ];
  
@@ -97,12 +106,13 @@ class RedisBotProtectionWithSessions {
          $this->redis->setOption(Redis::OPT_PREFIX, $this->redisPrefix);
          
      } catch (Exception $e) {
-         error_log("Redis connection failed: " . $e->getMessage());
+         // ТОЛЬКО КРИТИЧЕСКИЕ ОШИБКИ
+         error_log("CRITICAL: Redis connection failed - " . $e->getMessage());
          die('Service temporarily unavailable. Please try again later.');
      }
  }
  
- // ОПТИМИЗИРОВАННАЯ автоматическая очистка каждые 15 минут
+ // АВТОМАТИЧЕСКАЯ очистка БЕЗ ЛОГИРОВАНИЯ
  private function autoCleanup() {
      $lastCleanupKey = 'last_cleanup';
      $lastCleanup = $this->redis->get($lastCleanupKey);
@@ -113,97 +123,96 @@ class RedisBotProtectionWithSessions {
      }
  }
  
- // АГРЕССИВНАЯ очистка для быстрого освобождения памяти
+ // АГРЕССИВНАЯ очистка БЕЗ ЛОГИРОВАНИЯ
  private function aggressiveCleanup() {
      try {
          $cleaned = 0;
          $startTime = microtime(true);
-         $maxExecutionTime = 0.05; // Максимум 50мс на очистку
+         $maxExecutionTime = 0.05;
          
-         // Очистка с приоритетом на самые частые ключи
          $patterns = [
              $this->trackingPrefix . 'ip:*',
              $this->userHashPrefix . 'tracking:*',
-             $this->sessionPrefix . 'data:*',
              $this->rdnsPrefix . 'cache:*'
          ];
          
          foreach ($patterns as $pattern) {
              if ((microtime(true) - $startTime) > $maxExecutionTime) break;
              
-             $keys = array_slice($this->redis->keys($pattern), 0, 25); // Максимум 25 ключей за раз
+             $keys = array_slice($this->redis->keys($pattern), 0, 25);
              foreach ($keys as $key) {
                  if ((microtime(true) - $startTime) > $maxExecutionTime) break;
                  
                  $ttl = $this->redis->ttl($key);
-                 // Удаляем ключи без TTL или старше 50% от срока жизни
-                 if ($ttl === -1 || ($ttl > 0 && $ttl < 450)) { // 450 сек = 50% от минимального TTL
+                 if ($ttl === -1 || ($ttl > 0 && $ttl < 450)) {
                      $this->redis->del($key);
                      $cleaned++;
                  }
              }
              
-             // Ограничиваем количество обработанных ключей
              if ($cleaned > 50) break;
          }
          
-         if ($cleaned > 0) {
-             error_log("Aggressive cleanup: $cleaned keys removed in " . 
-                      round((microtime(true) - $startTime) * 1000) . "ms");
-         }
-         
      } catch (Exception $e) {
-         error_log("Aggressive cleanup error: " . $e->getMessage());
+         error_log("Cleanup error: " . $e->getMessage());
      }
  }
  
  /**
-  * ИСПРАВЛЕННАЯ функция нормализации IPv6
+  * УЛУЧШЕННАЯ функция нормализации IPv6
   */
  private function normalizeIPv6($ip) {
-     // Проверяем, что это действительно IPv6
      if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
          return $ip;
      }
      
-     // Используем inet_pton для правильной нормализации
-     $binary = inet_pton($ip);
+     // Используем inet_pton/inet_ntop для правильной нормализации
+     $binary = @inet_pton($ip);
      if ($binary === false) {
          return $ip;
      }
      
-     // Преобразуем обратно в стандартную форму
-     $normalized = inet_ntop($binary);
+     $normalized = @inet_ntop($binary);
      return $normalized ?: $ip;
  }
  
  /**
-  * ИСПРАВЛЕННАЯ функция получения части IP для отпечатка
+  * НОВАЯ функция: улучшенная нормализация IP (IPv4 и IPv6)
   */
+ private function normalizeIP($ip) {
+     // Убираем пробелы
+     $ip = trim($ip);
+     
+     if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+         return $ip; // IPv4 уже нормализован
+     }
+     
+     if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+         return $this->normalizeIPv6($ip);
+     }
+     
+     return $ip;
+ }
+ 
  private function getIPFingerprint($ip) {
      $ip = $this->normalizeIPv6($ip);
      
      if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
-         // Для IPv6 берем последние 4 сегмента (64 бита)
          $parts = explode(':', $ip);
          if (count($parts) >= 4) {
              return implode(':', array_slice($parts, -4));
          }
-         return substr($ip, -16); // Последние 16 символов как fallback
+         return substr($ip, -16);
      } else {
-         // Для IPv4 берем последние 2 октета
          $parts = explode('.', $ip);
          if (count($parts) >= 2) {
-             return end($parts) . '.' . prev($parts); // Последние 2 октета
+             return end($parts) . '.' . prev($parts);
          }
          return $ip;
      }
  }
  
- /**
-  * ИСПРАВЛЕННАЯ функция генерации стабильного хеша пользователя
-  * Один браузер = один хеш (до смены браузера/устройства)
-  */
+ // БЕЗ ЛОГИРОВАНИЯ генерации хеша
  private function generateUserHash($ip = null) {
      $ip = $ip ?: $this->getRealIP();
      $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
@@ -211,10 +220,8 @@ class RedisBotProtectionWithSessions {
      $acceptEncoding = $_SERVER['HTTP_ACCEPT_ENCODING'] ?? '';
      $accept = $_SERVER['HTTP_ACCEPT'] ?? '';
      
-     // Получаем детальную информацию о браузере
      $browserInfo = $this->getBrowserFingerprint($userAgent);
      
-     // Создаем стабильный отпечаток браузера (БЕЗ случайных компонентов)
      $stableFingerprint = $userAgent . '|' . 
                          $acceptLanguage . '|' . 
                          $acceptEncoding . '|' . 
@@ -224,46 +231,16 @@ class RedisBotProtectionWithSessions {
                          $browserInfo['platform'] . '|' .
                          $this->secretKey;
      
-     // Определяем тип устройства и добавляем IP-компонент
      if ($this->isMobileDevice($userAgent)) {
-         // Для мобильных добавляем часть IP (для роуминга/смены сетей)
          $ipPart = $this->getIPFingerprint($ip);
          $stableFingerprint .= '|mobile|' . $ipPart;
-         
-         error_log("Mobile device hash: Browser={$browserInfo['name']} {$browserInfo['version']}, Platform={$browserInfo['platform']}, IP_part=$ipPart");
      } else {
-         // Для десктопа используем полный IP (более стабильное подключение)
          $stableFingerprint .= '|desktop|' . $ip;
-         
-         error_log("Desktop device hash: Browser={$browserInfo['name']} {$browserInfo['version']}, Platform={$browserInfo['platform']}, Full_IP=$ip");
      }
      
      return hash('sha256', $stableFingerprint);
  }
  
- /**
-  * НОВАЯ функция для генерации сессионного хеша (когда нужна уникальность)
-  * Используется только в особых случаях, когда нужно различать вкладки/сессии
-  */
- private function generateSessionUserHash($ip = null) {
-     $stableHash = $this->generateUserHash($ip);
-     
-     // Добавляем сессионный компонент ТОЛЬКО если нужна уникальность сессии
-     $sessionId = session_id();
-     if (!$sessionId) {
-         session_start();
-         $sessionId = session_id();
-     }
-     
-     // Комбинируем стабильный хеш с сессией
-     $sessionFingerprint = $stableHash . '|session|' . $sessionId;
-     
-     return hash('sha256', $sessionFingerprint);
- }
- 
- /**
-  * НОВАЯ функция для получения детального отпечатка браузера
-  */
  private function getBrowserFingerprint($userAgent) {
      $browser = [
          'name' => 'unknown',
@@ -271,7 +248,6 @@ class RedisBotProtectionWithSessions {
          'platform' => 'unknown'
      ];
      
-     // Определяем браузер
      if (preg_match('/Chrome\/(\d+\.\d+)/', $userAgent, $matches)) {
          $browser['name'] = 'Chrome';
          $browser['version'] = $matches[1];
@@ -291,7 +267,6 @@ class RedisBotProtectionWithSessions {
          $browser['version'] = $matches[1];
      }
      
-     // Определяем платформу
      if (strpos($userAgent, 'Windows NT') !== false) {
          if (preg_match('/Windows NT (\d+\.\d+)/', $userAgent, $matches)) {
              $browser['platform'] = 'Windows_' . $matches[1];
@@ -311,20 +286,15 @@ class RedisBotProtectionWithSessions {
      return $browser;
  }
  
- /**
-  * ИСПРАВЛЕННАЯ функция проверки блокировки по хешу пользователя
-  */
  private function isUserHashBlocked() {
-     $userHash = $this->generateUserHash(); // Стабильный хеш
+     $userHash = $this->generateUserHash();
      $blockKey = $this->userHashPrefix . 'blocked:' . $userHash;
      return $this->redis->exists($blockKey);
  }
  
- /**
-  * ИСПРАВЛЕННАЯ функция блокировки пользователя по хешу
-  */
+ // ЛОГИРУЕМ ТОЛЬКО ФАКТ БЛОКИРОВКИ
  private function blockUserHash($reason = 'Bot behavior detected') {
-     $userHash = $this->generateUserHash(); // Стабильный хеш
+     $userHash = $this->generateUserHash();
      $ip = $this->getRealIP();
      
      $blockData = [
@@ -333,7 +303,7 @@ class RedisBotProtectionWithSessions {
          'blocked_at' => time(),
          'blocked_reason' => $reason,
          'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
-         'session_id' => session_id(),
+         'session_id' => 'no_session',
          'uri' => $_SERVER['REQUEST_URI'] ?? '',
          'headers' => $this->collectHeaders(),
          'browser_info' => $this->getBrowserFingerprint($_SERVER['HTTP_USER_AGENT'] ?? ''),
@@ -343,60 +313,50 @@ class RedisBotProtectionWithSessions {
      $blockKey = $this->userHashPrefix . 'blocked:' . $userHash;
      $this->redis->setex($blockKey, $this->ttlSettings['user_hash_blocked'], $blockData);
      
-     // Ведем статистику блокировок этого хеша
      $statsKey = $this->userHashPrefix . 'stats:' . $userHash;
      $this->redis->hincrby($statsKey, 'block_count', 1);
      $this->redis->hset($statsKey, 'last_blocked', time());
      $this->redis->hset($statsKey, 'last_blocked_reason', $reason);
      $this->redis->expire($statsKey, $this->ttlSettings['user_hash_stats']);
      
-     error_log("User hash blocked: Hash=" . substr($userHash, 0, 12) . "..., IP=$ip, Reason=$reason, " .
-               "Device=" . $blockData['device_type'] . ", Browser=" . $blockData['browser_info']['name']);
+     // ТОЛЬКО ВАЖНАЯ ИНФОРМАЦИЯ
+     error_log("Bot blocked [HASH]: " . substr($userHash, 0, 8) . " | IP: $ip | " . $blockData['device_type'] . " | " . $reason);
  }
  
- /**
-  * ИСПРАВЛЕННАЯ функция отслеживания активности пользователя по хешу
-  */
  private function trackUserHashActivity() {
-     $userHash = $this->generateUserHash(); // Стабильный хеш
+     $userHash = $this->generateUserHash();
      $trackingKey = $this->userHashPrefix . 'tracking:' . $userHash;
      
      $existing = $this->redis->get($trackingKey);
      
      if ($existing) {
-         // Обновляем существующую запись
          $existing['requests']++;
          $existing['last_activity'] = time();
          
-         // Добавляем текущую страницу
          $currentPage = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
          if (!in_array($currentPage, $existing['pages'])) {
              $existing['pages'][] = $currentPage;
          }
          
-         // Добавляем время запроса
          $existing['request_times'][] = time();
          
-         // Отслеживаем IP-адреса (для мониторинга смены сети)
          $currentIP = $this->getRealIP();
          if (!in_array($currentIP, $existing['ips'])) {
              $existing['ips'][] = $currentIP;
          }
          
-         // СОКРАТИЛ размеры данных для экономии памяти
-         if (count($existing['request_times']) > 20) { // было 50
+         if (count($existing['request_times']) > 20) {
              $existing['request_times'] = array_slice($existing['request_times'], -20);
          }
-         if (count($existing['pages']) > 30) { // было 100
+         if (count($existing['pages']) > 30) {
              $existing['pages'] = array_unique(array_slice($existing['pages'], -30));
          }
-         if (count($existing['ips']) > 10) { // было 20
+         if (count($existing['ips']) > 10) {
              $existing['ips'] = array_unique(array_slice($existing['ips'], -10));
          }
          
          $this->redis->setex($trackingKey, $this->ttlSettings['user_hash_tracking'], $existing);
      } else {
-         // Создаем новую запись
          $data = [
              'user_hash' => $userHash,
              'first_seen' => time(),
@@ -405,7 +365,6 @@ class RedisBotProtectionWithSessions {
              'pages' => [parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH)],
              'ips' => [$this->getRealIP()],
              'user_agents' => [$_SERVER['HTTP_USER_AGENT'] ?? ''],
-             'session_ids' => [session_id() ?: 'no_session'],
              'request_times' => [time()],
              'browser_info' => $this->getBrowserFingerprint($_SERVER['HTTP_USER_AGENT'] ?? '')
          ];
@@ -416,15 +375,12 @@ class RedisBotProtectionWithSessions {
      return $existing ?: $data;
  }
  
- /**
-  * ИСПРАВЛЕННАЯ функция анализа поведения пользователя по хешу
-  * НЕ блокирует IP для браузеров, повышены пороги блокировки
-  */
+ // БЕЗ ДЕТАЛЬНОГО ЛОГИРОВАНИЯ АНАЛИЗА
  private function analyzeUserHashBehavior() {
      $trackingData = $this->trackUserHashActivity();
      
-     if (!$trackingData || $trackingData['requests'] < 8) { // Увеличили с 5 до 8
-         return false; // Недостаточно данных для анализа
+     if (!$trackingData || $trackingData['requests'] < 8) {
+         return false;
      }
      
      $score = 0;
@@ -432,16 +388,14 @@ class RedisBotProtectionWithSessions {
      $isMobile = $this->isMobileDevice($userAgent);
      $browserInfo = $this->getBrowserFingerprint($userAgent);
      
-     // ПОВЫШЕННЫЕ пороги блокировки
-     $blockThreshold = $isMobile ? 20 : 18; // Было 15/12
+     $blockThreshold = $isMobile ? 20 : 18;
      
-     // 1. Подозрительный User-Agent - основной индикатор бота
+     // 1. Подозрительный User-Agent
      if ($this->isSuspiciousUserAgent($userAgent)) {
-         $score += $isMobile ? 15 : 20; // Увеличили с 10/13
-         error_log("Suspicious UA detected: +20 points");
+         $score += $isMobile ? 15 : 20;
      }
      
-     // 2. Анализ частоты запросов (увеличили пороги)
+     // 2. Анализ частоты запросов
      $requests = $trackingData['requests'];
      $timeSpent = time() - $trackingData['first_seen'];
      
@@ -449,46 +403,37 @@ class RedisBotProtectionWithSessions {
          $requestsPerMinute = ($requests * 60) / $timeSpent;
          
          if ($isMobile) {
-             // Более мягкие пороги для мобильных
-             if ($requestsPerMinute > 300) $score += 12; // Было 200/12
-             elseif ($requestsPerMinute > 200) $score += 8; // Было 150/10
-             elseif ($requestsPerMinute > 120) $score += 4; // Было 100/6
+             if ($requestsPerMinute > 300) $score += 12;
+             elseif ($requestsPerMinute > 200) $score += 8;
+             elseif ($requestsPerMinute > 120) $score += 4;
          } else {
-             // Пороги для десктопа
-             if ($requestsPerMinute > 250) $score += 12; // Было 150/12
-             elseif ($requestsPerMinute > 150) $score += 8; // Было 100/10
-             elseif ($requestsPerMinute > 80) $score += 4; // Было 60/6
-         }
-         
-         if ($score > 0) {
-             error_log("High request rate: {$requestsPerMinute}/min, +{$score} points");
+             if ($requestsPerMinute > 250) $score += 12;
+             elseif ($requestsPerMinute > 150) $score += 8;
+             elseif ($requestsPerMinute > 80) $score += 4;
          }
      }
      
-     // 3. Анализ разнообразия страниц (увеличили лимиты)
+     // 3. Анализ разнообразия страниц
      $uniquePages = array_unique($trackingData['pages'] ?? []);
      $totalPages = count($trackingData['pages'] ?? []);
      
-     if ($totalPages > 60) { // Было 40
+     if ($totalPages > 60) {
          $pageVariety = count($uniquePages) / $totalPages;
-         
-         // Если посещает одну и ту же страницу слишком часто
-         if ($pageVariety < 0.05) { // Было 0.08
-             $score += $isMobile ? 3 : 4; // Было 4/6
-             error_log("Low page variety: {$pageVariety}, +{$score} points");
+         if ($pageVariety < 0.05) {
+             $score += $isMobile ? 3 : 4;
          }
      }
      
-     // 4. Анализ регулярности запросов (увеличили требования)
-     if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 15) { // Было 10
+     // 4. Анализ регулярности запросов
+     if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 15) {
          $intervals = [];
-         $times = array_slice($trackingData['request_times'], -20); // Было -15
+         $times = array_slice($trackingData['request_times'], -20);
          
          for ($i = 1; $i < count($times); $i++) {
              $intervals[] = $times[$i] - $times[$i-1];
          }
          
-         if (count($intervals) >= 15) { // Было 12
+         if (count($intervals) >= 15) {
              $avgInterval = array_sum($intervals) / count($intervals);
              $variance = 0;
              foreach ($intervals as $interval) {
@@ -497,36 +442,30 @@ class RedisBotProtectionWithSessions {
              $variance /= count($intervals);
              $stdDev = sqrt($variance);
              
-             // Слишком регулярные запросы = вероятно скрипт
-             if ($stdDev < 0.5 && $avgInterval < 2 && $avgInterval > 0.2) { // Более строгие условия
-                 $score += $isMobile ? 5 : 7; // Было 6/9
-                 error_log("Too regular requests: stdDev={$stdDev}, avgInterval={$avgInterval}, +{$score} points");
+             if ($stdDev < 0.5 && $avgInterval < 2 && $avgInterval > 0.2) {
+                 $score += $isMobile ? 5 : 7;
              }
          }
      }
      
-     // 5. Быстрые последовательные запросы (более строгие условия)
-     if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 10) { // Было 7
-         $lastTen = array_slice($trackingData['request_times'], -10); // Было -7
+     // 5. Быстрые последовательные запросы
+     if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 10) {
+         $lastTen = array_slice($trackingData['request_times'], -10);
          $timeDiff = end($lastTen) - reset($lastTen);
          
-         if ($timeDiff <= 3) { // 10 запросов за 3 секунды (было 7 за 2)
-             $score += $isMobile ? 6 : 8; // Было 6/9
-             error_log("Rapid fire requests: 10 requests in {$timeDiff}s, +{$score} points");
+         if ($timeDiff <= 3) {
+             $score += $isMobile ? 6 : 8;
          }
          
-         // Экстремально быстрые запросы
-         if ($timeDiff <= 1) { // 10 запросов за 1 секунду
+         if ($timeDiff <= 1) {
              $score += 10;
-             error_log("Extremely rapid requests: 10 requests in {$timeDiff}s, +10 points");
          }
      }
      
-     // 6. Множественные IP-адреса (возможная ротация прокси)
+     // 6. Множественные IP-адреса
      $uniqueIPs = array_unique($trackingData['ips'] ?? []);
-     if (count($uniqueIPs) > 15) { // Было 10
-         $score += 8; // Было 7
-         error_log("Multiple IPs detected: " . count($uniqueIPs) . " IPs, +8 points");
+     if (count($uniqueIPs) > 15) {
+         $score += 8;
      }
      
      // 7. Проверка на повторные нарушения
@@ -534,58 +473,38 @@ class RedisBotProtectionWithSessions {
      $statsKey = $this->userHashPrefix . 'stats:' . $userHash;
      $blockCount = $this->redis->hget($statsKey, 'block_count') ?: 0;
      
-     if ($blockCount > 2) { // Было 1
-         $score += $blockCount * 3; // Было 2
-         error_log("Repeat offender: {$blockCount} previous blocks, +{$score} points");
+     if ($blockCount > 2) {
+         $score += $blockCount * 3;
      }
-     
-     // Финальное логирование
-     error_log("User hash analysis complete: Hash=" . substr($userHash, 0, 12) . "..., " .
-               "Score={$score}/{$blockThreshold}, Requests={$requests}, " .
-               "Mobile=" . ($isMobile ? 'Yes' : 'No') . ", " .
-               "Browser={$browserInfo['name']} {$browserInfo['version']}, " .
-               "Platform={$browserInfo['platform']}, " .
-               "UniquePages=" . count($uniquePages) . "/" . $totalPages . ", " .
-               "UniqueIPs=" . count($uniqueIPs));
      
      return $score >= $blockThreshold;
  }
  
- /**
-  * ИСПРАВЛЕННАЯ основная функция защиты - НЕ блокирует IP для браузеров
-  */
  public function protect() {
-     // Исключаем статические файлы
      if ($this->isStaticFile()) {
          return;
      }
      
-     // Запускаем сессию
-     $this->startSession();
-     
      $ip = $this->getRealIP();
      $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
      
-     // Проверяем легитимные боты
      if ($this->isLegitimateBot($userAgent)) {
          $this->logBotVisit($ip, $userAgent, 'legitimate');
          return;
      }
      
-     // Проверяем поисковики
      if ($this->isVerifiedSearchEngine($ip, $userAgent)) {
          $this->logSearchEngineVisit($ip, $userAgent);
          return;
      }
      
-     // 1. ПРОВЕРКА: блокировка по хешу пользователя (приоритетная)
+     // 1. ПРОВЕРКА: блокировка по хешу пользователя
      if ($this->isUserHashBlocked()) {
-         error_log("Request blocked by user hash: IP=$ip");
          $this->sendBlockResponse();
      }
      
-     // 2. ПРОВЕРКА: блокировка сессии и cookie
-     if ($this->isSessionBlocked() || $this->isCookieBlocked()) {
+     // 2. ПРОВЕРКА: блокировка cookie
+     if ($this->isCookieBlocked()) {
          $this->sendBlockResponse();
      }
      
@@ -596,26 +515,17 @@ class RedisBotProtectionWithSessions {
      
      // 4. ПРОВЕРКА: валидный cookie
      if ($this->hasValidCookie()) {
-         // Даже с валидным cookie отслеживаем активность по хешу
          $this->trackUserHashActivity();
-         $this->updateSessionActivity();
          
-         // Анализируем поведение только в критических случаях
          if ($this->shouldAnalyzeIP($ip)) {
              if ($this->analyzeRequest($ip)) {
-                 // ИСПРАВЛЕНИЕ: дифференцированная блокировка
                  if ($this->isSuspiciousUserAgent($userAgent)) {
-                     // Подозрительный User-Agent = блокируем IP + остальное
                      $this->blockIP($ip, 'Suspicious user agent with valid cookie');
-                     $this->blockSession();
                      $this->blockCookieHash();
                      $this->blockUserHash('Bot with valid cookie');
                  } else {
-                     // Браузер = НЕ блокируем IP, только остальное
                      $this->blockUserHash('Browser behavior detected with valid cookie');
-                     $this->blockSession();
                      $this->blockCookieHash();
-                     // БЕЗ $this->blockIP() для браузеров!
                  }
                  $this->sendBlockResponse();
              }
@@ -623,95 +533,49 @@ class RedisBotProtectionWithSessions {
          return;
      }
      
-     // 5. АНАЛИЗ ДЛЯ НОВЫХ ПОЛЬЗОВАТЕЛЕЙ: проверяем только если есть веские основания
+     // 5. АНАЛИЗ ДЛЯ НОВЫХ ПОЛЬЗОВАТЕЛЕЙ
      if ($this->shouldAnalyzeIP($ip)) {
          if ($this->analyzeRequest($ip)) {
-             // ИСПРАВЛЕНИЕ: дифференцированная блокировка
              if ($this->isSuspiciousUserAgent($userAgent)) {
-                 // Подозрительный User-Agent = блокируем IP + остальное
                  $this->blockIP($ip, 'Suspicious user agent detected');
                  if (isset($_COOKIE[$this->cookieName])) {
-                     $this->blockSession();
                      $this->blockCookieHash();
                  }
                  $this->blockUserHash('Bot detected');
              } else {
-                 // Обычный браузер = НЕ блокируем IP, только остальное
                  if (isset($_COOKIE[$this->cookieName])) {
-                     $this->blockSession();
                      $this->blockCookieHash();
                  } else {
-                     // Новый пользователь браузера - только блокировка по хешу
                      $this->blockUserHash('Browser behavior detected without cookie');
                  }
-                 // БЕЗ $this->blockIP() для браузеров!
              }
              $this->sendBlockResponse();
          }
      }
      
-     // 6. АНАЛИЗ ПОВЕДЕНИЯ ПО ХЕШУ: основная защита для браузеров
+     // 6. АНАЛИЗ ПОВЕДЕНИЯ ПО ХЕШУ
      if ($this->analyzeUserHashBehavior()) {
-         // ИСПРАВЛЕНИЕ: НЕ блокируем IP для браузеров
          if ($this->isSuspiciousUserAgent($userAgent)) {
-             // Реальный бот - блокируем всё включая IP
              $this->blockIP($ip, 'Bot behavior confirmed by user hash analysis');
              $this->blockUserHash('Bot confirmed');
              if (isset($_COOKIE[$this->cookieName])) {
-                 $this->blockSession();
                  $this->blockCookieHash();
              }
          } else {
-             // Браузер ведет себя как бот - НЕ блокируем IP
              $this->blockUserHash('Browser acting like bot');
              if (isset($_COOKIE[$this->cookieName])) {
-                 $this->blockSession();
                  $this->blockCookieHash();
              }
-             // БЕЗ $this->blockIP() для браузеров!
          }
          
          $this->sendBlockResponse();
      }
      
-     // 7. ИНИЦИАЛИЗАЦИЯ: если дошли сюда - устанавливаем cookie и инициализируем
+     // 7. ИНИЦИАЛИЗАЦИЯ
      if (!isset($_COOKIE[$this->cookieName])) {
          $this->setVisitorCookie();
          $this->initTracking($ip);
-         $this->initSession();
      }
- }
- 
- private function isSessionBlocked() {
-     $sessionId = session_id();
-     if (!$sessionId) return false;
-     
-     return $this->redis->exists($this->sessionPrefix . 'blocked:' . $sessionId);
- }
- 
- private function blockSession() {
-     $sessionId = session_id();
-     if (!$sessionId) return;
-     
-     $blockData = [
-         'session_id' => $sessionId,
-         'blocked_at' => time(),
-         'blocked_reason' => 'Bot behavior detected',
-         'ip' => $this->getRealIP(),
-         'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? 'unknown'
-     ];
-     
-     // Блокируем сессию на 3 часа вместо 6
-     $this->redis->setex($this->sessionPrefix . 'blocked:' . $sessionId, 
-                        $this->ttlSettings['session_blocked'], $blockData);
-     
-     // Также устанавливаем флаг в PHP сессии
-     $_SESSION['blocked'] = true;
-     $_SESSION['blocked_at'] = time();
-     $_SESSION['blocked_reason'] = 'Bot behavior detected';
-     
-     error_log("Session blocked: SessionID=$sessionId, IP=" . $this->getRealIP() . 
-               ", UA=" . ($_SERVER['HTTP_USER_AGENT'] ?? 'unknown'));
  }
  
  private function shouldAnalyzeIP($ip) {
@@ -723,30 +587,24 @@ class RedisBotProtectionWithSessions {
          $timeSpent = time() - ($data['first_seen'] ?? time());
          $suspicious_ua = $this->isSuspiciousUserAgent($_SERVER['HTTP_USER_AGENT'] ?? '');
          
-         // 1. Подозрительный User-Agent - анализируем сразу
          if ($suspicious_ua) {
              return true;
          }
          
-         // 2. Много запросов (понизили порог с 10 до 5)
          if ($requests > 5) {
              return true;
          }
          
-         // 3. Быстрые запросы - но только если их много
-         if ($timeSpent > 0 && $requests >= 5) { // Минимум 5 запросов для анализа скорости
+         if ($timeSpent > 0 && $requests >= 5) {
              $requestsPerMinute = ($requests * 60) / $timeSpent;
-             // Увеличили порог с 20 до 40 запросов в минуту
              if ($requestsPerMinute > 40) {
                  return true;
              }
          }
          
-         // 4. Много запросов за короткое время - но увеличили количество
-         if (isset($data['request_times']) && count($data['request_times']) >= 7) { // Было 5
-             $recentTimes = array_slice($data['request_times'], -7); // Было -5
+         if (isset($data['request_times']) && count($data['request_times']) >= 7) {
+             $recentTimes = array_slice($data['request_times'], -7);
              $timeSpan = end($recentTimes) - reset($recentTimes);
-             // Увеличили: 7 запросов за 20 секунд (было 5 за 15)
              if ($timeSpan <= 20) {
                  return true;
              }
@@ -776,9 +634,7 @@ class RedisBotProtectionWithSessions {
  
  private function isLegitimateBot($userAgent) {
      $legitimateBots = [
-         // Мониторинг
          'uptimerobot', 'pingdom', 'statuscake', 'site24x7',
-         // CDN
          'cloudflare', 'fastly', 'keycdn'
      ];
      
@@ -793,6 +649,7 @@ class RedisBotProtectionWithSessions {
      return false;
  }
  
+ // БЕЗ ЛОГИРОВАНИЯ легитимных ботов
  private function logBotVisit($ip, $userAgent, $type) {
      $logEntry = [
          'timestamp' => date('Y-m-d H:i:s'),
@@ -802,82 +659,17 @@ class RedisBotProtectionWithSessions {
          'uri' => $_SERVER['REQUEST_URI'] ?? ''
      ];
      
-     // Логируем в Redis список с TTL 1 день вместо 2
      $logKey = 'logs:legitimate_bots:' . date('Y-m-d');
      $this->redis->lpush($logKey, $logEntry);
      $this->redis->expire($logKey, $this->ttlSettings['logs']);
-     
-     // Ограничиваем размер лога
-     $this->redis->ltrim($logKey, 0, 999); // Максимум 1000 записей
+     $this->redis->ltrim($logKey, 0, 999);
  }
  
- private function startSession() {
-     if (session_status() === PHP_SESSION_NONE) {
-         // Настройки безопасности сессии
-         ini_set('session.cookie_httponly', 1);
-         ini_set('session.cookie_secure', isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 1 : 0);
-         ini_set('session.use_strict_mode', 1);
-         ini_set('session.cookie_samesite', 'Lax');
-         ini_set('session.gc_maxlifetime', 3600); // 1 час вместо 2
-         ini_set('session.cookie_lifetime', 0);
-         
-         session_start();
-         
-         // Защита от session hijacking
-         if (!isset($_SESSION['bot_protection_fingerprint'])) {
-             $_SESSION['bot_protection_fingerprint'] = $this->generateFingerprint();
-         } else {
-             if ($_SESSION['bot_protection_fingerprint'] !== $this->generateFingerprint()) {
-                 session_regenerate_id(true);
-                 $_SESSION['bot_protection_fingerprint'] = $this->generateFingerprint();
-             }
-         }
-     }
- }
- 
- private function generateFingerprint() {
-     return hash('sha256', 
-         ($_SERVER['HTTP_USER_AGENT'] ?? '') .
-         ($_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '') .
-         ($_SERVER['REMOTE_ADDR'] ?? '') .
-         $this->secretKey
-     );
- }
- 
- private function initSession() {
-     $sessionData = [
-         'first_visit' => time(),
-         'visit_count' => 1,
-         'last_activity' => time(),
-         'pages_visited' => 1,
-         'verified' => true,
-         'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
-         'ip' => $this->getRealIP()
-     ];
-     
-     $_SESSION['bot_protection'] = $sessionData;
-     
-     // Дублируем в Redis с сокращенным TTL
-     $this->redis->setex($this->sessionPrefix . 'data:' . session_id(), 
-                        $this->ttlSettings['session_data'], $sessionData);
- }
- 
- private function updateSessionActivity() {
-     if (isset($_SESSION['bot_protection'])) {
-         $_SESSION['bot_protection']['last_activity'] = time();
-         $_SESSION['bot_protection']['pages_visited']++;
-         $_SESSION['bot_protection']['visit_count']++;
-         
-         // Обновляем в Redis с сокращенным TTL
-         $this->redis->setex($this->sessionPrefix . 'data:' . session_id(), 
-                            $this->ttlSettings['session_data'], $_SESSION['bot_protection']);
-     } else {
-         $this->initSession();
-     }
- }
- 
+ /**
+  * УЛУЧШЕННАЯ проверка поисковиков с быстрым rDNS
+  */
  private function isVerifiedSearchEngine($ip, $userAgent) {
-     // Сначала проверяем User-Agent
+     // Сначала быстрая проверка User-Agent
      $detectedEngine = null;
      foreach ($this->allowedSearchEngines as $engine => $config) {
          foreach ($config['user_agent_patterns'] as $pattern) {
@@ -892,52 +684,171 @@ class RedisBotProtectionWithSessions {
          return false;
      }
      
-     // Проверяем rDNS
+     // Проверяем rDNS с улучшенной логикой
      return $this->verifySearchEngineByRDNS($ip, $this->allowedSearchEngines[$detectedEngine]['rdns_patterns']);
  }
  
+ /**
+  * УЛУЧШЕННАЯ функция проверки rDNS с поддержкой IPv4/IPv6
+  * Быстрая, надежная, с кэшированием и таймаутами
+  */
  private function verifySearchEngineByRDNS($ip, $allowedPatterns) {
-     $cacheKey = $this->rdnsPrefix . 'cache:' . hash('md5', $ip);
-     $cached = $this->redis->get($cacheKey);
+     // Нормализуем IP
+     $normalizedIP = $this->normalizeIP($ip);
+     $cacheKey = $this->rdnsPrefix . 'cache:' . hash('md5', $normalizedIP);
      
+     // Проверяем кэш
+     $cached = $this->redis->get($cacheKey);
      if ($cached !== false) {
          return $cached['verified'];
      }
      
      $verified = false;
      $hostname = '';
+     $error = '';
      
      try {
-         $hostname = gethostbyaddr($ip);
+         // ЭТАП 1: Обратный DNS (IP → hostname)
+         $hostname = $this->getHostnameWithTimeout($normalizedIP, 2); // 2 сек таймаут
          
-         if ($hostname && $hostname !== $ip) {
+         if ($hostname && $hostname !== $normalizedIP) {
+             // ЭТАП 2: Проверяем, что hostname соответствует разрешенным паттернам
+             $hostnameMatches = false;
              foreach ($allowedPatterns as $pattern) {
-                 if (substr($hostname, -strlen($pattern)) === $pattern) {
-                     $forwardIPs = gethostbynamel($hostname);
-                     if ($forwardIPs && in_array($ip, $forwardIPs)) {
-                         $verified = true;
-                         break;
-                     }
+                 if ($this->matchesDomainPattern($hostname, $pattern)) {
+                     $hostnameMatches = true;
+                     break;
+                 }
+             }
+             
+             if ($hostnameMatches) {
+                 // ЭТАП 3: Прямой DNS (hostname → IP) для подтверждения
+                 $forwardIPs = $this->getIPsWithTimeout($hostname, 2); // 2 сек таймаут
+                 
+                 if ($forwardIPs && $this->ipInArray($normalizedIP, $forwardIPs)) {
+                     $verified = true;
                  }
              }
          }
+         
      } catch (Exception $e) {
-         error_log("rDNS verification error for IP $ip: " . $e->getMessage());
+         $error = $e->getMessage();
      }
      
-     // Кэшируем результат на 15 минут вместо 30
+     // Кэшируем результат (включая неудачные попытки)
      $cacheData = [
-         'ip' => $ip,
+         'ip' => $normalizedIP,
          'hostname' => $hostname,
          'verified' => $verified,
-         'timestamp' => time()
+         'timestamp' => time(),
+         'error' => $error
      ];
      
-     $this->redis->setex($cacheKey, $this->ttlSettings['rdns_cache'], $cacheData);
+     // Кэшируем успешные проверки на 15 мин, неудачные на 5 мин
+     $cacheTTL = $verified ? $this->ttlSettings['rdns_cache'] : 300;
+     $this->redis->setex($cacheKey, $cacheTTL, $cacheData);
      
      return $verified;
  }
  
+ /**
+  * НОВАЯ функция: получение hostname с таймаутом
+  */
+ private function getHostnameWithTimeout($ip, $timeoutSec = 2) {
+     // Устанавливаем таймаут для DNS запросов
+     $originalTimeout = ini_get('default_socket_timeout');
+     ini_set('default_socket_timeout', $timeoutSec);
+     
+     try {
+         $hostname = gethostbyaddr($ip);
+         
+         // Возвращаем исходный таймаут
+         ini_set('default_socket_timeout', $originalTimeout);
+         
+         // gethostbyaddr возвращает IP при неудаче
+         return ($hostname !== $ip) ? $hostname : false;
+         
+     } catch (Exception $e) {
+         ini_set('default_socket_timeout', $originalTimeout);
+         return false;
+     }
+ }
+ 
+ /**
+  * НОВАЯ функция: получение IP списка с таймаутом 
+  */
+ private function getIPsWithTimeout($hostname, $timeoutSec = 2) {
+     $originalTimeout = ini_get('default_socket_timeout');
+     ini_set('default_socket_timeout', $timeoutSec);
+     
+     $allIPs = [];
+     
+     try {
+         // Получаем IPv4 адреса
+         $ipv4List = gethostbynamel($hostname);
+         if ($ipv4List) {
+             $allIPs = array_merge($allIPs, $ipv4List);
+         }
+         
+         // Получаем IPv6 адреса (если доступно)
+         if (function_exists('dns_get_record')) {
+             $records = @dns_get_record($hostname, DNS_AAAA);
+             if ($records) {
+                 foreach ($records as $record) {
+                     if (isset($record['ipv6'])) {
+                         $allIPs[] = $this->normalizeIPv6($record['ipv6']);
+                     }
+                 }
+             }
+         }
+         
+         ini_set('default_socket_timeout', $originalTimeout);
+         return array_unique($allIPs);
+         
+     } catch (Exception $e) {
+         ini_set('default_socket_timeout', $originalTimeout);
+         return [];
+     }
+ }
+ 
+ /**
+  * НОВАЯ функция: проверка соответствия домена паттерну
+  */
+ private function matchesDomainPattern($hostname, $pattern) {
+     $hostname = strtolower(trim($hostname));
+     $pattern = strtolower(trim($pattern));
+     
+     // Точное совпадение
+     if ($hostname === $pattern) {
+         return true;
+     }
+     
+     // Паттерн начинается с точки = проверяем суффикс
+     if (strpos($pattern, '.') === 0) {
+         return substr($hostname, -strlen($pattern)) === $pattern;
+     }
+     
+     // Иначе проверяем, что hostname заканчивается на .$pattern
+     $fullPattern = '.' . $pattern;
+     return substr($hostname, -strlen($fullPattern)) === $fullPattern;
+ }
+ 
+ /**
+  * НОВАЯ функция: проверка наличия IP в массиве (с учетом нормализации)
+  */
+ private function ipInArray($needle, $haystack) {
+     $normalizedNeedle = $this->normalizeIP($needle);
+     
+     foreach ($haystack as $ip) {
+         if ($this->normalizeIP($ip) === $normalizedNeedle) {
+             return true;
+         }
+     }
+     
+     return false;
+ }
+ 
+ // БЕЗ ЛОГИРОВАНИЯ поисковиков
  private function logSearchEngineVisit($ip, $userAgent) {
      $logEntry = [
          'timestamp' => date('Y-m-d H:i:s'),
@@ -950,24 +861,19 @@ class RedisBotProtectionWithSessions {
      $logKey = 'logs:search_engines:' . date('Y-m-d');
      $this->redis->lpush($logKey, $logEntry);
      $this->redis->expire($logKey, $this->ttlSettings['logs']);
-     
-     // Ограничиваем размер лога
      $this->redis->ltrim($logKey, 0, 999);
  }
  
- /**
-  * ИСПРАВЛЕННАЯ функция получения реального IP с поддержкой IPv4 и IPv6
-  */
  private function getRealIP() {
      $ipHeaders = [
-         'HTTP_CF_CONNECTING_IP',     // Cloudflare
-         'HTTP_X_REAL_IP',            // Nginx
-         'HTTP_X_FORWARDED_FOR',      // Load balancers
-         'HTTP_X_FORWARDED',          // Proxy
-         'HTTP_X_CLUSTER_CLIENT_IP',  // Cluster
-         'HTTP_FORWARDED_FOR',        // Proxy
-         'HTTP_FORWARDED',            // RFC 7239
-         'REMOTE_ADDR'                // Direct connection
+         'HTTP_CF_CONNECTING_IP',
+         'HTTP_X_REAL_IP',
+         'HTTP_X_FORWARDED_FOR',
+         'HTTP_X_FORWARDED',
+         'HTTP_X_CLUSTER_CLIENT_IP',
+         'HTTP_FORWARDED_FOR',
+         'HTTP_FORWARDED',
+         'REMOTE_ADDR'
      ];
      
      foreach ($ipHeaders as $header) {
@@ -975,19 +881,15 @@ class RedisBotProtectionWithSessions {
              $ips = explode(',', $_SERVER[$header]);
              $ip = trim($ips[0]);
              
-             // Нормализуем IPv6 перед проверкой
              if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
                  $ip = $this->normalizeIPv6($ip);
              }
              
-             // Проверяем валидность IP (IPv4 или IPv6)
              if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-                 // Для IPv4 проверяем, что это не приватный/зарезервированный адрес
                  if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
                      return $ip;
                  }
              } elseif (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
-                 // Для IPv6 дополнительно проверяем, что это не локальный адрес
                  if (!$this->isPrivateIPv6($ip)) {
                      return $ip;
                  }
@@ -995,7 +897,6 @@ class RedisBotProtectionWithSessions {
          }
      }
      
-     // Возвращаем REMOTE_ADDR как последний вариант, даже если это приватный IP
      $remoteAddr = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
      if ($remoteAddr !== 'unknown' && filter_var($remoteAddr, FILTER_VALIDATE_IP)) {
          if (filter_var($remoteAddr, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
@@ -1007,15 +908,12 @@ class RedisBotProtectionWithSessions {
      return 'unknown';
  }
  
- /**
-  * НОВАЯ функция проверки приватных IPv6 адресов
-  */
  private function isPrivateIPv6($ip) {
      $privateRanges = [
-         '::1',              // Loopback
-         'fe80::/10',        // Link-local
-         'fc00::/7',         // Unique local
-         'ff00::/8',         // Multicast
+         '::1',
+         'fe80::/10',
+         'fc00::/7',
+         'ff00::/8',
      ];
      
      foreach ($privateRanges as $range) {
@@ -1027,9 +925,6 @@ class RedisBotProtectionWithSessions {
      return false;
  }
  
- /**
-  * НОВАЯ функция проверки принадлежности IP к диапазону
-  */
  private function ipInRange($ip, $range) {
      if (strpos($range, '/') === false) {
          return $ip === $range;
@@ -1122,34 +1017,31 @@ class RedisBotProtectionWithSessions {
      $existing = $this->redis->get($trackingKey);
      
      if ($existing) {
-         // Обновляем существующую запись
          $existing['requests']++;
          $existing['pages'][] = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
          $existing['user_agents'][] = $_SERVER['HTTP_USER_AGENT'] ?? '';
          $existing['user_agents'] = array_unique($existing['user_agents']);
          $existing['request_times'][] = time();
          
-         // СОКРАТИЛ количество сохраняемых данных
-         if (count($existing['request_times']) > 15) { // Было 20
+         if (count($existing['request_times']) > 15) {
              $existing['request_times'] = array_slice($existing['request_times'], -15);
          }
-         if (count($existing['pages']) > 20) { // Было 30
+         if (count($existing['pages']) > 20) {
              $existing['pages'] = array_slice($existing['pages'], -20);
          }
-         if (count($existing['user_agents']) > 3) { // Было 5
+         if (count($existing['user_agents']) > 3) {
              $existing['user_agents'] = array_slice($existing['user_agents'], -3);
          }
          
          $this->redis->setex($trackingKey, $this->ttlSettings['tracking_ip'], $existing);
      } else {
-         // Создаем новую запись
          $data = [
              'first_seen' => time(),
              'requests' => 1,
              'pages' => [parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH)],
              'user_agents' => [$_SERVER['HTTP_USER_AGENT'] ?? ''],
              'headers' => $this->collectHeaders(),
-             'session_id' => session_id(),
+             'session_id' => 'no_session',
              'request_times' => [time()]
          ];
          
@@ -1172,6 +1064,7 @@ class RedisBotProtectionWithSessions {
      return $headers;
  }
  
+ // ЛОГИРУЕМ ТОЛЬКО ФАКТ БЛОКИРОВКИ COOKIE
  private function blockCookieHash() {
      if (!isset($_COOKIE[$this->cookieName])) {
          return;
@@ -1188,13 +1081,14 @@ class RedisBotProtectionWithSessions {
          'blocked_at' => time(),
          'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
          'uri' => $_SERVER['REQUEST_URI'] ?? '',
-         'session_id' => session_id(),
+         'session_id' => 'no_session',
          'ip' => $this->getRealIP()
      ];
      
      $this->redis->setex($blockKey, $this->ttlSettings['cookie_blocked'], $blockData);
      
-     error_log("Cookie blocked: Hash=" . substr($data['hash'], 0, 8) . "..., IP=" . $this->getRealIP());
+     // КРАТКОЕ ЛОГИРОВАНИЕ
+     error_log("Bot blocked [COOKIE]: " . substr($data['hash'], 0, 8) . " | IP: " . $this->getRealIP());
  }
  
  private function isCookieBlocked() {
@@ -1213,15 +1107,10 @@ class RedisBotProtectionWithSessions {
  
  private function isMobileDevice($userAgent) {
      $mobilePatterns = [
-         // Основные мобильные платформы
          'Mobile', 'Android', 'iPhone', 'iPad', 'iPod', 
-         // Мобильные браузеры
          'Mobile Safari', 'Chrome Mobile', 'Firefox Mobile', 'Opera Mini', 'Opera Mobi',
-         // Другие мобильные устройства
          'BlackBerry', 'Windows Phone', 'IEMobile', 'Kindle', 'Silk',
-         // Планшеты
          'Tablet', 'PlayBook',
-         // Дополнительные паттерны
          'webOS', 'hpwOS', 'Bada', 'Tizen', 'NetFront', 'Fennec'
      ];
      
@@ -1233,7 +1122,6 @@ class RedisBotProtectionWithSessions {
          }
      }
      
-     // Дополнительная проверка по регулярным выражениям
      $mobileRegex = '/mobile|android|iphone|ipad|ipod|blackberry|iemobile|opera m(ob|in)i/i';
      if (preg_match($mobileRegex, $userAgent)) {
          return true;
@@ -1242,30 +1130,25 @@ class RedisBotProtectionWithSessions {
      return false;
  }
  
- /**
-  * ИСПРАВЛЕННАЯ функция анализа запросов - повышены пороги блокировки
-  */
+ // БЕЗ ДЕТАЛЬНОГО ЛОГИРОВАНИЯ
  private function analyzeRequest($ip) {
      $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
      $data = $this->redis->get($trackingKey);
      
      if (!$data) {
-         return false; // Если нет данных - не блокируем
+         return false;
      }
      
      $score = 0;
      $currentUA = $_SERVER['HTTP_USER_AGENT'] ?? '';
      $isMobile = $this->isMobileDevice($currentUA);
      
-     // ПОВЫШЕННЫЕ пороги блокировки
-     $blockThreshold = $isMobile ? 20 : 18; // Было 12/10
+     $blockThreshold = $isMobile ? 20 : 18;
      
-     // 1. Проверка подозрительного User-Agent
      if ($this->isSuspiciousUserAgent($currentUA)) {
-         $score += $isMobile ? 15 : 20; // Было 12/18
+         $score += $isMobile ? 15 : 20;
      }
      
-     // 2. Анализ частоты запросов (значительно увеличили пороги)
      $requests = $data['requests'] ?? 0;
      $timeSpent = time() - ($data['first_seen'] ?? time());
      
@@ -1273,60 +1156,55 @@ class RedisBotProtectionWithSessions {
          $requestsPerMinute = ($requests * 60) / $timeSpent;
          
          if ($isMobile) {
-             if ($requestsPerMinute > 180) $score += 12; // Было 120/12
-             elseif ($requestsPerMinute > 120) $score += 8; // Было 90/10
-             elseif ($requestsPerMinute > 80) $score += 4; // Было 60/6
+             if ($requestsPerMinute > 180) $score += 12;
+             elseif ($requestsPerMinute > 120) $score += 8;
+             elseif ($requestsPerMinute > 80) $score += 4;
          } else {
-             if ($requestsPerMinute > 150) $score += 12; // Было 100/12
-             elseif ($requestsPerMinute > 100) $score += 8; // Было 70/10
-             elseif ($requestsPerMinute > 60) $score += 4; // Было 45/6
+             if ($requestsPerMinute > 150) $score += 12;
+             elseif ($requestsPerMinute > 100) $score += 8;
+             elseif ($requestsPerMinute > 60) $score += 4;
          }
      }
      
-     // 3. Много запросов без cookies (увеличили лимиты)
-     $cookieLimit = $isMobile ? 35 : 30; // Было 25/20
+     $cookieLimit = $isMobile ? 35 : 30;
      if ($requests > $cookieLimit && !isset($_COOKIE[$this->cookieName])) {
-         $score += $isMobile ? 3 : 4; // Было 4/6
+         $score += $isMobile ? 3 : 4;
      }
      
-     // 4. Анализ HTTP заголовков (снизили штрафы)
      $currentHeaders = $this->collectHeaders();
      
      if (!isset($currentHeaders['HTTP_ACCEPT']) || $currentHeaders['HTTP_ACCEPT'] === '*/*') {
-         $score += $isMobile ? 1 : 2; // Было 2/3
+         $score += $isMobile ? 1 : 2;
      }
      if (!isset($currentHeaders['HTTP_ACCEPT_LANGUAGE'])) {
-         $score += $isMobile ? 1 : 2; // Было 2/3
+         $score += $isMobile ? 1 : 2;
      }
      if (!isset($currentHeaders['HTTP_ACCEPT_ENCODING'])) {
-         $score += $isMobile ? 1 : 2; // Было 2/3
+         $score += $isMobile ? 1 : 2;
      }
      
-     // 5. Разнообразие страниц (увеличили лимиты)
      $uniquePages = array_unique($data['pages'] ?? []);
      $totalPages = count($data['pages'] ?? []);
      
-     $pageLimit = $isMobile ? 50 : 40; // Было 30/25
+     $pageLimit = $isMobile ? 50 : 40;
      if ($totalPages > $pageLimit && count($uniquePages) <= 2) {
-         $score += $isMobile ? 2 : 3; // Было 3/5
+         $score += $isMobile ? 2 : 3;
      }
      
-     // 6. Множественные User-Agent (снизили штраф)
      $uniqueUA = array_unique($data['user_agents'] ?? []);
-     if (count($uniqueUA) > 5) { // Было 8
-         $score += 8; // Было 4
+     if (count($uniqueUA) > 5) {
+         $score += 8;
      }
      
-     // 7. Анализ регулярности запросов (увеличили требования)
-     if (isset($data['request_times']) && count($data['request_times']) >= 15) { // Было 10
+     if (isset($data['request_times']) && count($data['request_times']) >= 15) {
          $intervals = [];
-         $lastFifteen = array_slice($data['request_times'], -15); // Было -10
+         $lastFifteen = array_slice($data['request_times'], -15);
          
          for ($i = 1; $i < count($lastFifteen); $i++) {
              $intervals[] = $lastFifteen[$i] - $lastFifteen[$i-1];
          }
          
-         if (count($intervals) >= 12) { // Было 8
+         if (count($intervals) >= 12) {
              $avgInterval = array_sum($intervals) / count($intervals);
              $variance = 0;
              foreach ($intervals as $interval) {
@@ -1334,36 +1212,27 @@ class RedisBotProtectionWithSessions {
              }
              $variance /= count($intervals);
              
-             $varianceThreshold = $isMobile ? 1.0 : 1.5; // Было 1.5/2
-             $intervalThreshold = $isMobile ? 3 : 5; // Было 5/8
+             $varianceThreshold = $isMobile ? 1.0 : 1.5;
+             $intervalThreshold = $isMobile ? 3 : 5;
              
              if ($variance < $varianceThreshold && $avgInterval < $intervalThreshold) {
-                 $score += $isMobile ? 3 : 5; // Было 4/7
+                 $score += $isMobile ? 3 : 5;
              }
          }
      }
      
-     // 8. Проверка очень быстрых запросов (более строгие условия)
-     if (isset($data['request_times']) && count($data['request_times']) >= 10) { // Было 7
-         $lastTen = array_slice($data['request_times'], -10); // Было -7
+     if (isset($data['request_times']) && count($data['request_times']) >= 10) {
+         $lastTen = array_slice($data['request_times'], -10);
          $timeDiff = end($lastTen) - reset($lastTen);
          
-         // Если 10 запросов за 5 секунд или меньше (было 7 за 4)
          if ($timeDiff <= 5) {
-             $score += $isMobile ? 3 : 5; // Было 4/7
+             $score += $isMobile ? 3 : 5;
          }
-         // Если 10 запросов за 2 секунды (было 7 за 2)
          if ($timeDiff <= 2) {
-             $score += 6; // Было 8
+             $score += 6;
          }
      }
      
-     // Логируем для отладки
-     error_log("Bot analysis: IP=$ip, UA=" . substr($currentUA, 0, 50) . ", Score=$score, Requests=$requests, Mobile=" . 
-               ($isMobile ? 'Yes' : 'No') . ", Threshold=$blockThreshold, SuspiciousUA=" . 
-               ($this->isSuspiciousUserAgent($currentUA) ? 'Yes' : 'No'));
-     
-     // ВАЖНО: Функция НЕ блокирует ничего, только возвращает true/false
      return $score >= $blockThreshold;
  }
  
@@ -1372,13 +1241,10 @@ class RedisBotProtectionWithSessions {
      return $this->redis->exists($blockKey);
  }
  
- /**
-  * ИСПРАВЛЕННАЯ функция блокировки IP с дополнительной информацией
-  */
+ // ЛОГИРУЕМ ТОЛЬКО ФАКТ БЛОКИРОВКИ IP
  private function blockIP($ip, $reason = 'Bot behavior detected') {
      $blockKey = $this->blockPrefix . 'ip:' . hash('md5', $ip);
      
-     // Проверяем, был ли IP заблокирован ранее
      $isRepeatOffender = $this->redis->exists($blockKey);
      
      $blockData = [
@@ -1387,35 +1253,108 @@ class RedisBotProtectionWithSessions {
          'blocked_reason' => $reason,
          'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
          'uri' => $_SERVER['REQUEST_URI'] ?? '',
-         'session_id' => session_id(),
+         'session_id' => 'no_session',
          'repeat_offender' => $isRepeatOffender,
          'is_suspicious_ua' => $this->isSuspiciousUserAgent($_SERVER['HTTP_USER_AGENT'] ?? ''),
          'browser_info' => $this->getBrowserFingerprint($_SERVER['HTTP_USER_AGENT'] ?? '')
      ];
      
-     // Сокращенная блокировка: 15 минут базовая, 1 час для повторных нарушителей
      $blockDuration = $isRepeatOffender ? $this->ttlSettings['ip_blocked_repeat'] : $this->ttlSettings['ip_blocked'];
      $this->redis->setex($blockKey, $blockDuration, $blockData);
      
-     error_log("Bot blocked: IP=$ip, UA=" . ($_SERVER['HTTP_USER_AGENT'] ?? 'unknown') . 
-               ", Session=" . session_id() . ", Repeat: " . ($isRepeatOffender ? 'Yes' : 'No') .
-               ", Duration: " . ($blockDuration/60) . " minutes, Reason: $reason");
+     // КРАТКОЕ ЛОГИРОВАНИЕ
+     $durHours = round($blockDuration / 3600);
+     error_log("Bot blocked [IP]: $ip | " . ($isRepeatOffender ? "REPEAT | " : "") . "{$durHours}h | $reason");
  }
  
  private function sendBlockResponse() {
      if (!headers_sent()) {
          http_response_code(429);
          header('Content-Type: text/plain; charset=utf-8');
-         header('Retry-After: 900'); // 15 минут вместо 30
+         header('Retry-After: 900');
      }
      die('Rate limit exceeded. Please try again later.');
  }
  
  /**
-  * ИСПРАВЛЕННАЯ функция получения информации о заблокированном пользователе
+  * ФУНКЦИЯ ДЛЯ ТЕСТИРОВАНИЯ rDNS (используйте для отладки)
   */
+ public function testRDNS($ip, $userAgent = '') {
+     $normalizedIP = $this->normalizeIP($ip);
+     
+     echo "=== ТЕСТ rDNS для IP: $ip ===\n";
+     echo "Нормализованный IP: $normalizedIP\n";
+     echo "User-Agent: $userAgent\n\n";
+     
+     // Определяем поисковик по UA
+     $detectedEngine = null;
+     if ($userAgent) {
+         foreach ($this->allowedSearchEngines as $engine => $config) {
+             foreach ($config['user_agent_patterns'] as $pattern) {
+                 if (stripos($userAgent, $pattern) !== false) {
+                     $detectedEngine = $engine;
+                     break 2;
+                 }
+             }
+         }
+     }
+     
+     echo "Обнаруженный поисковик: " . ($detectedEngine ?: 'НЕ НАЙДЕН') . "\n";
+     
+     if (!$detectedEngine) {
+         echo "❌ User-Agent не соответствует известным поисковикам\n";
+         return false;
+     }
+     
+     $allowedPatterns = $this->allowedSearchEngines[$detectedEngine]['rdns_patterns'];
+     echo "Разрешенные домены: " . implode(', ', $allowedPatterns) . "\n\n";
+     
+     // Обратный DNS
+     echo "🔍 Шаг 1: Обратный DNS (IP → hostname)\n";
+     $hostname = $this->getHostnameWithTimeout($normalizedIP, 3);
+     echo "Результат: " . ($hostname ?: 'НЕ НАЙДЕН') . "\n\n";
+     
+     if (!$hostname) {
+         echo "❌ rDNS не найден\n";
+         return false;
+     }
+     
+     // Проверка паттерна
+     echo "🔍 Шаг 2: Проверка домена\n";
+     $hostnameMatches = false;
+     foreach ($allowedPatterns as $pattern) {
+         if ($this->matchesDomainPattern($hostname, $pattern)) {
+             echo "✅ Hostname '$hostname' соответствует паттерну '$pattern'\n";
+             $hostnameMatches = true;
+             break;
+         }
+     }
+     
+     if (!$hostnameMatches) {
+         echo "❌ Hostname '$hostname' НЕ соответствует разрешенным паттернам\n";
+         return false;
+     }
+     
+     // Прямой DNS
+     echo "\n🔍 Шаг 3: Прямой DNS (hostname → IP)\n";
+     $forwardIPs = $this->getIPsWithTimeout($hostname, 3);
+     echo "Найденные IP: " . implode(', ', $forwardIPs) . "\n";
+     
+     if ($this->ipInArray($normalizedIP, $forwardIPs)) {
+         echo "✅ IP подтвержден прямым DNS\n";
+         echo "🎉 РЕЗУЛЬТАТ: Легитимный поисковик\n";
+         return true;
+     } else {
+         echo "❌ IP НЕ найден в прямом DNS\n";
+         echo "❌ РЕЗУЛЬТАТ: Подозрительный запрос\n";
+         return false;
+     }
+ }
+ 
+ // МЕТОДЫ ДЛЯ АДМИНИСТРИРОВАНИЯ (с минимальным логированием)
+ 
  public function getUserHashInfo($userHash = null) {
-     $userHash = $userHash ?: $this->generateUserHash(); // Стабильный хеш
+     $userHash = $userHash ?: $this->generateUserHash();
      
      $blockKey = $this->userHashPrefix . 'blocked:' . $userHash;
      $trackingKey = $this->userHashPrefix . 'tracking:' . $userHash;
@@ -1433,11 +1372,8 @@ class RedisBotProtectionWithSessions {
      ];
  }
  
- /**
-  * ИСПРАВЛЕННАЯ функция разблокировки пользователя по хешу
-  */
  public function unblockUserHash($userHash = null) {
-     $userHash = $userHash ?: $this->generateUserHash(); // Стабильный хеш
+     $userHash = $userHash ?: $this->generateUserHash();
      
      $blockKey = $this->userHashPrefix . 'blocked:' . $userHash;
      $trackingKey = $this->userHashPrefix . 'tracking:' . $userHash;
@@ -1448,13 +1384,12 @@ class RedisBotProtectionWithSessions {
          'tracking_cleared' => $this->redis->del($trackingKey) > 0
      ];
      
-     error_log("User hash unblocked manually: " . substr($userHash, 0, 12) . "...");
+     // ЛОГИРУЕМ РАЗБЛОКИРОВКУ
+     error_log("UNBLOCKED [HASH]: " . substr($userHash, 0, 8) . " | Manual");
      return $result;
  }
  
- /**
-  * НОВАЯ функция для диагностики хеша пользователя
-  */
+ // БЕЗ ЛОГИРОВАНИЯ диагностики
  public function diagnoseUserHash() {
      $ip = $this->getRealIP();
      $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
@@ -1462,28 +1397,20 @@ class RedisBotProtectionWithSessions {
      $isMobile = $this->isMobileDevice($userAgent);
      
      $userHash = $this->generateUserHash();
-     $sessionHash = $this->generateSessionUserHash();
      
-     $diagnosis = [
+     return [
          'stable_hash' => substr($userHash, 0, 16) . '...',
-         'session_hash' => substr($sessionHash, 0, 16) . '...',
          'ip' => $ip,
          'ip_fingerprint' => $isMobile ? $this->getIPFingerprint($ip) : $ip,
          'device_type' => $isMobile ? 'mobile' : 'desktop',
          'browser' => $browserInfo,
-         'session_id' => session_id() ?: 'none',
+         'session_id' => 'no_session',
          'user_agent' => substr($userAgent, 0, 100) . '...',
          'accept_language' => $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? 'none',
          'accept_encoding' => $_SERVER['HTTP_ACCEPT_ENCODING'] ?? 'none'
      ];
-     
-     error_log("User hash diagnosis: " . json_encode($diagnosis, JSON_UNESCAPED_UNICODE));
-     return $diagnosis;
  }
  
- /**
-  * Получает статистику по хеш-блокировкам
-  */
  public function getUserHashStats() {
      $stats = [
          'blocked_user_hashes' => 0,
@@ -1492,15 +1419,12 @@ class RedisBotProtectionWithSessions {
      ];
      
      try {
-         // Подсчет заблокированных хешей пользователей
          $blockedHashes = $this->redis->keys($this->userHashPrefix . 'blocked:*');
          $stats['blocked_user_hashes'] = count($blockedHashes);
          
-         // Подсчет отслеживаемых хешей
          $trackedHashes = $this->redis->keys($this->userHashPrefix . 'tracking:*');
          $stats['tracked_user_hashes'] = count($trackedHashes);
          
-         // Подсчет общего количества блокировок
          $statsKeys = $this->redis->keys($this->userHashPrefix . 'stats:*');
          $totalBlocks = 0;
          foreach ($statsKeys as $key) {
@@ -1516,9 +1440,6 @@ class RedisBotProtectionWithSessions {
      return $stats;
  }
  
- /**
-  * Очистка данных по хешам пользователей
-  */
  public function cleanupUserHashData() {
      $cleaned = 0;
      
@@ -1547,11 +1468,9 @@ class RedisBotProtectionWithSessions {
      return $cleaned;
  }
  
- // Метод для получения статистики (опционально)
  public function getStats() {
      $stats = [
          'blocked_ips' => 0,
-         'blocked_sessions' => 0,
          'blocked_cookies' => 0,
          'tracking_records' => 0,
          'total_keys' => 0,
@@ -1559,31 +1478,21 @@ class RedisBotProtectionWithSessions {
      ];
      
      try {
-         // Подсчет заблокированных IP
          $blockedIPs = $this->redis->keys($this->blockPrefix . 'ip:*');
          $stats['blocked_ips'] = count($blockedIPs);
          
-         // Подсчет заблокированных сессий
-         $blockedSessions = $this->redis->keys($this->sessionPrefix . 'blocked:*');
-         $stats['blocked_sessions'] = count($blockedSessions);
-         
-         // Подсчет заблокированных cookies
          $blockedCookies = $this->redis->keys($this->cookiePrefix . 'blocked:*');
          $stats['blocked_cookies'] = count($blockedCookies);
          
-         // Подсчет записей трекинга
          $trackingRecords = $this->redis->keys($this->trackingPrefix . 'ip:*');
          $stats['tracking_records'] = count($trackingRecords);
          
-         // Общее количество ключей
          $allKeys = $this->redis->keys('*');
          $stats['total_keys'] = count($allKeys);
          
-         // Информация о памяти Redis
          $info = $this->redis->info('memory');
          $stats['memory_usage'] = $info['used_memory_human'] ?? 'unknown';
          
-         // Добавляем статистику по хешам пользователей
          $userHashStats = $this->getUserHashStats();
          $stats = array_merge($stats, $userHashStats);
          
@@ -1594,30 +1503,24 @@ class RedisBotProtectionWithSessions {
      return $stats;
  }
  
- // Улучшенный метод очистки с дополнительными фильтрами
+ // БЕЗ ЛОГИРОВАНИЯ очистки
  public function cleanup($force = false) {
      try {
          $cleaned = 0;
          $startTime = microtime(true);
          
-         // Паттерны для очистки с приоритетами
          $cleanupPatterns = [
-             // Высокий приоритет - короткие TTL
              ['pattern' => $this->trackingPrefix . 'ip:*', 'priority' => 1],
              ['pattern' => $this->rdnsPrefix . 'cache:*', 'priority' => 1],
-             ['pattern' => $this->sessionPrefix . 'data:*', 'priority' => 1],
              ['pattern' => $this->userHashPrefix . 'tracking:*', 'priority' => 1],
-             // Средний приоритет
              ['pattern' => $this->blockPrefix . 'ip:*', 'priority' => 2],
              ['pattern' => $this->cookiePrefix . 'blocked:*', 'priority' => 2],
-             ['pattern' => $this->sessionPrefix . 'blocked:*', 'priority' => 2],
              ['pattern' => $this->userHashPrefix . 'blocked:*', 'priority' => 2],
-             // Низкий приоритет - логи
              ['pattern' => 'logs:*', 'priority' => 3]
          ];
          
          foreach ($cleanupPatterns as $patternInfo) {
-             if (!$force && (microtime(true) - $startTime) > 2) break; // Лимит 2 секунды
+             if (!$force && (microtime(true) - $startTime) > 2) break;
              
              $keys = $this->redis->keys($patternInfo['pattern']);
              foreach ($keys as $key) {
@@ -1625,16 +1528,13 @@ class RedisBotProtectionWithSessions {
                  
                  $ttl = $this->redis->ttl($key);
                  
-                 // Удаляем ключи без TTL или с истекшим сроком
                  if ($ttl === -1) {
                      $this->redis->del($key);
                      $cleaned++;
                  } elseif ($ttl === -2) {
-                     // Ключ уже не существует, пропускаем
                      continue;
                  }
                  
-                 // Для логов - дополнительная проверка по дате
                  if (strpos($key, 'logs:') === 0) {
                      $keyParts = explode(':', $key);
                      if (count($keyParts) >= 3) {
@@ -1647,19 +1547,15 @@ class RedisBotProtectionWithSessions {
                      }
                  }
                  
-                 // Ограничиваем размеры списков
                  if ($this->redis->type($key) === Redis::REDIS_LIST) {
                      $listSize = $this->redis->llen($key);
-                     if ($listSize > 500) { // Было 1000
+                     if ($listSize > 500) {
                          $this->redis->ltrim($key, 0, 499);
                          $cleaned++;
                      }
                  }
              }
          }
-         
-         $executionTime = round((microtime(true) - $startTime) * 1000);
-         error_log("Cleanup completed: $cleaned items processed in {$executionTime}ms");
          
          return $cleaned;
          
@@ -1669,14 +1565,12 @@ class RedisBotProtectionWithSessions {
      }
  }
  
- // Метод для массовой очистки старых данных (для крон-задач)
+ // БЕЗ ЛОГИРОВАНИЯ глубокой очистки
  public function deepCleanup() {
      try {
          $totalCleaned = 0;
-         $startTime = microtime(true);
          
-         // Очистка по дням для логов (сократили период хранения)
-         for ($i = 2; $i <= 14; $i++) { // Было 7-30, стало 2-14
+         for ($i = 2; $i <= 14; $i++) {
              $oldDate = date('Y-m-d', time() - ($i * 86400));
              $patterns = [
                  'logs:legitimate_bots:' . $oldDate,
@@ -1692,21 +1586,14 @@ class RedisBotProtectionWithSessions {
              }
          }
          
-         // Принудительная очистка всех истекших ключей
          $this->cleanup(true);
-         
-         // Очистка данных по хешам пользователей
          $totalCleaned += $this->cleanupUserHashData();
          
-         // Оптимизация Redis памяти
          try {
              $this->redis->bgrewriteaof();
          } catch (Exception $e) {
              // Игнорируем ошибки AOF
          }
-         
-         $executionTime = round((microtime(true) - $startTime) * 1000);
-         error_log("Deep cleanup completed: $totalCleaned items removed in {$executionTime}ms");
          
          return $totalCleaned;
          
@@ -1716,7 +1603,6 @@ class RedisBotProtectionWithSessions {
      }
  }
  
- // Метод для разблокировки IP (для администратора)
  public function unblockIP($ip) {
      $blockKey = $this->blockPrefix . 'ip:' . hash('md5', $ip);
      $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
@@ -1726,25 +1612,11 @@ class RedisBotProtectionWithSessions {
          'tracking_cleared' => $this->redis->del($trackingKey) > 0
      ];
      
-     error_log("IP unblocked manually: $ip");
+     // ЛОГИРУЕМ РАЗБЛОКИРОВКУ
+     error_log("UNBLOCKED [IP]: $ip | Manual");
      return $result;
  }
  
- // Метод для разблокировки сессии
- public function unblockSession($sessionId) {
-     $blockKey = $this->sessionPrefix . 'blocked:' . $sessionId;
-     $dataKey = $this->sessionPrefix . 'data:' . $sessionId;
-     
-     $result = [
-         'session_unblocked' => $this->redis->del($blockKey) > 0,
-         'session_data_cleared' => $this->redis->del($dataKey) > 0
-     ];
-     
-     error_log("Session unblocked manually: $sessionId");
-     return $result;
- }
- 
- // Метод для получения информации о заблокированном IP
  public function getBlockedIPInfo($ip) {
      $blockKey = $this->blockPrefix . 'ip:' . hash('md5', $ip);
      $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
@@ -1757,18 +1629,15 @@ class RedisBotProtectionWithSessions {
      ];
  }
  
- // Метод для получения информации о TTL настройках
  public function getTTLSettings() {
      return $this->ttlSettings;
  }
  
- // Метод для обновления TTL настроек
  public function updateTTLSettings($newSettings) {
      $this->ttlSettings = array_merge($this->ttlSettings, $newSettings);
      error_log("TTL settings updated: " . json_encode($newSettings));
  }
  
- // Деструктор для закрытия соединения с Redis
  public function __destruct() {
      if ($this->redis) {
          try {
@@ -1780,40 +1649,24 @@ class RedisBotProtectionWithSessions {
  }
 }
 
-// Использование:
+// ИСПОЛЬЗОВАНИЕ ФИНАЛЬНОЙ ВЕРСИИ:
 try {
- // Инициализация с настройками Redis
- $protection = new RedisBotProtectionWithSessions(
+ $protection = new RedisBotProtectionNoSessions(
      '127.0.0.1',    // Redis host
      6379,           // Redis port
      null,           // Redis password (если нужен)
      0               // Redis database
  );
  
- // Запуск защиты с оптимизированными TTL
  $protection->protect();
  
- // Опционально: получение статистики (только для админов)
- // $stats = $protection->getStats();
- // error_log("Bot protection stats: " . json_encode($stats));
- 
- // Пример работы с хеш-блокировками:
- // $userHashInfo = $protection->getUserHashInfo();
- // $userHashStats = $protection->getUserHashStats();
- 
- // Для разблокировки пользователя:
- // $protection->unblockUserHash();
- 
- // Для диагностики хеша:
- // $diagnosis = $protection->diagnoseUserHash();
- 
- // Для крон-задач: глубокая очистка каждые 6 часов
- // if (date('H') % 6 === 0 && date('i') === '00') {
- //     $protection->deepCleanup();
- // }
+ // ПРИМЕРЫ ТЕСТИРОВАНИЯ rDNS (раскомментируйте для тестов):
+ // $protection->testRDNS('66.249.66.1', 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
+ // $protection->testRDNS('40.77.167.181', 'Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)');
+ // $protection->testRDNS('1.2.3.4', 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
  
 } catch (Exception $e) {
- error_log("Bot protection error: " . $e->getMessage());
+ error_log("CRITICAL: Bot protection failed - " . $e->getMessage());
  // В случае ошибки Redis - продолжаем работу без защиты
 }
 ?>
