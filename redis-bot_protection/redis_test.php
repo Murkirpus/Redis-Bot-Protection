@@ -183,6 +183,71 @@ function getBrowserInfo($userAgent) {
     return $browser;
 }
 
+// Функции для работы с уровнем доверия на основе Redis данных
+function isVerifiedUser($userHashInfo) {
+    return $userHashInfo && !$userHashInfo['blocked'] && isset($userHashInfo['tracking_data']);
+}
+
+function getUserVisitInfo($userHashInfo) {
+    if (!$userHashInfo || !isset($userHashInfo['tracking_data'])) {
+        return null;
+    }
+    
+    $trackingData = $userHashInfo['tracking_data'];
+    
+    return [
+        'first_visit' => $trackingData['first_seen'] ?? time(),
+        'pages_visited' => count(array_unique($trackingData['pages'] ?? [])),
+        'total_requests' => $trackingData['requests'] ?? 0,
+        'last_activity' => $trackingData['last_activity'] ?? time(),
+        'unique_ips' => count(array_unique($trackingData['ips'] ?? [])),
+        'user_agents' => count(array_unique($trackingData['user_agents'] ?? [])),
+        'time_spent' => time() - ($trackingData['first_seen'] ?? time())
+    ];
+}
+
+function getVisitorTrustScore($userHashInfo, $ipInfo = null) {
+    $visitInfo = getUserVisitInfo($userHashInfo);
+    if (!$visitInfo) return 0;
+    
+    $score = 0;
+    $timeOnSite = $visitInfo['time_spent'];
+    $pagesVisited = $visitInfo['pages_visited'];
+    $totalRequests = $visitInfo['total_requests'];
+    
+    // Базовый балл за время
+    if ($timeOnSite > 300) $score += 20;       // 5 минут
+    if ($timeOnSite > 900) $score += 25;       // 15 минут
+    if ($timeOnSite > 1800) $score += 30;      // 30 минут
+    if ($timeOnSite > 3600) $score += 25;      // 1 час - максимальный бонус за время
+    
+    // Балл за разнообразие страниц
+    if ($pagesVisited > 2) $score += 15;
+    if ($pagesVisited > 5) $score += 20;
+    if ($pagesVisited > 10) $score += 25;
+    if ($pagesVisited > 20) $score += 15;
+    
+    // Балл за умеренную активность (не слишком много запросов)
+    if ($totalRequests > 5 && $totalRequests < 50) $score += 10;
+    if ($totalRequests >= 50 && $totalRequests < 200) $score += 15;
+    if ($totalRequests >= 200 && $totalRequests < 500) $score += 10;
+    
+    // Штраф за подозрительное поведение
+    if ($visitInfo['unique_ips'] > 3) $score -= 20;
+    if ($visitInfo['user_agents'] > 2) $score -= 15;
+    
+    // Бонус за стабильность (один IP, один User-Agent)
+    if ($visitInfo['unique_ips'] === 1 && $visitInfo['user_agents'] === 1) $score += 20;
+    
+    // Проверяем IP блокировку
+    if ($ipInfo && $ipInfo['blocked']) $score -= 50;
+    
+    // Нормализуем в диапазон 0-100
+    $score = max(0, min(100, $score));
+    
+    return $score;
+}
+
 // Получаем данные
 $currentIP = getCurrentIP();
 $currentUA = $_SERVER['HTTP_USER_AGENT'] ?? 'unknown';
@@ -195,6 +260,11 @@ $userHashInfo = $protectionActive ? getUserHashInfo($protection) : null;
 $userHashStats = $protectionActive ? getUserHashStats($protection) : null;
 $userHashDiagnosis = $protectionActive ? getUserHashDiagnosis($protection) : null;
 $ttlSettings = $protectionActive ? getTTLSettings($protection) : null;
+
+// Вычисляем уровень доверия и статус пользователя на основе Redis данных
+$isVerified = isVerifiedUser($userHashInfo);
+$visitInfo = getUserVisitInfo($userHashInfo);
+$trustScore = getVisitorTrustScore($userHashInfo, $ipInfo);
 
 // Определяем статус защиты
 $protectionLevel = 'basic';
@@ -429,6 +499,37 @@ $hasVisitorCookie = isset($_COOKIE['visitor_verified']);
             background: linear-gradient(135deg, #007bff, #0056b3);
             color: white;
             transform: scale(1.02);
+        }
+        .progress-bar {
+            width: 100%;
+            height: 16px;
+            background: #e9ecef;
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 15px 0;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .progress-fill {
+            height: 100%;
+            transition: width 0.8s ease;
+            border-radius: 8px;
+            background: linear-gradient(90deg, #28a745, #20c997);
+            box-shadow: 0 2px 4px rgba(40, 167, 69, 0.3);
+            position: relative;
+        }
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            animation: shimmer 2s infinite;
+        }
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
         }
         .tabs {
             display: flex;
@@ -755,6 +856,8 @@ $hasVisitorCookie = isset($_COOKIE['visitor_verified']);
                         <li>⚡ Улучшенная производительность и скорость</li>
                         <li>🛡️ Более стабильная блокировка через отпечатки</li>
                         <li>🧹 Автоматическая очистка старых данных</li>
+                        <li>🌟 Система VIP пользователей на основе Redis данных</li>
+                        <li>🎯 Интеллектуальная оценка уровня доверия</li>
                     </ul>
                 </div>
             <?php else: ?>
@@ -764,7 +867,65 @@ $hasVisitorCookie = isset($_COOKIE['visitor_verified']);
             <?php endif; ?>
         </div>
 
-        <!-- Информация о хеше пользователя v2.0 -->
+        <!-- Статус пользователя с уровнем доверия -->
+        <div class="status-card <?php echo $isVerified ? '' : 'warning'; ?>">
+            <h2>👤 Статус пользователя (Redis-based)</h2>
+            <?php if ($isVerified): ?>
+                <p><strong>✅ Верифицированный пользователь</strong></p>
+                <div style="margin: 15px 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <strong>🎯 Уровень доверия:</strong> 
+                        <span style="font-size: 1.2em; font-weight: bold; color: #007bff;"><?php echo $trustScore; ?>%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: <?php echo $trustScore; ?>%;"></div>
+                    </div>
+                </div>
+                
+                <?php if ($trustScore >= 90): ?>
+                    <div style="color: #28a745; font-weight: bold; margin-top: 15px; padding: 10px; background: rgba(40, 167, 69, 0.1); border-radius: 8px;">
+                        🌟 VIP пользователь - максимальный уровень доверия!
+                    </div>
+                <?php elseif ($trustScore >= 70): ?>
+                    <div style="color: #28a745; font-weight: bold; margin-top: 15px; padding: 10px; background: rgba(40, 167, 69, 0.1); border-radius: 8px;">
+                        ⭐ Доверенный пользователь - высокий уровень доверия!
+                    </div>
+                <?php elseif ($visitInfo && $visitInfo['time_spent'] < 300): ?>
+                    <div style="color: #007bff; margin-top: 15px; padding: 10px; background: rgba(0, 123, 255, 0.1); border-radius: 8px;">
+                        👋 Добро пожаловать, новый посетитель!
+                    </div>
+                <?php else: ?>
+                    <div style="color: #6c757d; margin-top: 15px; padding: 10px; background: rgba(108, 117, 125, 0.1); border-radius: 8px;">
+                        👤 Обычный пользователь
+                    </div>
+                <?php endif; ?>
+                
+                <?php if ($visitInfo): ?>
+                <div style="margin-top: 20px; font-size: 0.9em; color: #6c757d;">
+                    <p><strong>📊 Детали активности:</strong></p>
+                    <ul style="margin: 10px 0;">
+                        <li>⏱️ Время на сайте: <?php echo gmdate('H:i:s', $visitInfo['time_spent']); ?></li>
+                        <li>📄 Страниц посещено: <?php echo $visitInfo['pages_visited']; ?></li>
+                        <li>🔄 Всего запросов: <?php echo $visitInfo['total_requests']; ?></li>
+                        <li>🌐 Уникальных IP: <?php echo $visitInfo['unique_ips']; ?></li>
+                        <li>🎭 User-Agent'ов: <?php echo $visitInfo['user_agents']; ?></li>
+                    </ul>
+                </div>
+                <?php endif; ?>
+            <?php else: ?>
+                <p><strong>⚠️ Пользователь не верифицирован</strong></p>
+                <p>Система защиты не активна, заблокирован или недостаточно данных для анализа.</p>
+                <div style="margin-top: 15px; padding: 10px; background: rgba(255, 193, 7, 0.1); border-radius: 8px;">
+                    <strong>💡 Для получения VIP статуса:</strong>
+                    <ul style="margin: 10px 0;">
+                        <li>Проводите больше времени на сайте (5+ минут)</li>
+                        <li>Посещайте разные страницы (3+ страницы)</li>
+                        <li>Избегайте подозрительной активности</li>
+                        <li>Используйте стабильное подключение</li>
+                    </ul>
+                </div>
+            <?php endif; ?>
+        </div>
         <?php if ($userHashInfo): ?>
         <div class="status-card user-hash <?php echo $userHashInfo['blocked'] ? 'error' : ''; ?> new-feature">
             <h2>🔐 Хеш пользователя (главная особенность v2.0)</h2>
@@ -960,6 +1121,36 @@ $hasVisitorCookie = isset($_COOKIE['visitor_verified']);
             <h2>🍪 Visitor Cookie</h2>
             <p><strong>⚠️ Visitor Cookie не установлена</strong></p>
             <p>Cookie будет установлена автоматически системой защиты при следующем запросе.</p>
+        </div>
+        <?php endif; ?>
+
+        <!-- Метрики активности пользователя (Redis-based) -->
+        <?php if ($visitInfo): ?>
+        <div class="metrics">
+            <div class="metric">
+                <div class="number"><?php echo $visitInfo['pages_visited']; ?></div>
+                <div class="label">Страниц посещено</div>
+            </div>
+            <div class="metric">
+                <div class="number"><?php echo $visitInfo['total_requests']; ?></div>
+                <div class="label">Всего запросов</div>
+            </div>
+            <div class="metric">
+                <div class="number"><?php echo round($visitInfo['time_spent'] / 60, 1); ?></div>
+                <div class="label">Минут на сайте</div>
+            </div>
+            <div class="metric">
+                <div class="number"><?php echo $trustScore; ?>%</div>
+                <div class="label">Уровень доверия</div>
+            </div>
+            <div class="metric">
+                <div class="number"><?php echo $visitInfo['unique_ips']; ?></div>
+                <div class="label">Уникальных IP</div>
+            </div>
+            <div class="metric">
+                <div class="number"><?php echo round((time() - $visitInfo['last_activity']) / 60, 1); ?></div>
+                <div class="label">Мин. с последней активности</div>
+            </div>
         </div>
         <?php endif; ?>
 
@@ -1174,6 +1365,14 @@ $hasVisitorCookie = isset($_COOKIE['visitor_verified']);
                             <li>🔐 Секретного ключа</li>
                         </ul>
                         <p><strong>Преимущества v2.0:</strong> Работает без сессий PHP, более стабильная блокировка, лучшая производительность.</p>
+                        
+                        <h4>🎯 Система уровня доверия:</h4>
+                        <ul>
+                            <li>🌟 <strong>90-100%</strong> - VIP пользователь (максимальное доверие)</li>
+                            <li>⭐ <strong>70-89%</strong> - Доверенный пользователь</li>
+                            <li>👤 <strong>0-69%</strong> - Обычный пользователь</li>
+                        </ul>
+                        <p><strong>Критерии оценки:</strong> время на сайте, разнообразие страниц, стабильность подключения, отсутствие подозрительной активности.</p>
                     </div>
                 <?php else: ?>
                     <div class="highlight-box">
@@ -1656,6 +1855,14 @@ redis-cli keys "bot_protection:user_hash:*" | xargs redis-cli del
                     <span>🔐 Hash: <?php echo $userHashInfo['blocked'] ? '🚫 Blocked' : '✅ Active'; ?></span>
                 <?php endif; ?>
                 <span>🍪 Cookie: <?php echo $hasVisitorCookie ? '✅ Set' : '❌ None'; ?></span>
+                <?php if ($isVerified): ?>
+                    <span>🎯 Trust: <?php echo $trustScore; ?>%</span>
+                    <?php if ($trustScore >= 90): ?>
+                        <span>🌟 VIP User</span>
+                    <?php elseif ($trustScore >= 70): ?>
+                        <span>⭐ Trusted</span>
+                    <?php endif; ?>
+                <?php endif; ?>
             </div>
         </div>
     </div>
@@ -2134,6 +2341,10 @@ redis-cli keys "bot_protection:user_hash:*" | xargs redis-cli del
                 botProtectionTest.showNotification('🚫 Ваш хеш пользователя заблокирован системой защиты v2.0!', 'error');
                 <?php elseif ($ipInfo && $ipInfo['blocked']): ?>
                 botProtectionTest.showNotification('🚫 Ваш IP заблокирован системой защиты!', 'error');
+                <?php elseif ($isVerified && $trustScore >= 90): ?>
+                botProtectionTest.showNotification('🌟 Добро пожаловать, VIP пользователь! Уровень доверия: <?php echo $trustScore; ?>%', 'success');
+                <?php elseif ($isVerified && $trustScore >= 70): ?>
+                botProtectionTest.showNotification('⭐ Добро пожаловать, доверенный пользователь! Уровень: <?php echo $trustScore; ?>%', 'success');
                 <?php elseif ($isMobile): ?>
                 botProtectionTest.showNotification('📱 Мобильное устройство! Система v2.0 оптимизирована для мобильных.', 'info');
                 <?php elseif ($protectionLevel === 'maximum'): ?>
@@ -2180,6 +2391,8 @@ Device: <?php echo $isMobile ? 'Mobile' : 'Desktop'; ?>
 Protection: <?php echo $protectionActive ? 'Active' : 'Inactive'; ?>
 Level: <?php echo ucfirst($protectionLevel); ?>
 User Hash: <?php echo $userHashInfo ? (strlen($userHashInfo['user_hash']) > 0 ? 'Generated' : 'N/A') : 'N/A'; ?>
+Trust Score: <?php echo $trustScore; ?>%
+VIP Status: <?php echo $trustScore >= 90 ? 'VIP User' : ($trustScore >= 70 ? 'Trusted' : 'Regular'); ?>
 Sessions: Disabled
 Cookie Set: <?php echo $hasVisitorCookie ? 'Yes' : 'No'; ?>
             `);
@@ -2256,6 +2469,8 @@ Cookie Set: <?php echo $hasVisitorCookie ? 'Yes' : 'No'; ?>
             userHash: <?php echo $userHashInfo ? 'true' : 'false'; ?>,
             mobile: <?php echo $isMobile ? 'true' : 'false'; ?>,
             protectionLevel: '<?php echo $protectionLevel; ?>',
+            trustScore: <?php echo $trustScore; ?>,
+            vipStatus: '<?php echo $trustScore >= 90 ? 'VIP' : ($trustScore >= 70 ? 'Trusted' : 'Regular'); ?>',
             sessionsDisabled: true,
             visitorCookie: <?php echo $hasVisitorCookie ? 'true' : 'false'; ?>
         });
