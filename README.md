@@ -2,6 +2,7 @@
 <img src="./images/Screenshot 2025-07-10 165512.png" alt="Демонстрация" width="800">
 <img src="./images/Screenshot 2025-07-10 170349.png" alt="Демонстрация" width="800">
 <img src="./images/Screenshot 2025-07-23 154827.png" alt="Демонстрация" width="800">
+<img src="./images/Screenshot_20250813-211317.jpg" alt="Демонстрация" width="800">
  # Redis MurKir Security v2.0 - Полное описание системы
 
 Создана новая версия! 13.08.2025
