@@ -4,7 +4,7 @@
 class RedisBotProtectionNoSessions {
  private $redis;
  private $cookieName = 'visitor_verified';
- private $secretKey = 'your_secret_key_here_change_this12345!@#$';
+ private $secretKey = 'your_secret_key_here_change_this';
  private $cookieLifetime = 86400 * 30; // 30 дней
  
  // Префиксы для Redis ключей (БЕЗ sessionPrefix)
@@ -15,18 +15,28 @@ class RedisBotProtectionNoSessions {
  private $rdnsPrefix = 'rdns:';
  private $userHashPrefix = 'user_hash:';
  
- // ОПТИМИЗИРОВАННЫЕ TTL (в секундах) - БЕЗ сессий
+ // УЛУЧШЕННЫЕ TTL (в секундах) - ДЛЯ МЕДЛЕННЫХ БОТОВ
  private $ttlSettings = [
-     'tracking_ip' => 1800,          // 30 мин
+     'tracking_ip' => 10800,         // 3 часа (было 30 мин)
      'cookie_blocked' => 7200,       // 2 часа
      'ip_blocked' => 86400,          // 24 часа
      'ip_blocked_repeat' => 259200,  // 3 дня
-     'rdns_cache' => 900,            // 15 мин
-     'logs' => 86400,                // 1 день
-     'cleanup_interval' => 900,      // 15 мин
+     'rdns_cache' => 1800,           // 30 мин (увеличено с 15 мин)
+     'logs' => 172800,               // 2 дня (было 1 день)
+     'cleanup_interval' => 1800,     // 30 мин (увеличено с 15 мин)
      'user_hash_blocked' => 172800,  // 2 дня
-     'user_hash_tracking' => 1800,   // 30 мин
-     'user_hash_stats' => 172800,    // 2 дня
+     'user_hash_tracking' => 21600,  // 6 часов (было 30 мин)
+     'user_hash_stats' => 604800,    // 7 дней (было 2 дня)
+     'extended_tracking' => 86400,   // 24 часа - НОВОЕ
+ ];
+ 
+ // НОВЫЕ настройки для медленных ботов
+ private $slowBotSettings = [
+     'min_requests_for_analysis' => 3,      // Минимум запросов для анализа (было 8)
+     'slow_bot_threshold_hours' => 4,       // Период для анализа медленных ботов
+     'slow_bot_min_requests' => 15,         // Минимум запросов за период для подозрения
+     'long_session_hours' => 2,             // Долгая сессия (2+ часа)
+     'suspicious_regularity_variance' => 100, // Порог подозрительной регулярности
  ];
  
  // РАСШИРЕННЫЙ список поисковиков с точными паттернами
@@ -133,7 +143,8 @@ class RedisBotProtectionNoSessions {
          $patterns = [
              $this->trackingPrefix . 'ip:*',
              $this->userHashPrefix . 'tracking:*',
-             $this->rdnsPrefix . 'cache:*'
+             $this->rdnsPrefix . 'cache:*',
+             $this->trackingPrefix . 'extended:*' // НОВОЕ
          ];
          
          foreach ($patterns as $pattern) {
@@ -345,14 +356,14 @@ class RedisBotProtectionNoSessions {
              $existing['ips'][] = $currentIP;
          }
          
-         if (count($existing['request_times']) > 20) {
-             $existing['request_times'] = array_slice($existing['request_times'], -20);
+         if (count($existing['request_times']) > 30) { // Увеличено с 20
+             $existing['request_times'] = array_slice($existing['request_times'], -30);
          }
-         if (count($existing['pages']) > 30) {
-             $existing['pages'] = array_unique(array_slice($existing['pages'], -30));
+         if (count($existing['pages']) > 50) { // Увеличено с 30
+             $existing['pages'] = array_unique(array_slice($existing['pages'], -50));
          }
-         if (count($existing['ips']) > 10) {
-             $existing['ips'] = array_unique(array_slice($existing['ips'], -10));
+         if (count($existing['ips']) > 15) { // Увеличено с 10
+             $existing['ips'] = array_unique(array_slice($existing['ips'], -15));
          }
          
          $this->redis->setex($trackingKey, $this->ttlSettings['user_hash_tracking'], $existing);
@@ -375,14 +386,221 @@ class RedisBotProtectionNoSessions {
      return $existing ?: $data;
  }
  
- // БЕЗ ДЕТАЛЬНОГО ЛОГИРОВАНИЯ АНАЛИЗА
- private function analyzeUserHashBehavior() {
-     $trackingData = $this->trackUserHashActivity();
-     
-     if (!$trackingData || $trackingData['requests'] < 8) {
+ /**
+  * НОВЫЙ МЕТОД: Анализ медленных ботов
+  */
+ private function analyzeSlowBot($trackingData) {
+     if (!$trackingData || $trackingData['requests'] < $this->slowBotSettings['min_requests_for_analysis']) {
          return false;
      }
      
+     $score = 0;
+     $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+     $isMobile = $this->isMobileDevice($userAgent);
+     
+     // Более низкий порог для медленных ботов
+     $blockThreshold = $isMobile ? 12 : 10;
+     
+     $requests = $trackingData['requests'];
+     $timeSpent = time() - ($trackingData['first_seen'] ?? time());
+     
+     // 1. Подозрительный User-Agent (больший вес для медленных)
+     if ($this->isSuspiciousUserAgent($userAgent)) {
+         $score += $isMobile ? 8 : 10;
+     }
+     
+     // 2. Анализ долгосрочной активности
+     if ($timeSpent > 3600) { // Больше часа активности
+         $requestsPerHour = ($requests * 3600) / $timeSpent;
+         
+         // Подозрительно: много запросов за длительное время
+         if ($requestsPerHour > 30 && $requests > 20) {
+             $score += 4;
+         }
+         
+         // Очень подозрительно: стабильная активность без перерывов
+         if ($requestsPerHour > 10 && $timeSpent > 7200) { // 2+ часа
+             $score += 3;
+         }
+     }
+     
+     // 3. Анализ паттернов страниц (для медленных ботов)
+     $uniquePages = array_unique($trackingData['pages'] ?? []);
+     $totalPages = count($trackingData['pages'] ?? []);
+     
+     if ($totalPages > 10) {
+         $pageVariety = count($uniquePages) / $totalPages;
+         
+         // Медленный бот часто посещает одни и те же страницы
+         if ($pageVariety < 0.3 && $totalPages > 15) {
+             $score += 3;
+         }
+         
+         // Слишком систематический обход
+         if ($pageVariety > 0.8 && $totalPages > 25) {
+             $score += 2;
+         }
+     }
+     
+     // 4. Отсутствие типичного пользовательского поведения
+     $currentHeaders = $this->collectHeaders();
+     if (!isset($currentHeaders['HTTP_REFERER']) && $requests > 10) {
+         $score += 1;
+     }
+     
+     // 5. Множественные IP для одного хеша (подозрительно)
+     $uniqueIPs = array_unique($trackingData['ips'] ?? []);
+     if (count($uniqueIPs) > 3 && $requests > 10) {
+         $score += 2;
+     }
+     
+     // 6. НОВОЕ: Анализ регулярности запросов для медленных ботов
+     if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 8) {
+         $times = $trackingData['request_times'];
+         $intervals = [];
+         
+         for ($i = 1; $i < count($times); $i++) {
+             $intervals[] = $times[$i] - $times[$i-1];
+         }
+         
+         if (count($intervals) >= 5) {
+             $avgInterval = array_sum($intervals) / count($intervals);
+             $variance = 0;
+             foreach ($intervals as $interval) {
+                 $variance += pow($interval - $avgInterval, 2);
+             }
+             $variance /= count($intervals);
+             
+             // Слишком регулярные интервалы подозрительны (1-10 минут)
+             if ($variance < $this->slowBotSettings['suspicious_regularity_variance'] && 
+                 $avgInterval > 60 && $avgInterval < 600) {
+                 $score += 4;
+             }
+         }
+     }
+     
+     return $score >= $blockThreshold;
+ }
+ 
+ /**
+  * НОВЫЙ МЕТОД: Расширенное отслеживание для подозрительных случаев
+  */
+ private function enableExtendedTracking($ip, $reason = 'Potential slow bot') {
+     $extendedKey = $this->trackingPrefix . 'extended:' . hash('md5', $ip);
+     $extendedData = [
+         'enabled_at' => time(),
+         'reason' => $reason,
+         'ip' => $ip,
+         'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+         'extended_requests' => 1,
+         'extended_pages' => [parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH)]
+     ];
+     
+     $this->redis->setex($extendedKey, $this->ttlSettings['extended_tracking'], $extendedData);
+     
+     error_log("Extended tracking enabled for IP: $ip | Reason: $reason");
+ }
+ 
+ /**
+  * НОВЫЙ МЕТОД: Проверка расширенного отслеживания
+  */
+ private function checkExtendedTracking($ip) {
+     $extendedKey = $this->trackingPrefix . 'extended:' . hash('md5', $ip);
+     return $this->redis->exists($extendedKey);
+ }
+ 
+ /**
+  * НОВЫЙ МЕТОД: Получение данных трекинга
+  */
+ private function getUserTrackingData($ip) {
+     $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
+     return $this->redis->get($trackingKey);
+ }
+ 
+ /**
+  * НОВЫЙ МЕТОД: Проверка на потенциального медленного бота
+  */
+ private function isPotentialSlowBot($trackingData) {
+     if (!$trackingData || $trackingData['requests'] < 5) {
+         return false;
+     }
+     
+     $timeSpent = time() - ($trackingData['first_seen'] ?? time());
+     $requests = $trackingData['requests'];
+     
+     // Подозрительные паттерны медленных ботов:
+     
+     // 1. Долгая активность с умеренным количеством запросов
+     if ($timeSpent > ($this->slowBotSettings['long_session_hours'] * 3600) && 
+         $requests > 10 && $requests < 100) {
+         return true;
+     }
+     
+     // 2. Очень равномерное распределение запросов
+     if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 8) {
+         $times = $trackingData['request_times'];
+         $intervals = [];
+         
+         for ($i = 1; $i < count($times); $i++) {
+             $intervals[] = $times[$i] - $times[$i-1];
+         }
+         
+         if (count($intervals) >= 5) {
+             $avgInterval = array_sum($intervals) / count($intervals);
+             $variance = 0;
+             foreach ($intervals as $interval) {
+                 $variance += pow($interval - $avgInterval, 2);
+             }
+             $variance /= count($intervals);
+             
+             // Слишком регулярные интервалы подозрительны
+             if ($variance < $this->slowBotSettings['suspicious_regularity_variance'] && 
+                 $avgInterval > 60 && $avgInterval < 600) { // 1-10 минут между запросами
+                 return true;
+             }
+         }
+     }
+     
+     // 3. Отсутствие типичных пользовательских заголовков при долгой активности
+     if ($timeSpent > 3600 && $requests > 8) {
+         $headers = $this->collectHeaders();
+         $missingHeaders = 0;
+         
+         if (!isset($headers['HTTP_REFERER'])) $missingHeaders++;
+         if (!isset($headers['HTTP_ACCEPT_LANGUAGE'])) $missingHeaders++;
+         if (($headers['HTTP_ACCEPT'] ?? '') === '*/*') $missingHeaders++;
+         
+         if ($missingHeaders >= 2) {
+             return true;
+         }
+     }
+     
+     return false;
+ }
+ 
+ /**
+  * УЛУЧШЕННЫЙ МЕТОД: analyzeUserHashBehavior с медленными ботами
+  */
+ private function analyzeUserHashBehavior() {
+     $trackingData = $this->trackUserHashActivity();
+     
+     if (!$trackingData || $trackingData['requests'] < $this->slowBotSettings['min_requests_for_analysis']) {
+         return false;
+     }
+     
+     // Сначала стандартный анализ
+     $standardResult = $this->performStandardUserHashAnalysis($trackingData);
+     
+     // Потом анализ медленных ботов
+     $slowBotResult = $this->analyzeSlowBot($trackingData);
+     
+     return $standardResult || $slowBotResult;
+ }
+ 
+ /**
+  * НОВЫЙ МЕТОД: Стандартный анализ (вынесен из старого analyzeUserHashBehavior)
+  */
+ private function performStandardUserHashAnalysis($trackingData) {
      $score = 0;
      $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
      $isMobile = $this->isMobileDevice($userAgent);
@@ -480,6 +698,9 @@ class RedisBotProtectionNoSessions {
      return $score >= $blockThreshold;
  }
  
+ /**
+  * ОБНОВЛЕННЫЙ МЕТОД protect() с поддержкой медленных ботов
+  */
  public function protect() {
      if ($this->isStaticFile()) {
          return;
@@ -513,11 +734,15 @@ class RedisBotProtectionNoSessions {
          $this->sendBlockResponse();
      }
      
-     // 4. ПРОВЕРКА: валидный cookie
+     // 4. НОВОЕ: Проверка расширенного отслеживания
+     $hasExtendedTracking = $this->checkExtendedTracking($ip);
+     
+     // 5. ПРОВЕРКА: валидный cookie
      if ($this->hasValidCookie()) {
          $this->trackUserHashActivity();
          
-         if ($this->shouldAnalyzeIP($ip)) {
+         // Анализ с учетом расширенного отслеживания
+         if ($this->shouldAnalyzeIP($ip) || $hasExtendedTracking) {
              if ($this->analyzeRequest($ip)) {
                  if ($this->isSuspiciousUserAgent($userAgent)) {
                      $this->blockIP($ip, 'Suspicious user agent with valid cookie');
@@ -533,8 +758,8 @@ class RedisBotProtectionNoSessions {
          return;
      }
      
-     // 5. АНАЛИЗ ДЛЯ НОВЫХ ПОЛЬЗОВАТЕЛЕЙ
-     if ($this->shouldAnalyzeIP($ip)) {
+     // 6. АНАЛИЗ ДЛЯ НОВЫХ ПОЛЬЗОВАТЕЛЕЙ (включая медленных ботов)
+     if ($this->shouldAnalyzeIP($ip) || $hasExtendedTracking) {
          if ($this->analyzeRequest($ip)) {
              if ($this->isSuspiciousUserAgent($userAgent)) {
                  $this->blockIP($ip, 'Suspicious user agent detected');
@@ -543,6 +768,11 @@ class RedisBotProtectionNoSessions {
                  }
                  $this->blockUserHash('Bot detected');
              } else {
+                 // НОВОЕ: Включаем расширенное отслеживание для подозрительного поведения
+                 if (!$hasExtendedTracking) {
+                     $this->enableExtendedTracking($ip, 'Suspicious browser behavior');
+                 }
+                 
                  if (isset($_COOKIE[$this->cookieName])) {
                      $this->blockCookieHash();
                  } else {
@@ -553,7 +783,7 @@ class RedisBotProtectionNoSessions {
          }
      }
      
-     // 6. АНАЛИЗ ПОВЕДЕНИЯ ПО ХЕШУ
+     // 7. АНАЛИЗ ПОВЕДЕНИЯ ПО ХЕШУ (включая медленных ботов)
      if ($this->analyzeUserHashBehavior()) {
          if ($this->isSuspiciousUserAgent($userAgent)) {
              $this->blockIP($ip, 'Bot behavior confirmed by user hash analysis');
@@ -562,7 +792,7 @@ class RedisBotProtectionNoSessions {
                  $this->blockCookieHash();
              }
          } else {
-             $this->blockUserHash('Browser acting like bot');
+             $this->blockUserHash('Slow bot behavior detected');
              if (isset($_COOKIE[$this->cookieName])) {
                  $this->blockCookieHash();
              }
@@ -571,13 +801,24 @@ class RedisBotProtectionNoSessions {
          $this->sendBlockResponse();
      }
      
-     // 7. ИНИЦИАЛИЗАЦИЯ
+     // 8. НОВОЕ: Дополнительная проверка для потенциально медленных ботов
+     $trackingData = $this->getUserTrackingData($ip);
+     if ($trackingData && $this->isPotentialSlowBot($trackingData)) {
+         if (!$hasExtendedTracking) {
+             $this->enableExtendedTracking($ip, 'Potential slow bot pattern');
+         }
+     }
+     
+     // 9. ИНИЦИАЛИЗАЦИЯ
      if (!isset($_COOKIE[$this->cookieName])) {
          $this->setVisitorCookie();
          $this->initTracking($ip);
      }
  }
  
+ /**
+  * УЛУЧШЕННЫЙ МЕТОД: shouldAnalyzeIP с учетом медленных ботов
+  */
  private function shouldAnalyzeIP($ip) {
      $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
      $data = $this->redis->get($trackingKey);
@@ -587,21 +828,29 @@ class RedisBotProtectionNoSessions {
          $timeSpent = time() - ($data['first_seen'] ?? time());
          $suspicious_ua = $this->isSuspiciousUserAgent($_SERVER['HTTP_USER_AGENT'] ?? '');
          
+         // Подозрительный UA анализируем сразу
          if ($suspicious_ua) {
              return true;
          }
          
+         // НОВОЕ: Анализ медленных ботов
+         if ($timeSpent > 1800 && $requests >= 5) { // 30+ минут, 5+ запросов
+             return true;
+         }
+         
+         // Стандартная логика
          if ($requests > 5) {
              return true;
          }
          
-         if ($timeSpent > 0 && $requests >= 5) {
+         if ($timeSpent > 0 && $requests >= $this->slowBotSettings['min_requests_for_analysis']) {
              $requestsPerMinute = ($requests * 60) / $timeSpent;
              if ($requestsPerMinute > 40) {
                  return true;
              }
          }
          
+         // Быстрые последовательные запросы
          if (isset($data['request_times']) && count($data['request_times']) >= 7) {
              $recentTimes = array_slice($data['request_times'], -7);
              $timeSpan = end($recentTimes) - reset($recentTimes);
@@ -744,7 +993,7 @@ class RedisBotProtectionNoSessions {
          'error' => $error
      ];
      
-     // Кэшируем успешные проверки на 15 мин, неудачные на 5 мин
+     // Кэшируем успешные проверки на 30 мин, неудачные на 5 мин
      $cacheTTL = $verified ? $this->ttlSettings['rdns_cache'] : 300;
      $this->redis->setex($cacheKey, $cacheTTL, $cacheData);
      
@@ -1023,14 +1272,14 @@ class RedisBotProtectionNoSessions {
          $existing['user_agents'] = array_unique($existing['user_agents']);
          $existing['request_times'][] = time();
          
-         if (count($existing['request_times']) > 15) {
-             $existing['request_times'] = array_slice($existing['request_times'], -15);
+         if (count($existing['request_times']) > 25) { // Увеличено с 15
+             $existing['request_times'] = array_slice($existing['request_times'], -25);
          }
-         if (count($existing['pages']) > 20) {
-             $existing['pages'] = array_slice($existing['pages'], -20);
+         if (count($existing['pages']) > 40) { // Увеличено с 20
+             $existing['pages'] = array_slice($existing['pages'], -40);
          }
-         if (count($existing['user_agents']) > 3) {
-             $existing['user_agents'] = array_slice($existing['user_agents'], -3);
+         if (count($existing['user_agents']) > 5) { // Увеличено с 3
+             $existing['user_agents'] = array_slice($existing['user_agents'], -5);
          }
          
          $this->redis->setex($trackingKey, $this->ttlSettings['tracking_ip'], $existing);
@@ -1407,7 +1656,8 @@ class RedisBotProtectionNoSessions {
          'session_id' => 'no_session',
          'user_agent' => substr($userAgent, 0, 100) . '...',
          'accept_language' => $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? 'none',
-         'accept_encoding' => $_SERVER['HTTP_ACCEPT_ENCODING'] ?? 'none'
+         'accept_encoding' => $_SERVER['HTTP_ACCEPT_ENCODING'] ?? 'none',
+         'extended_tracking' => $this->checkExtendedTracking($ip)
      ];
  }
  
@@ -1415,7 +1665,8 @@ class RedisBotProtectionNoSessions {
      $stats = [
          'blocked_user_hashes' => 0,
          'tracked_user_hashes' => 0,
-         'total_hash_blocks' => 0
+         'total_hash_blocks' => 0,
+         'extended_tracking_active' => 0
      ];
      
      try {
@@ -1424,6 +1675,9 @@ class RedisBotProtectionNoSessions {
          
          $trackedHashes = $this->redis->keys($this->userHashPrefix . 'tracking:*');
          $stats['tracked_user_hashes'] = count($trackedHashes);
+         
+         $extendedTracking = $this->redis->keys($this->trackingPrefix . 'extended:*');
+         $stats['extended_tracking_active'] = count($extendedTracking);
          
          $statsKeys = $this->redis->keys($this->userHashPrefix . 'stats:*');
          $totalBlocks = 0;
@@ -1447,7 +1701,8 @@ class RedisBotProtectionNoSessions {
          $patterns = [
              $this->userHashPrefix . 'blocked:*',
              $this->userHashPrefix . 'tracking:*',
-             $this->userHashPrefix . 'stats:*'
+             $this->userHashPrefix . 'stats:*',
+             $this->trackingPrefix . 'extended:*'
          ];
          
          foreach ($patterns as $pattern) {
@@ -1513,6 +1768,7 @@ class RedisBotProtectionNoSessions {
              ['pattern' => $this->trackingPrefix . 'ip:*', 'priority' => 1],
              ['pattern' => $this->rdnsPrefix . 'cache:*', 'priority' => 1],
              ['pattern' => $this->userHashPrefix . 'tracking:*', 'priority' => 1],
+             ['pattern' => $this->trackingPrefix . 'extended:*', 'priority' => 1],
              ['pattern' => $this->blockPrefix . 'ip:*', 'priority' => 2],
              ['pattern' => $this->cookiePrefix . 'blocked:*', 'priority' => 2],
              ['pattern' => $this->userHashPrefix . 'blocked:*', 'priority' => 2],
@@ -1606,10 +1862,12 @@ class RedisBotProtectionNoSessions {
  public function unblockIP($ip) {
      $blockKey = $this->blockPrefix . 'ip:' . hash('md5', $ip);
      $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
+     $extendedKey = $this->trackingPrefix . 'extended:' . hash('md5', $ip);
      
      $result = [
          'ip_unblocked' => $this->redis->del($blockKey) > 0,
-         'tracking_cleared' => $this->redis->del($trackingKey) > 0
+         'tracking_cleared' => $this->redis->del($trackingKey) > 0,
+         'extended_tracking_cleared' => $this->redis->del($extendedKey) > 0
      ];
      
      // ЛОГИРУЕМ РАЗБЛОКИРОВКУ
@@ -1620,11 +1878,13 @@ class RedisBotProtectionNoSessions {
  public function getBlockedIPInfo($ip) {
      $blockKey = $this->blockPrefix . 'ip:' . hash('md5', $ip);
      $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
+     $extendedKey = $this->trackingPrefix . 'extended:' . hash('md5', $ip);
      
      return [
          'blocked' => $this->redis->exists($blockKey),
          'block_data' => $this->redis->get($blockKey),
          'tracking_data' => $this->redis->get($trackingKey),
+         'extended_tracking' => $this->redis->get($extendedKey),
          'ttl' => $this->redis->ttl($blockKey)
      ];
  }
@@ -1633,9 +1893,18 @@ class RedisBotProtectionNoSessions {
      return $this->ttlSettings;
  }
  
+ public function getSlowBotSettings() {
+     return $this->slowBotSettings;
+ }
+ 
  public function updateTTLSettings($newSettings) {
      $this->ttlSettings = array_merge($this->ttlSettings, $newSettings);
      error_log("TTL settings updated: " . json_encode($newSettings));
+ }
+ 
+ public function updateSlowBotSettings($newSettings) {
+     $this->slowBotSettings = array_merge($this->slowBotSettings, $newSettings);
+     error_log("Slow bot settings updated: " . json_encode($newSettings));
  }
  
  public function __destruct() {
