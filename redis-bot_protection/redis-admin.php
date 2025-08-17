@@ -8,7 +8,7 @@ define('ADMIN_LOGIN', 'murkir');
 define('ADMIN_PASSWORD', 'murkir.pp.ua');
 
 // Настройки rDNS
-define('ENABLE_RDNS', true); // включить/выключить rDNS
+define('ENABLE_RDNS', false); // включить/выключить rDNS
 define('RDNS_TIMEOUT', 1); // 1 секунда таймаут
 define('RDNS_CACHE_TTL', 86400); // 1 час кеш
 
@@ -288,6 +288,37 @@ function getUserHashStats($redis) {
  return $stats;
 }
 
+function getExtendedTracking($redis) {
+    if (!$redis) return [];
+    
+    $extendedData = [];
+    $keys = $redis->keys('bot_protection:tracking:extended:*');
+    
+    foreach ($keys as $key) {
+        $data = $redis->get($key);
+        if ($data) {
+            $ttl = $redis->ttl($key);
+            $data['ttl'] = $ttl;
+            $data['key'] = $key;
+            
+            // Получаем rDNS если есть IP
+            if (isset($data['ip'])) {
+                $data['hostname'] = getRDNSFast($redis, $data['ip']);
+            } else {
+                $data['hostname'] = 'N/A';
+            }
+            
+            $extendedData[] = $data;
+        }
+    }
+    
+    usort($extendedData, function($a, $b) {
+        return ($b['enabled_at'] ?? 0) - ($a['enabled_at'] ?? 0);
+    });
+    
+    return $extendedData;
+}
+
 function getTrackingData($redis) {
  if (!$redis) return [];
  
@@ -331,23 +362,24 @@ function getTrackingData($redis) {
 }
 
 function getRedisStats($redis) {
- if (!$redis) return null;
- 
- $stats = [
-     'blocked_ips' => count($redis->keys('bot_protection:blocked:ip:*')),
-     'blocked_sessions' => count($redis->keys('bot_protection:session:blocked:*')),
-     'blocked_cookies' => count($redis->keys('bot_protection:cookie:blocked:*')),
-     'blocked_user_hashes' => count($redis->keys('bot_protection:user_hash:blocked:*')),
-     'tracking_records' => count($redis->keys('bot_protection:tracking:ip:*')),
-     'user_hash_tracking' => count($redis->keys('bot_protection:user_hash:tracking:*')),
-     'user_hash_stats' => count($redis->keys('bot_protection:user_hash:stats:*')),
-     'rdns_cache' => count($redis->keys('bot_protection:rdns:cache:*')),
-     'logs_today' => count($redis->keys('bot_protection:logs:*:' . date('Y-m-d'))),
-     'memory_usage' => $redis->info('memory')['used_memory_human'] ?? 'N/A',
-     'total_keys' => $redis->dbSize()
- ];
- 
- return $stats;
+    if (!$redis) return null;
+    
+    $stats = [
+        'blocked_ips' => count($redis->keys('bot_protection:blocked:ip:*')),
+        'blocked_sessions' => count($redis->keys('bot_protection:session:blocked:*')),
+        'blocked_cookies' => count($redis->keys('bot_protection:cookie:blocked:*')),
+        'blocked_user_hashes' => count($redis->keys('bot_protection:user_hash:blocked:*')),
+        'tracking_records' => count($redis->keys('bot_protection:tracking:ip:*')),
+        'user_hash_tracking' => count($redis->keys('bot_protection:user_hash:tracking:*')),
+        'user_hash_stats' => count($redis->keys('bot_protection:user_hash:stats:*')),
+        'rdns_cache' => count($redis->keys('bot_protection:rdns:cache:*')),
+        'extended_tracking_active' => count($redis->keys('bot_protection:tracking:extended:*')), // ДОБАВИТЬ ЭТУ СТРОКУ
+        'logs_today' => count($redis->keys('bot_protection:logs:*:' . date('Y-m-d'))),
+        'memory_usage' => $redis->info('memory')['used_memory_human'] ?? 'N/A',
+        'total_keys' => $redis->dbSize()
+    ];
+    
+    return $stats;
 }
 
 function getLogs($redis, $type = 'all', $limit = 50) {
@@ -400,6 +432,13 @@ switch ($_POST['action']) {
             $deleted++;
         }
         $result = "Очищено записей rDNS кеша: $deleted";
+        break;
+		
+		case 'clear_extended_tracking':
+        if (isset($_POST['key'])) {
+            $deleted = $redis->del($_POST['key']);
+            $result = $deleted ? 'Расширенное отслеживание удалено' : 'Ошибка удаления';
+        }
         break;
         
     case 'unblock_ip':
@@ -523,19 +562,20 @@ switch ($_POST['action']) {
 
 // Получаем данные для отображения
 if ($isLoggedIn && $redis) {
-$blockedIPs = getBlockedIPs($redis);
-$blockedSessions = getBlockedSessions($redis);
-$blockedCookies = getBlockedCookies($redis);
-$blockedUserHashes = getBlockedUserHashes($redis);
-$userHashTracking = getUserHashTracking($redis);
-$userHashStats = getUserHashStats($redis);
-$trackingData = getTrackingData($redis);
-$redisStats = getRedisStats($redis);
-$logs = getLogs($redis);
+    $blockedIPs = getBlockedIPs($redis);
+    $blockedSessions = getBlockedSessions($redis);
+    $blockedCookies = getBlockedCookies($redis);
+    $blockedUserHashes = getBlockedUserHashes($redis);
+    $userHashTracking = getUserHashTracking($redis);
+    $userHashStats = getUserHashStats($redis);
+    $trackingData = getTrackingData($redis);
+    $extendedTracking = getExtendedTracking($redis); // ДОБАВИТЬ ЭТУ СТРОКУ
+    $redisStats = getRedisStats($redis);
+    $logs = getLogs($redis);
 
-// Проверяем текущее состояние rDNS
-$rdnsCurrentState = $redis->get('bot_protection:config:rdns_enabled');
-if ($rdnsCurrentState === false) $rdnsCurrentState = ENABLE_RDNS;
+    // Проверяем текущее состояние rDNS
+    $rdnsCurrentState = $redis->get('bot_protection:config:rdns_enabled');
+    if ($rdnsCurrentState === false) $rdnsCurrentState = ENABLE_RDNS;
 }
 ?>
 <!DOCTYPE html>
@@ -543,7 +583,7 @@ if ($rdnsCurrentState === false) $rdnsCurrentState = ENABLE_RDNS;
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>🛡️ Redis MurKir Security - Admin Panel v2.0</title>
+<title>🛡️ Redis MurKir Security - Admin Panel v2.1</title>
 <style>
     * {
    box-sizing: border-box;
@@ -1477,12 +1517,12 @@ body {
 </style>
 </head>
 <body>
-<div class="version-info">Bot Protection v2.0</div>
+<div class="version-info">Bot Protection v2.1</div>
 
 <?php if (!$isLoggedIn): ?>
     <div class="login-container">
         <form class="login-form" method="POST">
-            <h1>🛡️ Admin Panel v2.0</h1>
+            <h1>🛡️ Admin Panel v2.1</h1>
             
             <?php if (isset($login_error)): ?>
                 <div class="error-message">
@@ -1509,7 +1549,7 @@ body {
     <div class="admin-container">
         <div class="header">
             <div>
-                <h1>🛡️ Redis MurKir Security - Admin Panel v2.0</h1>
+                <h1>🛡️ Redis MurKir Security - Admin Panel v2.1</h1>
                 <p>Logged in as: <strong><?php echo ADMIN_LOGIN; ?></strong> | 
                    Session expires: <?php echo date('H:i:s', $_SESSION['admin_login_time'] + 3600); ?></p>
             </div>
@@ -1565,6 +1605,10 @@ body {
                     <div class="stat-number"><?php echo $redisStats['total_keys']; ?></div>
                     <div class="stat-label">Всего ключей Redis</div>
                 </div>
+				<div class="stat-card">
+        <div class="stat-number"><?php echo $redisStats['extended_tracking_active']; ?></div>
+        <div class="stat-label">Расширенный трекинг</div>
+    </div>
                 <div class="stat-card">
                     <div class="stat-number"><?php echo $redisStats['memory_usage']; ?></div>
                     <div class="stat-label">Использование памяти</div>
@@ -1629,15 +1673,16 @@ body {
             </div>
 
             <!-- Табы -->
-            <div class="tabs">
-                <button class="tab active" onclick="showTab('blocked-ips')">🚫 IP</button>
-                <button class="tab" onclick="showTab('blocked-sessions')">🔒 Сессии</button>
-                <button class="tab" onclick="showTab('blocked-cookies')">🍪 Cookies</button>
-                <button class="tab" onclick="showTab('blocked-user-hashes')">👤 Хеши</button>
-                <button class="tab" onclick="showTab('user-hash-tracking')">📊 Трекинг хешей</button>
-                <button class="tab" onclick="showTab('tracking')">📈 Трекинг IP</button>
-                <button class="tab" onclick="showTab('logs')">📝 Логи</button>
-            </div>
+<div class="tabs">
+    <button class="tab active" onclick="showTab('blocked-ips')">🚫 IP</button>
+    <button class="tab" onclick="showTab('blocked-sessions')">🔒 Сессии</button>
+    <button class="tab" onclick="showTab('blocked-cookies')">🍪 Cookies</button>
+    <button class="tab" onclick="showTab('blocked-user-hashes')">👤 Хеши</button>
+    <button class="tab" onclick="showTab('user-hash-tracking')">📊 Трекинг хешей</button>
+    <button class="tab" onclick="showTab('tracking')">📈 Трекинг IP</button>
+    <button class="tab" onclick="showTab('extended-tracking')">🔍 Расширенный трекинг</button> <!-- ДОБАВИТЬ ЭТУ СТРОКУ -->
+    <button class="tab" onclick="showTab('logs')">📝 Логи</button>
+</div>
 
             <!-- Заблокированные IP -->
 <div id="blocked-ips" class="tab-content active">
@@ -2603,6 +2648,179 @@ body {
    </div>
 </div>
 
+<!-- Расширенное отслеживание -->
+<div id="extended-tracking" class="tab-content">
+    <div class="section">
+        <div class="section-header">
+            🔍 Расширенное отслеживание (<?php echo count($extendedTracking); ?>)
+        </div>
+        <div class="section-content">
+            <input type="text" class="search-box" placeholder="🔍 Поиск по IP или причине..." onkeyup="filterTable(this, 'extended-tracking-table')">
+            
+            <div class="table-view-toggle mobile-only">
+                <button onclick="toggleTableView(this)">📱 Карточки</button>
+            </div>
+
+            <div class="table-container">
+                <table class="table" id="extended-tracking-table">
+                    <thead>
+                        <tr>
+                            <th>IP адрес</th>
+                            <th>Hostname (rDNS)</th>
+                            <th>Включено</th>
+                            <th>Причина</th>
+                            <th>TTL</th>
+                            <th>Запросов</th>
+                            <th>User-Agent</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($extendedTracking as $ext): ?>
+                            <tr>
+                                <td>
+                                    <span class="ip-info copyable" onclick="copyToClipboard('<?php echo addslashes($ext['ip']); ?>', this)" title="Нажмите для копирования">
+                                        <?php echo htmlspecialchars($ext['ip']); ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <?php if ($ext['hostname'] !== 'N/A' && $ext['hostname'] !== 'Timeout/N/A' && $ext['hostname'] !== 'rDNS disabled'): ?>
+                                        <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($ext['hostname']); ?>', this)" title="Нажмите для копирования">
+                                            <?php echo htmlspecialchars($ext['hostname']); ?>
+                                        </span>
+                                    <?php else: ?>
+                                        <span style="color: #6c757d;"><?php echo htmlspecialchars($ext['hostname']); ?></span>
+                                    <?php endif; ?>
+                                </td>
+                                <td><?php echo date('Y-m-d H:i:s', $ext['enabled_at']); ?></td>
+                                <td>
+                                    <span class="status-badge status-tracking">
+                                        <?php echo htmlspecialchars($ext['reason']); ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <?php if ($ext['ttl'] > 0): ?>
+                                        <span class="status-badge status-tracking">
+                                            <?php echo gmdate('H:i:s', $ext['ttl']); ?>
+                                        </span>
+                                    <?php else: ?>
+                                        <span class="status-badge status-active">Постоянно</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <span class="status-badge status-tracking">
+                                        <?php echo $ext['extended_requests'] ?? 1; ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($ext['user_agent']); ?>', this)" title="Нажмите для копирования">
+                                        <?php echo htmlspecialchars($ext['user_agent']); ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <form method="POST" style="display: inline;">
+                                        <input type="hidden" name="action" value="clear_extended_tracking">
+                                        <input type="hidden" name="key" value="<?php echo htmlspecialchars($ext['key']); ?>">
+                                        <button type="submit" class="btn btn-secondary btn-small" onclick="return confirm('Удалить расширенное отслеживание?');">
+                                            🗑️ Удалить
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Вид карточек для мобильных -->
+            <div class="table-cards">
+                <?php foreach ($extendedTracking as $ext): ?>
+                    <div class="table-card">
+                        <div class="table-card-header">
+                            🔍 Extended: <?php echo htmlspecialchars($ext['ip']); ?>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">IP адрес:</div>
+                            <div class="table-card-value">
+                                <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($ext['ip']); ?>', this)" title="Нажмите для копирования">
+                                    <?php echo htmlspecialchars($ext['ip']); ?>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">Hostname:</div>
+                            <div class="table-card-value">
+                                <?php if ($ext['hostname'] !== 'N/A' && $ext['hostname'] !== 'Timeout/N/A' && $ext['hostname'] !== 'rDNS disabled'): ?>
+                                    <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($ext['hostname']); ?>', this)" title="Нажмите для копирования">
+                                        <?php echo htmlspecialchars($ext['hostname']); ?>
+                                    </span>
+                                <?php else: ?>
+                                    <span style="color: #6c757d;"><?php echo htmlspecialchars($ext['hostname']); ?></span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">Включено:</div>
+                            <div class="table-card-value"><?php echo date('Y-m-d H:i:s', $ext['enabled_at']); ?></div>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">Причина:</div>
+                            <div class="table-card-value">
+                                <span class="status-badge status-tracking">
+                                    <?php echo htmlspecialchars($ext['reason']); ?>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">TTL:</div>
+                            <div class="table-card-value">
+                                <?php if ($ext['ttl'] > 0): ?>
+                                    <span class="status-badge status-tracking">
+                                        <?php echo gmdate('H:i:s', $ext['ttl']); ?>
+                                    </span>
+                                <?php else: ?>
+                                    <span class="status-badge status-active">Постоянно</span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">Запросов:</div>
+                            <div class="table-card-value">
+                                <span class="status-badge status-tracking">
+                                    <?php echo $ext['extended_requests'] ?? 1; ?>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="table-card-row">
+                            <div class="table-card-label">User-Agent:</div>
+                            <div class="table-card-value">
+                                <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($ext['user_agent']); ?>', this)" title="Нажмите для копирования">
+                                    <?php echo htmlspecialchars($ext['user_agent']); ?>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="table-card-actions">
+                            <form method="POST">
+                                <input type="hidden" name="action" value="clear_extended_tracking">
+                                <input type="hidden" name="key" value="<?php echo htmlspecialchars($ext['key']); ?>">
+                                <button type="submit" class="btn btn-secondary" onclick="return confirm('Удалить расширенное отслеживание?');">
+                                    🗑️ Удалить
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+            
+            <?php if (empty($extendedTracking)): ?>
+                <p style="text-align: center; color: #6c757d; padding: 20px;">
+                    🔍 Нет активного расширенного отслеживания
+                </p>
+            <?php endif; ?>
+        </div>
+    </div>
+</div>
+
 <!-- Логи -->
 <div id="logs" class="tab-content">
    <div class="section">
@@ -2960,7 +3178,7 @@ body {
         });
         
         // Статистика по состоянию страницы
-        console.log('🛡️ Redis Bot Protection Admin Panel v2.0 loaded');
+        console.log('🛡️ Redis Bot Protection Admin Panel v2.1 loaded');
         console.log('📊 Current stats:', {
             blockedIPs: <?php echo count($blockedIPs ?? []); ?>,
             blockedSessions: <?php echo count($blockedSessions ?? []); ?>,
@@ -2974,43 +3192,47 @@ body {
         
         // Клавиатурные сочетания
         document.addEventListener('keydown', (e) => {
-            if (e.ctrlKey || e.metaKey) {
-                switch(e.key) {
-                    case 'r':
-                        e.preventDefault();
-                        location.reload();
-                        break;
-                    case '1':
-                        e.preventDefault();
-                        showTab('blocked-ips');
-                        break;
-                    case '2':
-                        e.preventDefault();
-                        showTab('blocked-sessions');
-                        break;
-                    case '3':
-                        e.preventDefault();
-                        showTab('blocked-cookies');
-                        break;
-                    case '4':
-                        e.preventDefault();
-                        showTab('blocked-user-hashes');
-                        break;
-                    case '5':
-                        e.preventDefault();
-                        showTab('user-hash-tracking');
-                        break;
-                    case '6':
-                        e.preventDefault();
-                        showTab('tracking');
-                        break;
-                    case '7':
-                        e.preventDefault();
-                        showTab('logs');
-                        break;
-                }
-            }
-        });
+    if (e.ctrlKey || e.metaKey) {
+        switch(e.key) {
+            case 'r':
+                e.preventDefault();
+                location.reload();
+                break;
+            case '1':
+                e.preventDefault();
+                showTab('blocked-ips');
+                break;
+            case '2':
+                e.preventDefault();
+                showTab('blocked-sessions');
+                break;
+            case '3':
+                e.preventDefault();
+                showTab('blocked-cookies');
+                break;
+            case '4':
+                e.preventDefault();
+                showTab('blocked-user-hashes');
+                break;
+            case '5':
+                e.preventDefault();
+                showTab('user-hash-tracking');
+                break;
+            case '6':
+                e.preventDefault();
+                showTab('tracking');
+                break;
+            case '7':
+                e.preventDefault();
+                showTab('extended-tracking'); // ДОБАВИТЬ ЭТУ СТРОКУ
+                break;
+            case '8':  // ИЗМЕНИТЬ С '7' НА '8'
+                e.preventDefault();
+                showTab('logs');
+                break;
+        }
+    }
+});
         
         // Показываем горячие клавиши
         setTimeout(() => {
