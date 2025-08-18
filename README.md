@@ -158,25 +158,9 @@ redis-cli ping
 ```php
 <?php
 // В самом начале страницы, до любого вывода
-require_once '/path/to/bot_protection/inline_check.php';
-
-try {
-    $protection = new RedisBotProtectionWithSessions(
-        '127.0.0.1',    // Redis host
-        6379,           // Redis port  
-        null,           // Redis password (если есть)
-        0               // Redis database (обычно 0)
-    );
-    
-    $protection->protect();
-    
-} catch (Exception $e) {
-    error_log("Bot protection error: " . $e->getMessage());
-    // Продолжаем работу без защиты в случае ошибки
-}
+require_once $_SERVER['DOCUMENT_ROOT'] . '/dos/inline_check.php';
 
 // Ваш обычный код страницы
-?>
 <!DOCTYPE html>
 <html>
 ...
