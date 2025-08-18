@@ -3,13 +3,30 @@
 <img src="./images/Screenshot 2025-07-10 170349.png" alt="Демонстрация" width="800">
 <img src="./images/Screenshot 2025-07-23 154827.png" alt="Демонстрация" width="800">
 <img src="./images/Screenshot_20250813-211317.jpg" alt="Демонстрация" width="800">
+🛡️ Advanced Redis-based bot protection system with intelligent behavioral analysis
+
+⚡ **Key Features:**
+- **Session-free protection** - Works without PHP sessions using user hash fingerprinting
+- **Smart bot detection** - Catches both fast aggressive bots and slow stealth crawlers  
+- **Search engine verification** - Fast rDNS validation for legitimate crawlers (Google, Bing, Yandex, etc.)
+- **Extended tracking** - Advanced monitoring for suspicious behavior patterns
+- **Mobile-optimized** - Different thresholds and analysis for mobile vs desktop users
+- **Real-time blocking** - IP, cookie, and user hash based blocking with TTL management
+- **Zero false positives** - Verified search engines and legitimate bots are whitelisted
+
+🚀 **Performance:** Optimized Redis operations with automatic cleanup and caching
+📊 **Admin panel ready** - Full monitoring and management interface available
+🔧 **Easy integration** - Single file inclusion, minimal configuration required
+
+Perfect for high-traffic websites needing robust bot protection without breaking legitimate users or search engines.
+ 
  # Redis MurKir Security v2.0 - Полное описание системы
 
 Создана новая версия! 13.08.2025
 
 ## 🛡️ Что это такое?
 
-**Redis MurKir Security v2.0** - это продвинутая система защиты веб-сайтов от автоматизированных ботов, скреперов и вредоносного трафика. Система работает в реальном времени, анализируя поведение посетителей и блокируя подозрительную активность.
+**Redis MurKir Security v2.1** - это продвинутая система защиты веб-сайтов от автоматизированных ботов, скреперов и вредоносного трафика. Система работает в реальном времени, анализируя поведение посетителей и блокируя подозрительную активность.
 
 ## 🎯 От кого защищает?
 
