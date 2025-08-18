@@ -414,8 +414,9 @@ $settings['container_yamls'][] = '/path/to/bot_protection_services.yml';
 Крон-задача для очистки Redis
 0 3 * * * cd /home/user/site/bot_protection && php cleanup.php --force >> /var/log/bot-cleanup.log 2>&1
 
-**Версия:** v2.0  
+**Версия:** v2.1 
 **Статус:** Стабильная  
 **Совместимость:** PHP 7.4+ / Redis 4.0+  
 **Лицензия:** Проприетарная  
 **Поддержка:** Через логи и админ панель
+https://github.com/Murkirpus/Redis-Bot-Protection/issues
