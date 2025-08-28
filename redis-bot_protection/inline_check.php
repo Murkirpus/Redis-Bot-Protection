@@ -4,7 +4,7 @@
 class RedisBotProtectionNoSessions {
  private $redis;
  private $cookieName = 'visitor_verified';
- private $secretKey = 'your_secret_key_here_change_this';
+ private $secretKey = 'your_secret_key_here_change_this12345!@#$';
  private $cookieLifetime = 86400 * 30; // 30 дней
  
  // Префиксы для Redis ключей (БЕЗ sessionPrefix)
@@ -42,9 +42,14 @@ class RedisBotProtectionNoSessions {
  // РАСШИРЕННЫЙ список поисковиков с точными паттернами
  private $allowedSearchEngines = [
      'googlebot' => [
-         'user_agent_patterns' => ['googlebot', 'google'],
-         'rdns_patterns' => ['.googlebot.com', '.google.com']
-     ],
+    'user_agent_patterns' => [
+        'googlebot',
+        'googlebot-image',
+        'googlebot-news',
+        'googlebot-video'
+    ],
+    'rdns_patterns' => ['.googlebot.com']
+	],
      'bingbot' => [
          'user_agent_patterns' => ['bingbot', 'msnbot'],
          'rdns_patterns' => ['.search.msn.com']
