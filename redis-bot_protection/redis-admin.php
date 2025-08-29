@@ -8,7 +8,7 @@ define('ADMIN_LOGIN', 'murkir');
 define('ADMIN_PASSWORD', 'murkir.pp.ua');
 
 // Настройки rDNS
-define('ENABLE_RDNS', false); // включить/выключить rDNS
+define('ENABLE_RDNS', true); // включить/выключить rDNS
 define('RDNS_TIMEOUT', 1); // 1 секунда таймаут
 define('RDNS_CACHE_TTL', 86400); // 1 час кеш
 
@@ -239,17 +239,10 @@ function getUserHashTracking($redis) {
          if (isset($data['ips']) && is_array($data['ips'])) {
              $data['unique_ips'] = count(array_unique($data['ips']));
              $data['primary_ip'] = $data['ips'][0] ?? 'unknown';
-             
-             // rDNS для основного IP
-             if ($data['primary_ip'] !== 'unknown') {
-                 $data['hostname'] = getRDNSFast($redis, $data['primary_ip']);
-             } else {
-                 $data['hostname'] = 'N/A';
-             }
+             // УБРАЛИ rDNS ПРОВЕРКУ - больше не вызываем getRDNSFast()
          } else {
              $data['unique_ips'] = 0;
              $data['primary_ip'] = 'unknown';
-             $data['hostname'] = 'N/A';
          }
          
          $trackingData[] = $data;
@@ -344,11 +337,7 @@ function getTrackingData($redis) {
          }
          
          $data['detected_ip'] = $ip;
-         if ($ip !== 'unknown') {
-             $data['hostname'] = getRDNSFast($redis, $ip);
-         } else {
-             $data['hostname'] = 'N/A';
-         }
+         // УБРАЛИ rDNS ПРОВЕРКУ - больше не вызываем getRDNSFast()
          
          $trackingData[] = $data;
      }
@@ -373,7 +362,7 @@ function getRedisStats($redis) {
         'user_hash_tracking' => count($redis->keys('bot_protection:user_hash:tracking:*')),
         'user_hash_stats' => count($redis->keys('bot_protection:user_hash:stats:*')),
         'rdns_cache' => count($redis->keys('bot_protection:rdns:cache:*')),
-        'extended_tracking_active' => count($redis->keys('bot_protection:tracking:extended:*')), // ДОБАВИТЬ ЭТУ СТРОКУ
+        'extended_tracking_active' => count($redis->keys('bot_protection:tracking:extended:*')),
         'logs_today' => count($redis->keys('bot_protection:logs:*:' . date('Y-m-d'))),
         'memory_usage' => $redis->info('memory')['used_memory_human'] ?? 'N/A',
         'total_keys' => $redis->dbSize()
@@ -569,7 +558,7 @@ if ($isLoggedIn && $redis) {
     $userHashTracking = getUserHashTracking($redis);
     $userHashStats = getUserHashStats($redis);
     $trackingData = getTrackingData($redis);
-    $extendedTracking = getExtendedTracking($redis); // ДОБАВИТЬ ЭТУ СТРОКУ
+    $extendedTracking = getExtendedTracking($redis);
     $redisStats = getRedisStats($redis);
     $logs = getLogs($redis);
 
@@ -1680,7 +1669,7 @@ body {
     <button class="tab" onclick="showTab('blocked-user-hashes')">👤 Хеши</button>
     <button class="tab" onclick="showTab('user-hash-tracking')">📊 Трекинг хешей</button>
     <button class="tab" onclick="showTab('tracking')">📈 Трекинг IP</button>
-    <button class="tab" onclick="showTab('extended-tracking')">🔍 Расширенный трекинг</button> <!-- ДОБАВИТЬ ЭТУ СТРОКУ -->
+    <button class="tab" onclick="showTab('extended-tracking')">🔍 Расширенный трекинг</button>
     <button class="tab" onclick="showTab('logs')">📝 Логи</button>
 </div>
 
@@ -2297,14 +2286,13 @@ body {
            
            <?php if (empty($blockedUserHashes)): ?>
                <p style="text-align: center; color: #6c757d; padding: 20px;">
-                   ✅ Нет заблокированных хешей пользователей
-               </p>
-           <?php endif; ?>
-       </div>
+                   ✅Нет заблокированных хешей пользователей
+</p>
+<?php endif; ?>
+</div>
    </div>
 </div>
-
-<!-- Трекинг хешей пользователей -->
+<!-- Трекинг хешей пользователей (БЕЗ rDNS) -->
 <div id="user-hash-tracking" class="tab-content">
    <div class="section">
        <div class="section-header">
@@ -2312,146 +2300,50 @@ body {
        </div>
        <div class="section-content">
            <input type="text" class="search-box" placeholder="🔍 Поиск по хешу или IP..." onkeyup="filterTable(this, 'user-hash-tracking-table')">
-           
-           <div class="table-view-toggle mobile-only">
-               <button onclick="toggleTableView(this)">📱 Карточки</button>
-           </div>
+       <div class="table-view-toggle mobile-only">
+           <button onclick="toggleTableView(this)">📱 Карточки</button>
+       </div>
 
-           <div class="table-container">
-               <table class="table" id="user-hash-tracking-table">
-                   <thead>
+       <div class="table-container">
+           <table class="table" id="user-hash-tracking-table">
+               <thead>
+                   <tr>
+                       <th>Хеш пользователя</th>
+                       <th>Основной IP</th>
+                       <th>Уникальных IP</th>
+                       <th>Последняя активность</th>
+                       <th>Запросов</th>
+                       <th>Страниц</th>
+                       <th>TTL</th>
+                       <th>Действия</th>
+                   </tr>
+               </thead>
+               <tbody>
+                   <?php foreach ($userHashTracking as $track): ?>
                        <tr>
-                           <th>Хеш пользователя</th>
-                           <th>Основной IP</th>
-                           <th>Hostname</th>
-                           <th>Уникальных IP</th>
-                           <th>Последняя активность</th>
-                           <th>Запросов</th>
-                           <th>Страниц</th>
-                           <th>TTL</th>
-                           <th>Действия</th>
-                       </tr>
-                   </thead>
-                   <tbody>
-                       <?php foreach ($userHashTracking as $track): ?>
-                           <tr>
-                               <td>
-                                   <span class="ip-info copyable" onclick="copyToClipboard('<?php echo addslashes($track['hash_full']); ?>', this)" title="Нажмите для копирования">
-                                       <?php echo htmlspecialchars($track['hash_full']); ?>
-                                   </span>
-                               </td>
-                               <td>
-                                   <span class="ip-info copyable" onclick="copyToClipboard('<?php echo addslashes($track['primary_ip']); ?>', this)" title="Нажмите для копирования">
-                                       <?php echo htmlspecialchars($track['primary_ip']); ?>
-                                   </span>
-                               </td>
-                               <td>
-                                   <?php if ($track['hostname'] !== 'N/A' && $track['hostname'] !== 'Timeout/N/A' && $track['hostname'] !== 'rDNS disabled'): ?>
-                                       <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($track['hostname']); ?>', this)" title="Нажмите для копирования">
-                                           <?php echo htmlspecialchars($track['hostname']); ?>
-                                       </span>
-                                   <?php else: ?>
-                                       <span style="color: #6c757d;"><?php echo htmlspecialchars($track['hostname']); ?></span>
-                                   <?php endif; ?>
-                               </td>
-                               <td>
-                                   <span class="status-badge <?php echo $track['unique_ips'] > 3 ? 'status-blocked' : 'status-tracking'; ?>">
-                                       <?php echo $track['unique_ips']; ?>
-                                   </span>
-                               </td>
-                               <td><?php echo date('Y-m-d H:i:s', $track['last_activity']); ?></td>
-                               <td>
-                                   <span class="status-badge <?php echo $track['requests'] > 50 ? 'status-blocked' : 'status-tracking'; ?>">
-                                       <?php echo $track['requests']; ?>
-                                   </span>
-                               </td>
-                               <td><?php echo count($track['pages'] ?? []); ?></td>
-                               <td>
-                                   <?php if ($track['ttl'] > 0): ?>
-                                       <span class="status-badge status-tracking">
-                                           <?php echo gmdate('H:i:s', $track['ttl']); ?>
-                                       </span>
-                                   <?php else: ?>
-                                       <span class="status-badge status-active">Постоянно</span>
-                                   <?php endif; ?>
-                               </td>
-                               <td>
-                                   <form method="POST" style="display: inline;">
-                                       <input type="hidden" name="action" value="clear_user_hash_tracking">
-                                       <input type="hidden" name="key" value="<?php echo htmlspecialchars($track['key']); ?>">
-                                       <button type="submit" class="btn btn-secondary btn-small" onclick="return confirm('Удалить данные трекинга хеша?');">
-                                           🗑️ Удалить
-                                       </button>
-                                   </form>
-                               </td>
-                           </tr>
-                       <?php endforeach; ?>
-                   </tbody>
-               </table>
-           </div>
-
-           <!-- Вид карточек для мобильных -->
-           <div class="table-cards">
-               <?php foreach ($userHashTracking as $track): ?>
-                   <div class="table-card">
-                       <div class="table-card-header">
-                           📊 Hash: <?php echo htmlspecialchars($track['hash_short']); ?>...
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">Хеш пользователя:</div>
-                           <div class="table-card-value">
-                               <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($track['hash_full']); ?>', this)" title="Нажмите для копирования">
+                           <td>
+                               <span class="ip-info copyable" onclick="copyToClipboard('<?php echo addslashes($track['hash_full']); ?>', this)" title="Нажмите для копирования">
                                    <?php echo htmlspecialchars($track['hash_full']); ?>
                                </span>
-                           </div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">Основной IP:</div>
-                           <div class="table-card-value">
-                               <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($track['primary_ip']); ?>', this)" title="Нажмите для копирования">
+                           </td>
+                           <td>
+                               <span class="ip-info copyable" onclick="copyToClipboard('<?php echo addslashes($track['primary_ip']); ?>', this)" title="Нажмите для копирования">
                                    <?php echo htmlspecialchars($track['primary_ip']); ?>
                                </span>
-                           </div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">Hostname:</div>
-                           <div class="table-card-value">
-                               <?php if ($track['hostname'] !== 'N/A' && $track['hostname'] !== 'Timeout/N/A' && $track['hostname'] !== 'rDNS disabled'): ?>
-                                   <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($track['hostname']); ?>', this)" title="Нажмите для копирования">
-                                       <?php echo htmlspecialchars($track['hostname']); ?>
-                                   </span>
-                               <?php else: ?>
-                                   <span style="color: #6c757d;"><?php echo htmlspecialchars($track['hostname']); ?></span>
-                               <?php endif; ?>
-                           </div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">Уникальных IP:</div>
-                           <div class="table-card-value">
+                           </td>
+                           <td>
                                <span class="status-badge <?php echo $track['unique_ips'] > 3 ? 'status-blocked' : 'status-tracking'; ?>">
                                    <?php echo $track['unique_ips']; ?>
                                </span>
-                           </div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">Последняя активность:</div>
-                           <div class="table-card-value"><?php echo date('Y-m-d H:i:s', $track['last_activity']); ?></div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">Запросов:</div>
-                           <div class="table-card-value">
+                           </td>
+                           <td><?php echo date('Y-m-d H:i:s', $track['last_activity']); ?></td>
+                           <td>
                                <span class="status-badge <?php echo $track['requests'] > 50 ? 'status-blocked' : 'status-tracking'; ?>">
                                    <?php echo $track['requests']; ?>
                                </span>
-                           </div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">Страниц:</div>
-                           <div class="table-card-value"><?php echo count($track['pages'] ?? []); ?></div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">TTL:</div>
-                           <div class="table-card-value">
+                           </td>
+                           <td><?php echo count($track['pages'] ?? []); ?></td>
+                           <td>
                                <?php if ($track['ttl'] > 0): ?>
                                    <span class="status-badge status-tracking">
                                        <?php echo gmdate('H:i:s', $track['ttl']); ?>
@@ -2459,164 +2351,148 @@ body {
                                <?php else: ?>
                                    <span class="status-badge status-active">Постоянно</span>
                                <?php endif; ?>
-                           </div>
-                       </div>
-                       <div class="table-card-actions">
-                           <form method="POST">
-                               <input type="hidden" name="action" value="clear_user_hash_tracking">
-                               <input type="hidden" name="key" value="<?php echo htmlspecialchars($track['key']); ?>">
-                               <button type="submit" class="btn btn-secondary" onclick="return confirm('Удалить данные трекинга хеша?');">
-                                   🗑️ Удалить
-                               </button>
-                           </form>
+                           </td>
+                           <td>
+                               <form method="POST" style="display: inline;">
+                                   <input type="hidden" name="action" value="clear_user_hash_tracking">
+                                   <input type="hidden" name="key" value="<?php echo htmlspecialchars($track['key']); ?>">
+                                   <button type="submit" class="btn btn-secondary btn-small" onclick="return confirm('Удалить данные трекинга хеша?');">
+                                       🗑️ Удалить
+                                   </button>
+                               </form>
+                           </td>
+                       </tr>
+                   <?php endforeach; ?>
+               </tbody>
+           </table>
+       </div>
+
+       <!-- Вид карточек для мобильных -->
+       <div class="table-cards">
+           <?php foreach ($userHashTracking as $track): ?>
+               <div class="table-card">
+                   <div class="table-card-header">
+                       📊 Hash: <?php echo htmlspecialchars($track['hash_short']); ?>...
+                   </div>
+                   <div class="table-card-row">
+                       <div class="table-card-label">Хеш пользователя:</div>
+                       <div class="table-card-value">
+                           <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($track['hash_full']); ?>', this)" title="Нажмите для копирования">
+                               <?php echo htmlspecialchars($track['hash_full']); ?>
+                           </span>
                        </div>
                    </div>
-               <?php endforeach; ?>
-           </div>
-           
-           <?php if (empty($userHashTracking)): ?>
-               <p style="text-align: center; color: #6c757d; padding: 20px;">
-                   📊 Нет активных записей трекинга хешей
-               </p>
-           <?php endif; ?>
+                   <div class="table-card-row">
+                       <div class="table-card-label">Основной IP:</div>
+                       <div class="table-card-value">
+                           <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($track['primary_ip']); ?>', this)" title="Нажмите для копирования">
+                               <?php echo htmlspecialchars($track['primary_ip']); ?>
+                           </span>
+                       </div>
+                   </div>
+                   <div class="table-card-row">
+                       <div class="table-card-label">Уникальных IP:</div>
+                       <div class="table-card-value">
+                           <span class="status-badge <?php echo $track['unique_ips'] > 3 ? 'status-blocked' : 'status-tracking'; ?>">
+                               <?php echo $track['unique_ips']; ?>
+                           </span>
+                       </div>
+                   </div>
+                   <div class="table-card-row">
+                       <div class="table-card-label">Последняя активность:</div>
+                       <div class="table-card-value"><?php echo date('Y-m-d H:i:s', $track['last_activity']); ?></div>
+                   </div>
+                   <div class="table-card-row">
+                       <div class="table-card-label">Запросов:</div>
+                       <div class="table-card-value">
+                           <span class="status-badge <?php echo $track['requests'] > 50 ? 'status-blocked' : 'status-tracking'; ?>">
+                               <?php echo $track['requests']; ?>
+                           </span>
+                       </div>
+                   </div>
+                   <div class="table-card-row">
+                       <div class="table-card-label">Страниц:</div>
+                       <div class="table-card-value"><?php echo count($track['pages'] ?? []); ?></div>
+                   </div>
+                   <div class="table-card-row">
+                       <div class="table-card-label">TTL:</div>
+                       <div class="table-card-value">
+                           <?php if ($track['ttl'] > 0): ?>
+                               <span class="status-badge status-tracking">
+                                   <?php echo gmdate('H:i:s', $track['ttl']); ?>
+                               </span>
+                           <?php else: ?>
+                               <span class="status-badge status-active">Постоянно</span>
+                           <?php endif; ?>
+                       </div>
+                   </div>
+                   <div class="table-card-actions">
+                       <form method="POST">
+                           <input type="hidden" name="action" value="clear_user_hash_tracking">
+                           <input type="hidden" name="key" value="<?php echo htmlspecialchars($track['key']); ?>">
+                           <button type="submit" class="btn btn-secondary" onclick="return confirm('Удалить данные трекинга хеша?');">
+                               🗑️ Удалить
+                           </button>
+                       </form>
+                   </div>
+               </div>
+           <?php endforeach; ?>
        </div>
+       
+       <?php if (empty($userHashTracking)): ?>
+           <p style="text-align: center; color: #6c757d; padding: 20px;">
+               📊 Нет активных записей трекинга хешей
+           </p>
+       <?php endif; ?>
+   </div>
    </div>
 </div>
-
-<!-- Данные трекинга IP -->
+<!-- Данные трекинга IP (БЕЗ rDNS) -->
 <div id="tracking" class="tab-content">
    <div class="section">
        <div class="section-header">
            📈 Активный трекинг IP адресов (<?php echo count($trackingData); ?>)
        </div>
        <div class="section-content">
-           <input type="text" class="search-box" placeholder="🔍 Поиск по IP или hostname..." onkeyup="filterTable(this, 'tracking-table')">
-           
-           <div class="table-view-toggle mobile-only">
-               <button onclick="toggleTableView(this)">📱 Карточки</button>
-           </div>
+           <input type="text" class="search-box" placeholder="🔍 Поиск по IP..." onkeyup="filterTable(this, 'tracking-table')">
+       <div class="table-view-toggle mobile-only">
+           <button onclick="toggleTableView(this)">📱 Карточки</button>
+       </div>
 
-           <div class="table-container">
-               <table class="table" id="tracking-table">
-                   <thead>
+       <div class="table-container">
+           <table class="table" id="tracking-table">
+               <thead>
+                   <tr>
+                       <th>IP адрес</th>
+                       <th>Первый визит</th>
+                       <th>Запросов</th>
+                       <th>Страниц</th>
+                       <th>User-Agents</th>
+                       <th>TTL</th>
+                       <th>Действия</th>
+                   </tr>
+               </thead>
+               <tbody>
+                   <?php foreach ($trackingData as $track): ?>
                        <tr>
-                           <th>IP адрес</th>
-                           <th>Hostname (rDNS)</th>
-                           <th>Первый визит</th>
-                           <th>Запросов</th>
-                           <th>Страниц</th>
-                           <th>User-Agents</th>
-                           <th>TTL</th>
-                           <th>Действия</th>
-                       </tr>
-                   </thead>
-                   <tbody>
-                       <?php foreach ($trackingData as $track): ?>
-                           <tr>
-                               <td>
-                                   <span class="ip-info copyable" onclick="copyToClipboard('<?php echo addslashes($track['detected_ip']); ?>', this)" title="Нажмите для копирования">
-                                       <?php echo htmlspecialchars($track['detected_ip']); ?>
-                                   </span>
-                               </td>
-                               <td>
-                                   <?php if ($track['hostname'] !== 'N/A' && $track['hostname'] !== 'Timeout/N/A' && $track['hostname'] !== 'rDNS disabled'): ?>
-                                       <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($track['hostname']); ?>', this)" title="Нажмите для копирования">
-                                           <?php echo htmlspecialchars($track['hostname']); ?>
-                                       </span>
-                                   <?php else: ?>
-                                       <span style="color: #6c757d;"><?php echo htmlspecialchars($track['hostname']); ?></span>
-                                   <?php endif; ?>
-                               </td>
-                               <td><?php echo date('Y-m-d H:i:s', $track['first_seen']); ?></td>
-                               <td>
-                                   <span class="status-badge <?php echo $track['requests'] > 10 ? 'status-blocked' : 'status-tracking'; ?>">
-                                       <?php echo $track['requests']; ?>
-                                   </span>
-                               </td>
-                               <td><?php echo count($track['pages']); ?></td>
-                               <td>
-                                   <span class="status-badge <?php echo count($track['user_agents']) > 1 ? 'status-blocked' : 'status-active'; ?>">
-                                       <?php echo count($track['user_agents']); ?>
-                                   </span>
-                               </td>
-                               <td>
-                                   <?php if ($track['ttl'] > 0): ?>
-                                       <span class="status-badge status-tracking">
-                                           <?php echo gmdate('H:i:s', $track['ttl']); ?>
-                                       </span>
-                                   <?php else: ?>
-                                       <span class="status-badge status-active">Постоянно</span>
-                                   <?php endif; ?>
-                               </td>
-                               <td>
-                                   <form method="POST" style="display: inline;">
-                                       <input type="hidden" name="action" value="clear_tracking">
-                                       <input type="hidden" name="key" value="<?php echo htmlspecialchars($track['key']); ?>">
-                                       <button type="submit" class="btn btn-secondary btn-small" onclick="return confirm('Удалить данные трекинга?');">
-                                           🗑️ Удалить
-                                       </button>
-                                   </form>
-                               </td>
-                           </tr>
-                       <?php endforeach; ?>
-                   </tbody>
-               </table>
-           </div>
-
-           <!-- Вид карточек для мобильных -->
-           <div class="table-cards">
-               <?php foreach ($trackingData as $track): ?>
-                   <div class="table-card">
-                       <div class="table-card-header">
-                           📈 IP: <?php echo htmlspecialchars($track['detected_ip']); ?>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">IP адрес:</div>
-                           <div class="table-card-value">
-                               <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($track['detected_ip']); ?>', this)" title="Нажмите для копирования">
+                           <td>
+                               <span class="ip-info copyable" onclick="copyToClipboard('<?php echo addslashes($track['detected_ip']); ?>', this)" title="Нажмите для копирования">
                                    <?php echo htmlspecialchars($track['detected_ip']); ?>
                                </span>
-                           </div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">Hostname:</div>
-                           <div class="table-card-value">
-                               <?php if ($track['hostname'] !== 'N/A' && $track['hostname'] !== 'Timeout/N/A' && $track['hostname'] !== 'rDNS disabled'): ?>
-                                   <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($track['hostname']); ?>', this)" title="Нажмите для копирования">
-                                       <?php echo htmlspecialchars($track['hostname']); ?>
-                                   </span>
-                               <?php else: ?>
-                                   <span style="color: #6c757d;"><?php echo htmlspecialchars($track['hostname']); ?></span>
-                               <?php endif; ?>
-                           </div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">Первый визит:</div>
-                           <div class="table-card-value"><?php echo date('Y-m-d H:i:s', $track['first_seen']); ?></div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">Запросов:</div>
-                           <div class="table-card-value">
+                           </td>
+                           <td><?php echo date('Y-m-d H:i:s', $track['first_seen']); ?></td>
+                           <td>
                                <span class="status-badge <?php echo $track['requests'] > 10 ? 'status-blocked' : 'status-tracking'; ?>">
                                    <?php echo $track['requests']; ?>
                                </span>
-                           </div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">Страниц:</div>
-                           <div class="table-card-value"><?php echo count($track['pages']); ?></div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">User-Agents:</div>
-                           <div class="table-card-value">
+                           </td>
+                           <td><?php echo count($track['pages']); ?></td>
+                           <td>
                                <span class="status-badge <?php echo count($track['user_agents']) > 1 ? 'status-blocked' : 'status-active'; ?>">
                                    <?php echo count($track['user_agents']); ?>
                                </span>
-                           </div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">TTL:</div>
-                           <div class="table-card-value">
+                           </td>
+                           <td>
                                <?php if ($track['ttl'] > 0): ?>
                                    <span class="status-badge status-tracking">
                                        <?php echo gmdate('H:i:s', $track['ttl']); ?>
@@ -2624,30 +2500,94 @@ body {
                                <?php else: ?>
                                    <span class="status-badge status-active">Постоянно</span>
                                <?php endif; ?>
-                           </div>
-                       </div>
-                       <div class="table-card-actions">
-                           <form method="POST">
-                               <input type="hidden" name="action" value="clear_tracking">
-                               <input type="hidden" name="key" value="<?php echo htmlspecialchars($track['key']); ?>">
-                               <button type="submit" class="btn btn-secondary" onclick="return confirm('Удалить данные трекинга?');">
-                                   🗑️ Удалить
-                               </button>
-                           </form>
+                           </td>
+                           <td>
+                               <form method="POST" style="display: inline;">
+                                   <input type="hidden" name="action" value="clear_tracking">
+                                   <input type="hidden" name="key" value="<?php echo htmlspecialchars($track['key']); ?>">
+                                   <button type="submit" class="btn btn-secondary btn-small" onclick="return confirm('Удалить данные трекинга?');">
+                                       🗑️ Удалить
+                                   </button>
+                               </form>
+                           </td>
+                       </tr>
+                   <?php endforeach; ?>
+               </tbody>
+           </table>
+       </div>
+
+       <!-- Вид карточек для мобильных -->
+       <div class="table-cards">
+           <?php foreach ($trackingData as $track): ?>
+               <div class="table-card">
+                   <div class="table-card-header">
+                       📈 IP: <?php echo htmlspecialchars($track['detected_ip']); ?>
+                   </div>
+                   <div class="table-card-row">
+                       <div class="table-card-label">IP адрес:</div>
+                       <div class="table-card-value">
+                           <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($track['detected_ip']); ?>', this)" title="Нажмите для копирования">
+                               <?php echo htmlspecialchars($track['detected_ip']); ?>
+                           </span>
                        </div>
                    </div>
-               <?php endforeach; ?>
-           </div>
-           
-           <?php if (empty($trackingData)): ?>
-               <p style="text-align: center; color: #6c757d; padding: 20px;">
-                   📊 Нет активных записей трекинга
-               </p>
-           <?php endif; ?>
+                   <div class="table-card-row">
+                       <div class="table-card-label">Первый визит:</div>
+                       <div class="table-card-value"><?php echo date('Y-m-d H:i:s', $track['first_seen']); ?></div>
+                   </div>
+                   <div class="table-card-row">
+                       <div class="table-card-label">Запросов:</div>
+                       <div class="table-card-value">
+                           <span class="status-badge <?php echo $track['requests'] > 10 ? 'status-blocked' : 'status-tracking'; ?>">
+                               <?php echo $track['requests']; ?>
+                           </span>
+                       </div>
+                   </div>
+                   <div class="table-card-row">
+                       <div class="table-card-label">Страниц:</div>
+                       <div class="table-card-value"><?php echo count($track['pages']); ?></div>
+                   </div>
+                   <div class="table-card-row">
+                       <div class="table-card-label">User-Agents:</div>
+                       <div class="table-card-value">
+                           <span class="status-badge <?php echo count($track['user_agents']) > 1 ? 'status-blocked' : 'status-active'; ?>">
+                               <?php echo count($track['user_agents']); ?>
+                           </span>
+                       </div>
+                   </div>
+                   <div class="table-card-row">
+                       <div class="table-card-label">TTL:</div>
+                       <div class="table-card-value">
+                           <?php if ($track['ttl'] > 0): ?>
+                               <span class="status-badge status-tracking">
+                                   <?php echo gmdate('H:i:s', $track['ttl']); ?>
+                               </span>
+                           <?php else: ?>
+                               <span class="status-badge status-active">Постоянно</span>
+                           <?php endif; ?>
+                       </div>
+                   </div>
+                   <div class="table-card-actions">
+                       <form method="POST">
+                           <input type="hidden" name="action" value="clear_tracking">
+                           <input type="hidden" name="key" value="<?php echo htmlspecialchars($track['key']); ?>">
+                           <button type="submit" class="btn btn-secondary" onclick="return confirm('Удалить данные трекинга?');">
+                               🗑️ Удалить
+                           </button>
+                       </form>
+                   </div>
+               </div>
+           <?php endforeach; ?>
        </div>
+       
+       <?php if (empty($trackingData)): ?>
+           <p style="text-align: center; color: #6c757d; padding: 20px;">
+               📊 Нет активных записей трекинга
+           </p>
+       <?php endif; ?>
+   </div>
    </div>
 </div>
-
 <!-- Расширенное отслеживание -->
 <div id="extended-tracking" class="tab-content">
     <div class="section">
@@ -2656,100 +2596,33 @@ body {
         </div>
         <div class="section-content">
             <input type="text" class="search-box" placeholder="🔍 Поиск по IP или причине..." onkeyup="filterTable(this, 'extended-tracking-table')">
-            
-            <div class="table-view-toggle mobile-only">
-                <button onclick="toggleTableView(this)">📱 Карточки</button>
-            </div>
+        <div class="table-view-toggle mobile-only">
+            <button onclick="toggleTableView(this)">📱 Карточки</button>
+        </div>
 
-            <div class="table-container">
-                <table class="table" id="extended-tracking-table">
-                    <thead>
+        <div class="table-container">
+            <table class="table" id="extended-tracking-table">
+                <thead>
+                    <tr>
+                        <th>IP адрес</th>
+                        <th>Hostname (rDNS)</th>
+                        <th>Включено</th>
+                        <th>Причина</th>
+                        <th>TTL</th>
+                        <th>Запросов</th>
+                        <th>User-Agent</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($extendedTracking as $ext): ?>
                         <tr>
-                            <th>IP адрес</th>
-                            <th>Hostname (rDNS)</th>
-                            <th>Включено</th>
-                            <th>Причина</th>
-                            <th>TTL</th>
-                            <th>Запросов</th>
-                            <th>User-Agent</th>
-                            <th>Действия</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($extendedTracking as $ext): ?>
-                            <tr>
-                                <td>
-                                    <span class="ip-info copyable" onclick="copyToClipboard('<?php echo addslashes($ext['ip']); ?>', this)" title="Нажмите для копирования">
-                                        <?php echo htmlspecialchars($ext['ip']); ?>
-                                    </span>
-                                </td>
-                                <td>
-                                    <?php if ($ext['hostname'] !== 'N/A' && $ext['hostname'] !== 'Timeout/N/A' && $ext['hostname'] !== 'rDNS disabled'): ?>
-                                        <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($ext['hostname']); ?>', this)" title="Нажмите для копирования">
-                                            <?php echo htmlspecialchars($ext['hostname']); ?>
-                                        </span>
-                                    <?php else: ?>
-                                        <span style="color: #6c757d;"><?php echo htmlspecialchars($ext['hostname']); ?></span>
-                                    <?php endif; ?>
-                                </td>
-                                <td><?php echo date('Y-m-d H:i:s', $ext['enabled_at']); ?></td>
-                                <td>
-                                    <span class="status-badge status-tracking">
-                                        <?php echo htmlspecialchars($ext['reason']); ?>
-                                    </span>
-                                </td>
-                                <td>
-                                    <?php if ($ext['ttl'] > 0): ?>
-                                        <span class="status-badge status-tracking">
-                                            <?php echo gmdate('H:i:s', $ext['ttl']); ?>
-                                        </span>
-                                    <?php else: ?>
-                                        <span class="status-badge status-active">Постоянно</span>
-                                    <?php endif; ?>
-                                </td>
-                                <td>
-                                    <span class="status-badge status-tracking">
-                                        <?php echo $ext['extended_requests'] ?? 1; ?>
-                                    </span>
-                                </td>
-                                <td>
-                                    <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($ext['user_agent']); ?>', this)" title="Нажмите для копирования">
-                                        <?php echo htmlspecialchars($ext['user_agent']); ?>
-                                    </span>
-                                </td>
-                                <td>
-                                    <form method="POST" style="display: inline;">
-                                        <input type="hidden" name="action" value="clear_extended_tracking">
-                                        <input type="hidden" name="key" value="<?php echo htmlspecialchars($ext['key']); ?>">
-                                        <button type="submit" class="btn btn-secondary btn-small" onclick="return confirm('Удалить расширенное отслеживание?');">
-                                            🗑️ Удалить
-                                        </button>
-                                    </form>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-
-            <!-- Вид карточек для мобильных -->
-            <div class="table-cards">
-                <?php foreach ($extendedTracking as $ext): ?>
-                    <div class="table-card">
-                        <div class="table-card-header">
-                            🔍 Extended: <?php echo htmlspecialchars($ext['ip']); ?>
-                        </div>
-                        <div class="table-card-row">
-                            <div class="table-card-label">IP адрес:</div>
-                            <div class="table-card-value">
-                                <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($ext['ip']); ?>', this)" title="Нажмите для копирования">
+                            <td>
+                                <span class="ip-info copyable" onclick="copyToClipboard('<?php echo addslashes($ext['ip']); ?>', this)" title="Нажмите для копирования">
                                     <?php echo htmlspecialchars($ext['ip']); ?>
                                 </span>
-                            </div>
-                        </div>
-                        <div class="table-card-row">
-                            <div class="table-card-label">Hostname:</div>
-                            <div class="table-card-value">
+                            </td>
+                            <td>
                                 <?php if ($ext['hostname'] !== 'N/A' && $ext['hostname'] !== 'Timeout/N/A' && $ext['hostname'] !== 'rDNS disabled'): ?>
                                     <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($ext['hostname']); ?>', this)" title="Нажмите для копирования">
                                         <?php echo htmlspecialchars($ext['hostname']); ?>
@@ -2757,23 +2630,14 @@ body {
                                 <?php else: ?>
                                     <span style="color: #6c757d;"><?php echo htmlspecialchars($ext['hostname']); ?></span>
                                 <?php endif; ?>
-                            </div>
-                        </div>
-                        <div class="table-card-row">
-                            <div class="table-card-label">Включено:</div>
-                            <div class="table-card-value"><?php echo date('Y-m-d H:i:s', $ext['enabled_at']); ?></div>
-                        </div>
-                        <div class="table-card-row">
-                            <div class="table-card-label">Причина:</div>
-                            <div class="table-card-value">
+                            </td>
+                            <td><?php echo date('Y-m-d H:i:s', $ext['enabled_at']); ?></td>
+                            <td>
                                 <span class="status-badge status-tracking">
                                     <?php echo htmlspecialchars($ext['reason']); ?>
                                 </span>
-                            </div>
-                        </div>
-                        <div class="table-card-row">
-                            <div class="table-card-label">TTL:</div>
-                            <div class="table-card-value">
+                            </td>
+                            <td>
                                 <?php if ($ext['ttl'] > 0): ?>
                                     <span class="status-badge status-tracking">
                                         <?php echo gmdate('H:i:s', $ext['ttl']); ?>
@@ -2781,46 +2645,120 @@ body {
                                 <?php else: ?>
                                     <span class="status-badge status-active">Постоянно</span>
                                 <?php endif; ?>
-                            </div>
-                        </div>
-                        <div class="table-card-row">
-                            <div class="table-card-label">Запросов:</div>
-                            <div class="table-card-value">
+                            </td>
+                            <td>
                                 <span class="status-badge status-tracking">
                                     <?php echo $ext['extended_requests'] ?? 1; ?>
                                 </span>
-                            </div>
-                        </div>
-                        <div class="table-card-row">
-                            <div class="table-card-label">User-Agent:</div>
-                            <div class="table-card-value">
+                            </td>
+                            <td>
                                 <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($ext['user_agent']); ?>', this)" title="Нажмите для копирования">
                                     <?php echo htmlspecialchars($ext['user_agent']); ?>
                                 </span>
-                            </div>
-                        </div>
-                        <div class="table-card-actions">
-                            <form method="POST">
-                                <input type="hidden" name="action" value="clear_extended_tracking">
-                                <input type="hidden" name="key" value="<?php echo htmlspecialchars($ext['key']); ?>">
-                                <button type="submit" class="btn btn-secondary" onclick="return confirm('Удалить расширенное отслеживание?');">
-                                    🗑️ Удалить
-                                </button>
-                            </form>
+                            </td>
+                            <td>
+                                <form method="POST" style="display: inline;">
+                                    <input type="hidden" name="action" value="clear_extended_tracking">
+                                    <input type="hidden" name="key" value="<?php echo htmlspecialchars($ext['key']); ?>">
+                                    <button type="submit" class="btn btn-secondary btn-small" onclick="return confirm('Удалить расширенное отслеживание?');">
+                                        🗑️ Удалить
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Вид карточек для мобильных -->
+        <div class="table-cards">
+            <?php foreach ($extendedTracking as $ext): ?>
+                <div class="table-card">
+                    <div class="table-card-header">
+                        🔍 Extended: <?php echo htmlspecialchars($ext['ip']); ?>
+                    </div>
+                    <div class="table-card-row">
+                        <div class="table-card-label">IP адрес:</div>
+                        <div class="table-card-value">
+                            <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($ext['ip']); ?>', this)" title="Нажмите для копирования">
+                                <?php echo htmlspecialchars($ext['ip']); ?>
+                            </span>
                         </div>
                     </div>
-                <?php endforeach; ?>
-            </div>
-            
-            <?php if (empty($extendedTracking)): ?>
-                <p style="text-align: center; color: #6c757d; padding: 20px;">
-                    🔍 Нет активного расширенного отслеживания
-                </p>
-            <?php endif; ?>
+                    <div class="table-card-row">
+                        <div class="table-card-label">Hostname:</div>
+                        <div class="table-card-value">
+                            <?php if ($ext['hostname'] !== 'N/A' && $ext['hostname'] !== 'Timeout/N/A' && $ext['hostname'] !== 'rDNS disabled'): ?>
+                                <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($ext['hostname']); ?>', this)" title="Нажмите для копирования">
+                                    <?php echo htmlspecialchars($ext['hostname']); ?>
+                                </span>
+                            <?php else: ?>
+                                <span style="color: #6c757d;"><?php echo htmlspecialchars($ext['hostname']); ?></span>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <div class="table-card-row">
+                        <div class="table-card-label">Включено:</div>
+                        <div class="table-card-value"><?php echo date('Y-m-d H:i:s', $ext['enabled_at']); ?></div>
+                    </div>
+                    <div class="table-card-row">
+                        <div class="table-card-label">Причина:</div>
+                        <div class="table-card-value">
+                            <span class="status-badge status-tracking">
+                                <?php echo htmlspecialchars($ext['reason']); ?>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="table-card-row">
+                        <div class="table-card-label">TTL:</div>
+                        <div class="table-card-value">
+                            <?php if ($ext['ttl'] > 0): ?>
+                                <span class="status-badge status-tracking">
+                                    <?php echo gmdate('H:i:s', $ext['ttl']); ?>
+                                </span>
+                            <?php else: ?>
+                                <span class="status-badge status-active">Постоянно</span>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <div class="table-card-row">
+                        <div class="table-card-label">Запросов:</div>
+                        <div class="table-card-value">
+                            <span class="status-badge status-tracking">
+                                <?php echo $ext['extended_requests'] ?? 1; ?>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="table-card-row">
+                        <div class="table-card-label">User-Agent:</div>
+                        <div class="table-card-value">
+                            <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($ext['user_agent']); ?>', this)" title="Нажмите для копирования">
+                                <?php echo htmlspecialchars($ext['user_agent']); ?>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="table-card-actions">
+                        <form method="POST">
+                            <input type="hidden" name="action" value="clear_extended_tracking">
+                            <input type="hidden" name="key" value="<?php echo htmlspecialchars($ext['key']); ?>">
+                            <button type="submit" class="btn btn-secondary" onclick="return confirm('Удалить расширенное отслеживание?');">
+                                🗑️ Удалить
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            <?php endforeach; ?>
         </div>
+        
+        <?php if (empty($extendedTracking)): ?>
+            <p style="text-align: center; color: #6c757d; padding: 20px;">
+                🔍 Нет активного расширенного отслеживания
+            </p>
+        <?php endif; ?>
     </div>
 </div>
-
+</div>
 <!-- Логи -->
 <div id="logs" class="tab-content">
    <div class="section">
@@ -2829,104 +2767,47 @@ body {
        </div>
        <div class="section-content">
            <input type="text" class="search-box" placeholder="🔍 Поиск в логах..." onkeyup="filterTable(this, 'logs-table')">
-           
-           <div class="table-view-toggle mobile-only">
-               <button onclick="toggleTableView(this)">📱 Карточки</button>
-           </div>
+       <div class="table-view-toggle mobile-only">
+           <button onclick="toggleTableView(this)">📱 Карточки</button>
+       </div>
 
-           <div class="table-container">
-               <table class="table" id="logs-table">
-                   <thead>
+       <div class="table-container">
+           <table class="table" id="logs-table">
+               <thead>
+                   <tr>
+                       <th>Время</th>
+                       <th>Тип</th>
+                       <th>IP адрес</th>
+                       <th>User-Agent</th>
+                       <th>URI</th>
+                       <th>Hostname</th>
+                   </tr>
+               </thead>
+               <tbody>
+                   <?php foreach ($logs as $log): ?>
                        <tr>
-                           <th>Время</th>
-                           <th>Тип</th>
-                           <th>IP адрес</th>
-                           <th>User-Agent</th>
-                           <th>URI</th>
-                           <th>Hostname</th>
-                       </tr>
-                   </thead>
-                   <tbody>
-                       <?php foreach ($logs as $log): ?>
-                           <tr>
-                               <td><?php echo htmlspecialchars($log['timestamp']); ?></td>
-                               <td>
-                                   <span class="status-badge <?php echo $log['log_type'] === 'bot' ? 'status-tracking' : 'status-active'; ?>">
-                                       <?php echo $log['log_type'] === 'bot' ? '🤖 Bot' : '🔍 Search Engine'; ?>
-                                   </span>
-                               </td>
-                               <td>
-                                   <span class="ip-info copyable" onclick="copyToClipboard('<?php echo addslashes($log['ip']); ?>', this)" title="Нажмите для копирования">
-                                       <?php echo htmlspecialchars($log['ip']); ?>
-                                   </span>
-                               </td>
-                               <td>
-                                   <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($log['user_agent']); ?>', this)" title="Нажмите для копирования">
-                                       <?php echo htmlspecialchars($log['user_agent']); ?>
-                                   </span>
-                               </td>
-                               <td>
-                                   <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($log['uri']); ?>', this)" title="Нажмите для копирования">
-                                       <?php echo htmlspecialchars($log['uri']); ?>
-                                   </span>
-                               </td>
-                               <td>
-                                   <?php if (isset($log['hostname']) && $log['hostname']): ?>
-                                       <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($log['hostname']); ?>', this)" title="Нажмите для копирования">
-                                           <?php echo htmlspecialchars($log['hostname']); ?>
-                                       </span>
-                                   <?php else: ?>
-                                       <span style="color: #6c757d;">N/A</span>
-                                   <?php endif; ?>
-                               </td>
-                           </tr>
-                       <?php endforeach; ?>
-                   </tbody>
-               </table>
-           </div>
-
-           <!-- Вид карточек для мобильных -->
-           <div class="table-cards">
-               <?php foreach ($logs as $log): ?>
-                   <div class="table-card">
-                       <div class="table-card-header">
-                           📝 <?php echo htmlspecialchars($log['timestamp']); ?>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">Тип:</div>
-                           <div class="table-card-value">
+                           <td><?php echo htmlspecialchars($log['timestamp']); ?></td>
+                           <td>
                                <span class="status-badge <?php echo $log['log_type'] === 'bot' ? 'status-tracking' : 'status-active'; ?>">
                                    <?php echo $log['log_type'] === 'bot' ? '🤖 Bot' : '🔍 Search Engine'; ?>
                                </span>
-                           </div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">IP адрес:</div>
-                           <div class="table-card-value">
-                               <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($log['ip']); ?>', this)" title="Нажмите для копирования">
+                           </td>
+                           <td>
+                               <span class="ip-info copyable" onclick="copyToClipboard('<?php echo addslashes($log['ip']); ?>', this)" title="Нажмите для копирования">
                                    <?php echo htmlspecialchars($log['ip']); ?>
                                </span>
-                           </div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">User-Agent:</div>
-                           <div class="table-card-value">
+                           </td>
+                           <td>
                                <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($log['user_agent']); ?>', this)" title="Нажмите для копирования">
                                    <?php echo htmlspecialchars($log['user_agent']); ?>
                                </span>
-                           </div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">URI:</div>
-                           <div class="table-card-value">
+                           </td>
+                           <td>
                                <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($log['uri']); ?>', this)" title="Нажмите для копирования">
                                    <?php echo htmlspecialchars($log['uri']); ?>
                                </span>
-                           </div>
-                       </div>
-                       <div class="table-card-row">
-                           <div class="table-card-label">Hostname:</div>
-                           <div class="table-card-value">
+                           </td>
+                           <td>
                                <?php if (isset($log['hostname']) && $log['hostname']): ?>
                                    <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($log['hostname']); ?>', this)" title="Нажмите для копирования">
                                        <?php echo htmlspecialchars($log['hostname']); ?>
@@ -2934,370 +2815,423 @@ body {
                                <?php else: ?>
                                    <span style="color: #6c757d;">N/A</span>
                                <?php endif; ?>
-                           </div>
+                           </td>
+                       </tr>
+                   <?php endforeach; ?>
+               </tbody>
+           </table>
+       </div>
+
+       <!-- Вид карточек для мобильных -->
+       <div class="table-cards">
+           <?php foreach ($logs as $log): ?>
+               <div class="table-card">
+                   <div class="table-card-header">
+                       📝 <?php echo htmlspecialchars($log['timestamp']); ?>
+                   </div>
+                   <div class="table-card-row">
+                       <div class="table-card-label">Тип:</div>
+                       <div class="table-card-value">
+                           <span class="status-badge <?php echo $log['log_type'] === 'bot' ? 'status-tracking' : 'status-active'; ?>">
+                               <?php echo $log['log_type'] === 'bot' ? '🤖 Bot' : '🔍 Search Engine'; ?>
+                           </span>
                        </div>
                    </div>
-               <?php endforeach; ?>
-           </div>
-           
-           <?php if (empty($logs)): ?>
-               <p style="text-align: center; color: #6c757d; padding: 20px;">
-                   📝 Нет записей в логах за сегодня
-               </p>
-           <?php endif; ?>
+                   <div class="table-card-row">
+                       <div class="table-card-label">IP адрес:</div>
+                       <div class="table-card-value">
+                           <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($log['ip']); ?>', this)" title="Нажмите для копирования">
+                               <?php echo htmlspecialchars($log['ip']); ?>
+                           </span>
+                       </div>
+                   </div>
+                   <div class="table-card-row">
+                       <div class="table-card-label">User-Agent:</div>
+                       <div class="table-card-value">
+                           <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($log['user_agent']); ?>', this)" title="Нажмите для копирования">
+                               <?php echo htmlspecialchars($log['user_agent']); ?>
+                           </span>
+                       </div>
+                   </div>
+                   <div class="table-card-row">
+                       <div class="table-card-label">URI:</div>
+                       <div class="table-card-value">
+                           <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($log['uri']); ?>', this)" title="Нажмите для копирования">
+                               <?php echo htmlspecialchars($log['uri']); ?>
+                           </span>
+                       </div>
+                   </div>
+                   <div class="table-card-row">
+                       <div class="table-card-label">Hostname:</div>
+                       <div class="table-card-value">
+                           <?php if (isset($log['hostname']) && $log['hostname']): ?>
+                               <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($log['hostname']); ?>', this)" title="Нажмите для копирования">
+                                   <?php echo htmlspecialchars($log['hostname']); ?>
+                               </span>
+                           <?php else: ?>
+                               <span style="color: #6c757d;">N/A</span>
+                           <?php endif; ?>
+                       </div>
+                   </div>
+               </div>
+           <?php endforeach; ?>
        </div>
+       
+       <?php if (empty($logs)): ?>
+           <p style="text-align: center; color: #6c757d; padding: 20px;">
+               📝 Нет записей в логах за сегодня
+           </p>
+       <?php endif; ?>
+   </div>
    </div>
 </div>
+    <?php endif; ?>
+</div>
 
-        <?php endif; ?>
-    </div>
-
-    <script>
-        // Функция копирования в буфер обмена
-        function copyToClipboard(text, element) {
-            navigator.clipboard.writeText(text).then(() => {
-                // Показать визуальную обратную связь
-                const originalBg = element.style.backgroundColor;
-                const originalColor = element.style.color;
-                element.style.backgroundColor = '#28a745';
-                element.style.color = 'white';
-                setTimeout(() => {
-                    element.style.backgroundColor = originalBg;
-                    element.style.color = originalColor;
-                }, 500);
-                showNotification('Скопировано: ' + text.substring(0, 50) + (text.length > 50 ? '...' : ''), 'success');
-            }).catch(() => {
-                showNotification('Ошибка копирования', 'error');
-            });
-        }
-
-        // Функция переключения табов
-        function showTab(tabId) {
-            // Скрываем все табы
-            document.querySelectorAll('.tab-content').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            
-            // Убираем активный класс с кнопок
-            document.querySelectorAll('.tab').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            
-            // Показываем выбранный таб
-            document.getElementById(tabId).classList.add('active');
-            
-            // Добавляем активный класс к кнопке
-            event.target.classList.add('active');
-        }
-        
-        // Функция поиска в таблицах
-        function filterTable(input, tableId) {
-            const filter = input.value.toLowerCase();
-            const table = document.getElementById(tableId);
-            const rows = table.getElementsByTagName('tr');
-            
-            for (let i = 1; i < rows.length; i++) { // Начинаем с 1, чтобы пропустить заголовок
-                const row = rows[i];
-                const cells = row.getElementsByTagName('td');
-                let found = false;
-                
-                for (let j = 0; j < cells.length; j++) {
-                    const cellText = cells[j].textContent || cells[j].innerText;
-                    if (cellText.toLowerCase().indexOf(filter) > -1) {
-                        found = true;
-                        break;
-                    }
-                }
-                
-                row.style.display = found ? '' : 'none';
-            }
-        }
-
-        // Функция переключения вида таблицы
-        function toggleTableView(button) {
-            const section = button.closest('.section-content');
-            const isCards = section.classList.contains('show-cards');
-            
-            if (isCards) {
-                section.classList.remove('show-cards');
-                button.textContent = '📱 Карточки';
-            } else {
-                section.classList.add('show-cards');
-                button.textContent = '📊 Таблица';
-            }
-        }
-        
-        // Автообновление страницы каждые 30 секунд
-        let autoRefreshInterval;
-        let isUserActive = false;
-        
-        function startAutoRefresh() {
-            autoRefreshInterval = setInterval(() => {
-                if (!isUserActive) {
-                    location.reload();
-                }
-            }, 30000);
-            
-            // Показываем индикатор автообновления
-            const indicator = document.createElement('div');
-            indicator.id = 'refresh-indicator';
-            indicator.style.cssText = `
-                position: fixed;
-                bottom: 20px;
-                right: 20px;
-                background: rgba(0, 123, 255, 0.9);
-                color: white;
-                padding: 10px 15px;
-                border-radius: 8px;
-                font-size: 0.9em;
-                z-index: 1000;
-                transition: opacity 0.3s ease;
-            `;
-            indicator.innerHTML = '🔄 Auto-refresh: ON <span style="cursor: pointer; margin-left: 10px;" onclick="toggleAutoRefresh()">❌</span>';
-            document.body.appendChild(indicator);
-            
-            // Скрываем индикатор через 3 секунды
+<script>
+    // Функция копирования в буфер обмена
+    function copyToClipboard(text, element) {
+        navigator.clipboard.writeText(text).then(() => {
+            // Показать визуальную обратную связь
+            const originalBg = element.style.backgroundColor;
+            const originalColor = element.style.color;
+            element.style.backgroundColor = '#28a745';
+            element.style.color = 'white';
             setTimeout(() => {
-                if (indicator) {
-                    indicator.style.opacity = '0.7';
-                }
-            }, 3000);
-        }
+                element.style.backgroundColor = originalBg;
+                element.style.color = originalColor;
+            }, 500);
+            showNotification('Скопировано: ' + text.substring(0, 50) + (text.length > 50 ? '...' : ''), 'success');
+        }).catch(() => {
+            showNotification('Ошибка копирования', 'error');
+        });
+    }
+
+    // Функция переключения табов
+    function showTab(tabId) {
+        // Скрываем все табы
+        document.querySelectorAll('.tab-content').forEach(tab => {
+            tab.classList.remove('active');
+        });
         
-        function stopAutoRefresh() {
-            if (autoRefreshInterval) {
-                clearInterval(autoRefreshInterval);
-                autoRefreshInterval = null;
+        // Убираем активный класс с кнопок
+        document.querySelectorAll('.tab').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        
+        // Показываем выбранный таб
+        document.getElementById(tabId).classList.add('active');
+        
+        // Добавляем активный класс к кнопке
+        event.target.classList.add('active');
+    }
+    
+    // Функция поиска в таблицах
+    function filterTable(input, tableId) {
+        const filter = input.value.toLowerCase();
+        const table = document.getElementById(tableId);
+        const rows = table.getElementsByTagName('tr');
+        
+        for (let i = 1; i < rows.length; i++) { // Начинаем с 1, чтобы пропустить заголовок
+            const row = rows[i];
+            const cells = row.getElementsByTagName('td');
+            let found = false;
+            
+            for (let j = 0; j < cells.length; j++) {
+                const cellText = cells[j].textContent || cells[j].innerText;
+                if (cellText.toLowerCase().indexOf(filter) > -1) {
+                    found = true;
+                    break;
+                }
             }
             
-            const indicator = document.getElementById('refresh-indicator');
-            if (indicator) {
-                indicator.innerHTML = '🔄 Auto-refresh: OFF <span style="cursor: pointer; margin-left: 10px;" onclick="toggleAutoRefresh()">✅</span>';
-                indicator.style.background = 'rgba(108, 117, 125, 0.9)';
-            }
-        }
-        
-        function toggleAutoRefresh() {
-            if (autoRefreshInterval) {
-                stopAutoRefresh();
-            } else {
-                startAutoRefresh();
-            }
-        }
-        
-        // Запускаем автообновление
-        startAutoRefresh();
-        
-        // Отслеживаем активность пользователя
-        let userActivityTimer;
-        
-        function resetActivityTimer() {
-            isUserActive = true;
-            clearTimeout(userActivityTimer);
-            
-            userActivityTimer = setTimeout(() => {
-                isUserActive = false;
-            }, 10000); // 10 секунд активности
-        }
-        
-        // Отслеживаем активность пользователя
-        ['click', 'keypress', 'scroll', 'mousemove', 'input'].forEach(event => {
-            document.addEventListener(event, resetActivityTimer);
-        });
-        
-        // Уведомления
-        function showNotification(message, type = 'info') {
-            const notification = document.createElement('div');
-            notification.style.cssText = `
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                background: ${type === 'error' ? '#dc3545' : type === 'success' ? '#28a745' : '#007bff'};
-                color: white;
-                padding: 15px 25px;
-                border-radius: 8px;
-                font-weight: bold;
-                z-index: 1001;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-                max-width: 300px;
-                opacity: 0;
-                transform: translateX(100%);
-                transition: all 0.3s ease;
-            `;
-            notification.textContent = message;
-            document.body.appendChild(notification);
-
-            // Анимация появления
-            setTimeout(() => {
-                notification.style.opacity = '1';
-                notification.style.transform = 'translateX(0)';
-            }, 100);
-
-            setTimeout(() => {
-                notification.style.opacity = '0';
-                notification.style.transform = 'translateX(100%)';
-                setTimeout(() => notification.remove(), 300);
-            }, 5000);
-        }
-        
-        // Подтверждение массовых действий
-        document.querySelectorAll('form').forEach(form => {
-            const action = form.querySelector('input[name="action"]');
-            if (action && ['cleanup_all', 'flush_logs', 'clear_rdns_cache'].includes(action.value)) {
-                form.addEventListener('submit', (e) => {
-                    const actionText = action.value === 'cleanup_all' ? 
-                        'очистить все просроченные ключи' : 
-                        action.value === 'flush_logs' ?
-                        'удалить все логи' :
-                        'очистить весь rDNS кеш';
-                    
-                    if (!confirm(`Вы действительно хотите ${actionText}? Это действие необратимо!`)) {
-                        e.preventDefault();
-                    }
-                });
-            }
-        });
-        
-        // Валидация форм ручной блокировки
-        document.querySelectorAll('form[method="POST"]').forEach(form => {
-            form.addEventListener('submit', (e) => {
-                const action = form.querySelector('input[name="action"]');
-                if (action && action.value === 'block_manual_ip') {
-                    const ipInput = form.querySelector('input[name="ip_address"]');
-                    const ip = ipInput.value.trim();
-                    
-                    // Простая валидация IP
-                    const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-                    if (!ipRegex.test(ip)) {
-                        e.preventDefault();
-                        showNotification('Неверный формат IP адреса!', 'error');
-                        ipInput.focus();
-                    }
-                }
-            });
-        });
-        
-        // Статистика по состоянию страницы
-        console.log('🛡️ Redis Bot Protection Admin Panel v2.1 loaded');
-        console.log('📊 Current stats:', {
-            blockedIPs: <?php echo count($blockedIPs ?? []); ?>,
-            blockedSessions: <?php echo count($blockedSessions ?? []); ?>,
-            blockedCookies: <?php echo count($blockedCookies ?? []); ?>,
-            blockedUserHashes: <?php echo count($blockedUserHashes ?? []); ?>,
-            userHashTracking: <?php echo count($userHashTracking ?? []); ?>,
-            trackingRecords: <?php echo count($trackingData ?? []); ?>,
-            logs: <?php echo count($logs ?? []); ?>,
-            rdnsCache: <?php echo $redisStats['rdns_cache'] ?? 0; ?>
-        });
-        
-        // Клавиатурные сочетания
-        document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey || e.metaKey) {
-        switch(e.key) {
-            case 'r':
-                e.preventDefault();
-                location.reload();
-                break;
-            case '1':
-                e.preventDefault();
-                showTab('blocked-ips');
-                break;
-            case '2':
-                e.preventDefault();
-                showTab('blocked-sessions');
-                break;
-            case '3':
-                e.preventDefault();
-                showTab('blocked-cookies');
-                break;
-            case '4':
-                e.preventDefault();
-                showTab('blocked-user-hashes');
-                break;
-            case '5':
-                e.preventDefault();
-                showTab('user-hash-tracking');
-                break;
-            case '6':
-                e.preventDefault();
-                showTab('tracking');
-                break;
-            case '7':
-                e.preventDefault();
-                showTab('extended-tracking'); // ДОБАВИТЬ ЭТУ СТРОКУ
-                break;
-            case '8':  // ИЗМЕНИТЬ С '7' НА '8'
-                e.preventDefault();
-                showTab('logs');
-                break;
+            row.style.display = found ? '' : 'none';
         }
     }
-});
-        
-        // Показываем горячие клавиши
-        setTimeout(() => {
-            showNotification('💡 Горячие клавиши: Ctrl+R (обновить), Ctrl+1-7 (переключение табов)', 'info');
-        }, 1000);
 
-        // Живые обновления счетчиков
-        function updateCounters() {
-            const stats = document.querySelectorAll('.stat-number');
-            stats.forEach(stat => {
-                const currentValue = parseInt(stat.textContent);
-                if (currentValue > 0) {
-                    stat.style.animation = 'pulse 0.5s ease-in-out';
-                    setTimeout(() => {
-                        stat.style.animation = '';
-                    }, 500);
+    // Функция переключения вида таблицы
+    function toggleTableView(button) {
+        const section = button.closest('.section-content');
+        const isCards = section.classList.contains('show-cards');
+        
+        if (isCards) {
+            section.classList.remove('show-cards');
+            button.textContent = '📱 Карточки';
+        } else {
+            section.classList.add('show-cards');
+            button.textContent = '📊 Таблица';
+        }
+    }
+    
+    // Автообновление страницы каждые 30 секунд
+    let autoRefreshInterval;
+    let isUserActive = false;
+    
+    function startAutoRefresh() {
+        autoRefreshInterval = setInterval(() => {
+            if (!isUserActive) {
+                location.reload();
+            }
+        }, 30000);
+        
+        // Показываем индикатор автообновления
+        const indicator = document.createElement('div');
+        indicator.id = 'refresh-indicator';
+        indicator.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 123, 255, 0.9);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 0.9em;
+            z-index: 1000;
+            transition: opacity 0.3s ease;
+        `;
+        indicator.innerHTML = '🔄 Auto-refresh: ON <span style="cursor: pointer; margin-left: 10px;" onclick="toggleAutoRefresh()">❌</span>';
+        document.body.appendChild(indicator);
+        
+        // Скрываем индикатор через 3 секунды
+        setTimeout(() => {
+            if (indicator) {
+                indicator.style.opacity = '0.7';
+            }
+        }, 3000);
+    }
+    
+    function stopAutoRefresh() {
+        if (autoRefreshInterval) {
+            clearInterval(autoRefreshInterval);
+            autoRefreshInterval = null;
+        }
+        
+        const indicator = document.getElementById('refresh-indicator');
+        if (indicator) {
+            indicator.innerHTML = '🔄 Auto-refresh: OFF <span style="cursor: pointer; margin-left: 10px;" onclick="toggleAutoRefresh()">✅</span>';
+            indicator.style.background = 'rgba(108, 117, 125, 0.9)';
+        }
+    }
+    
+    function toggleAutoRefresh() {
+        if (autoRefreshInterval) {
+            stopAutoRefresh();
+        } else {
+            startAutoRefresh();
+        }
+    }
+    
+    // Запускаем автообновление
+    startAutoRefresh();
+    
+    // Отслеживаем активность пользователя
+    let userActivityTimer;
+    
+    function resetActivityTimer() {
+        isUserActive = true;
+        clearTimeout(userActivityTimer);
+        
+        userActivityTimer = setTimeout(() => {
+            isUserActive = false;
+        }, 10000); // 10 секунд активности
+    }
+    
+    // Отслеживаем активность пользователя
+    ['click', 'keypress', 'scroll', 'mousemove', 'input'].forEach(event => {
+        document.addEventListener(event, resetActivityTimer);
+    });
+    
+    // Уведомления
+    function showNotification(message, type = 'info') {
+        const notification = document.createElement('div');
+        notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: ${type === 'error' ? '#dc3545' : type === 'success' ? '#28a745' : '#007bff'};
+            color: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            font-weight: bold;
+            z-index: 1001;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            max-width: 300px;
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.3s ease;
+        `;
+        notification.textContent = message;
+        document.body.appendChild(notification);
+
+        // Анимация появления
+        setTimeout(() => {
+            notification.style.opacity = '1';
+            notification.style.transform = 'translateX(0)';
+        }, 100);
+
+        setTimeout(() => {
+            notification.style.opacity = '0';
+            notification.style.transform = 'translateX(100%)';
+            setTimeout(() => notification.remove(), 300);
+        }, 5000);
+    }
+    
+    // Подтверждение массовых действий
+    document.querySelectorAll('form').forEach(form => {
+        const action = form.querySelector('input[name="action"]');
+        if (action && ['cleanup_all', 'flush_logs', 'clear_rdns_cache'].includes(action.value)) {
+            form.addEventListener('submit', (e) => {
+                const actionText = action.value === 'cleanup_all' ? 
+                    'очистить все просроченные ключи' : 
+                    action.value === 'flush_logs' ?
+                    'удалить все логи' :
+                    'очистить весь rDNS кеш';
+                
+                if (!confirm(`Вы действительно хотите ${actionText}? Это действие необратимо!`)) {
+                    e.preventDefault();
                 }
             });
         }
+    });
+    
+    // Валидация форм ручной блокировки
+    document.querySelectorAll('form[method="POST"]').forEach(form => {
+        form.addEventListener('submit', (e) => {
+            const action = form.querySelector('input[name="action"]');
+            if (action && action.value === 'block_manual_ip') {
+                const ipInput = form.querySelector('input[name="ip_address"]');
+                const ip = ipInput.value.trim();
+                
+                // Простая валидация IP
+                const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+                if (!ipRegex.test(ip)) {
+                    e.preventDefault();
+                    showNotification('Неверный формат IP адреса!', 'error');
+                    ipInput.focus();
+                }
+            }
+        });
+    });
+    
+    // Статистика по состоянию страницы
+    console.log('🛡️ Redis Bot Protection Admin Panel v2.1 loaded');
+    console.log('📊 Current stats:', {
+        blockedIPs: <?php echo count($blockedIPs ?? []); ?>,
+        blockedSessions: <?php echo count($blockedSessions ?? []); ?>,
+        blockedCookies: <?php echo count($blockedCookies ?? []); ?>,
+        blockedUserHashes: <?php echo count($blockedUserHashes ?? []); ?>,
+        userHashTracking: <?php echo count($userHashTracking ?? []); ?>,
+        trackingRecords: <?php echo count($trackingData ?? []); ?>,
+        logs: <?php echo count($logs ?? []); ?>,
+        rdnsCache: <?php echo $redisStats['rdns_cache'] ?? 0; ?>
+    });
+    
+    // Клавиатурные сочетания
+    document.addEventListener('keydown', (e) => {
+if (e.ctrlKey || e.metaKey) {
+    switch(e.key) {
+        case 'r':
+            e.preventDefault();
+            location.reload();
+            break;
+        case '1':
+            e.preventDefault();
+            showTab('blocked-ips');
+            break;
+        case '2':
+            e.preventDefault();
+            showTab('blocked-sessions');
+            break;
+        case '3':
+            e.preventDefault();
+            showTab('blocked-cookies');
+            break;
+        case '4':
+            e.preventDefault();
+            showTab('blocked-user-hashes');
+            break;
+        case '5':
+            e.preventDefault();
+            showTab('user-hash-tracking');
+            break;
+        case '6':
+            e.preventDefault();
+            showTab('tracking');
+            break;
+        case '7':
+            e.preventDefault();
+            showTab('extended-tracking');
+            break;
+        case '8':
+            e.preventDefault();
+            showTab('logs');
+            break;
+    }
+}
+});
+    // Показываем горячие клавиши
+    setTimeout(() => {
+        showNotification('💡 Горячие клавиши: Ctrl+R (обновить), Ctrl+1-8 (переключение табов)', 'info');
+    }, 1000);
 
-        // Добавляем CSS анимацию
-        const style = document.createElement('style');
-        style.textContent = `
-            @keyframes pulse {
-                0% { transform: scale(1); }
-                50% { transform: scale(1.1); }
-                100% { transform: scale(1); }
+    // Живые обновления счетчиков
+    function updateCounters() {
+        const stats = document.querySelectorAll('.stat-number');
+        stats.forEach(stat => {
+            const currentValue = parseInt(stat.textContent);
+            if (currentValue > 0) {
+                stat.style.animation = 'pulse 0.5s ease-in-out';
+                setTimeout(() => {
+                    stat.style.animation = '';
+                }, 500);
             }
-            
-            .stat-card:hover .stat-number {
-                color: #0056b3;
-                transition: color 0.3s ease;
-            }
-            
-            .table tr:hover {
-                background: #f1f3f4 !important;
-                transform: scale(1.01);
-                transition: all 0.2s ease;
-            }
-            
-            .btn:active {
-                transform: scale(0.95);
-            }
-            
-            .search-box:focus {
-                border-color: #007bff;
-                box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
-                outline: none;
-            }
-        `;
-        document.head.appendChild(style);
+        });
+    }
+
+    // Добавляем CSS анимацию
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
         
-        // Инициализация завершена
-        updateCounters();
+        .stat-card:hover .stat-number {
+            color: #0056b3;
+            transition: color 0.3s ease;
+        }
         
-        // Показываем информацию о версии при загрузке
-        console.log(`
+        .table tr:hover {
+            background: #f1f3f4 !important;
+            transform: scale(1.01);
+            transition: all 0.2s ease;
+        }
+        
+        .btn:active {
+            transform: scale(0.95);
+        }
+        
+        .search-box:focus {
+            border-color: #007bff;
+            box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+            outline: none;
+        }
+    `;
+    document.head.appendChild(style);
+    
+    // Инициализация завершена
+    updateCounters();
+    
+    // Показываем информацию о версии при загрузке
+    console.log(`
 █▀▀▄ █▀▀█ ▀▀█▀▀   █▀▀█ █▀▀█ █▀▀█ ▀▀█▀▀ █▀▀ █▀▀ ▀▀█▀▀ ─▀─ █▀▀█ █▀▀▄
 █▀▀▄ █  █   █     █  █ █▄▄▀ █  █   █   █▄▄ █     █    ▀█▀ █  █ █  █
 ▀▀▀  ▀▀▀▀   ▀     █▀▀▀ ▀ ▀▀ ▀▀▀▀   ▀   ▀▀▀ ▀▀▀   ▀   ▀▀▀ ▀▀▀▀ ▀  ▀
-
-Version 2.0 - Full User Hash Support + Fast rDNS + Copy Feature
+Version 2.1 - Optimized Performance без rDNS в трекинге + Copy Feature
 Admin Panel Loaded Successfully!
-        `);
-    </script>
+`);
+</script>
 <?php endif; ?>
 </body>
 </html>
