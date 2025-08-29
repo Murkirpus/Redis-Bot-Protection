@@ -43,12 +43,10 @@ class RedisBotProtectionNoSessions {
  private $allowedSearchEngines = [
      'googlebot' => [
     'user_agent_patterns' => [
-        'googlebot',
-        'googlebot-image',
-        'googlebot-news',
-        'googlebot-video'
+        'googlebot', 'google', 'googleother',
+        'googlebot-image', 'googlebot-news', 'googlebot-video'
     ],
-    'rdns_patterns' => ['.googlebot.com']
+    'rdns_patterns' => ['.googlebot.com', '.google.com']
 	],
      'bingbot' => [
          'user_agent_patterns' => ['bingbot', 'msnbot'],
