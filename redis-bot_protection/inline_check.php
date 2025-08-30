@@ -95,7 +95,19 @@ class RedisBotProtectionNoSessions {
      'sogou' => [
          'user_agent_patterns' => ['sogou'],
          'rdns_patterns' => ['.sogou.com']
-     ]
+     ],
+	 'amazonbot' => [
+    'user_agent_patterns' => [
+        'amazonbot', 
+        'amazon bot',
+        'amazon-bot'
+    ],
+    'rdns_patterns' => [
+        '.amazon.com', 
+        '.amazon', 
+        '.crawl.amazonbot.amazon'
+    ]
+	]
  ];
  
  public function __construct($redisHost = '127.0.0.1', $redisPort = 6379, $redisPassword = null, $redisDatabase = 0) {
@@ -887,7 +899,7 @@ class RedisBotProtectionNoSessions {
  private function isLegitimateBot($userAgent) {
      $legitimateBots = [
          'uptimerobot', 'pingdom', 'statuscake', 'site24x7',
-         'cloudflare', 'fastly', 'keycdn'
+         'cloudflare', 'fastly', 'keycdn', 'meta-externalagent'
      ];
      
      $userAgent = strtolower($userAgent);
