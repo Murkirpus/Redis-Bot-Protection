@@ -39,6 +39,19 @@ class RedisBotProtectionNoSessions {
         'suspicious_regularity_variance' => 100,
     ];
     
+    // Настройки rate limiting и защиты от нагрузки
+    private $rateLimitSettings = [
+        'max_requests_per_minute' => 60,        // Максимум запросов в минуту
+        'max_requests_per_5min' => 200,         // Максимум запросов за 5 минут
+        'max_requests_per_hour' => 1000,        // Максимум запросов в час
+        'burst_threshold' => 20,                 // Порог всплеска (запросов за 10 сек)
+        'burst_window' => 10,                    // Окно для детекции всплеска (секунды)
+        'ua_change_threshold' => 5,              // Макс. смен UA за сессию
+        'ua_change_time_window' => 300,          // Окно для детекции смены UA (5 мин)
+        'progressive_block_duration' => 1800,    // Прогрессивная блокировка (30 мин)
+        'aggressive_block_duration' => 7200,     // Агрессивная блокировка (2 часа)
+    ];
+    
     // Список поисковиков с точными паттернами
     private $allowedSearchEngines = [
         'googlebot' => [
@@ -111,7 +124,6 @@ class RedisBotProtectionNoSessions {
         try {
             $this->redis = new Redis();
             
-            // Проверяем доступность Redis
             if (!$this->redis->connect($host, $port, 2)) {
                 throw new Exception("Cannot connect to Redis server at {$host}:{$port}");
             }
@@ -126,11 +138,9 @@ class RedisBotProtectionNoSessions {
                 throw new Exception("Cannot select Redis database {$database}");
             }
             
-            // Настройка Redis для оптимальной производительности
             $this->redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_JSON);
             $this->redis->setOption(Redis::OPT_PREFIX, $this->redisPrefix);
             
-            // Проверяем соединение
             if (!$this->redis->ping()) {
                 throw new Exception("Redis ping failed");
             }
@@ -141,7 +151,6 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    // Автоматическая очистка БЕЗ ЛОГИРОВАНИЯ
     private function autoCleanup() {
         try {
             $lastCleanupKey = 'last_cleanup';
@@ -156,7 +165,6 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    // Агрессивная очистка БЕЗ ЛОГИРОВАНИЯ
     private function aggressiveCleanup() {
         try {
             $cleaned = 0;
@@ -192,15 +200,11 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    /**
-     * Улучшенная функция нормализации IPv6
-     */
     private function normalizeIPv6($ip) {
         if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
             return $ip;
         }
         
-        // Используем inet_pton/inet_ntop для правильной нормализации
         $binary = @inet_pton($ip);
         if ($binary === false) {
             return $ip;
@@ -210,15 +214,11 @@ class RedisBotProtectionNoSessions {
         return $normalized ?: $ip;
     }
     
-    /**
-     * Новая функция: улучшенная нормализация IP (IPv4 и IPv6)
-     */
     private function normalizeIP($ip) {
-        // Убираем пробелы
         $ip = trim($ip);
         
         if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            return $ip; // IPv4 уже нормализован
+            return $ip;
         }
         
         if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
@@ -246,7 +246,6 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    // БЕЗ ЛОГИРОВАНИЯ генерации хеша
     private function generateUserHash($ip = null) {
         $ip = $ip ?: $this->getRealIP();
         $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
@@ -331,7 +330,6 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    // ЛОГИРУЕМ ТОЛЬКО ФАКТ БЛОКИРОВКИ
     private function blockUserHash($reason = 'Bot behavior detected') {
         try {
             $userHash = $this->generateUserHash();
@@ -359,7 +357,6 @@ class RedisBotProtectionNoSessions {
             $this->redis->hset($statsKey, 'last_blocked_reason', $reason);
             $this->redis->expire($statsKey, $this->ttlSettings['user_hash_stats']);
             
-            // ТОЛЬКО ВАЖНАЯ ИНФОРМАЦИЯ
             error_log("Bot blocked [HASH]: " . substr($userHash, 0, 8) . " | IP: $ip | " . $blockData['device_type'] . " | " . $reason);
         } catch (Exception $e) {
             error_log("Error blocking user hash: " . $e->getMessage());
@@ -423,9 +420,6 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    /**
-     * НОВЫЙ МЕТОД: Анализ медленных ботов
-     */
     private function analyzeSlowBot($trackingData) {
         if (!$trackingData || $trackingData['requests'] < $this->slowBotSettings['min_requests_for_analysis']) {
             return false;
@@ -435,63 +429,52 @@ class RedisBotProtectionNoSessions {
         $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
         $isMobile = $this->isMobileDevice($userAgent);
         
-        // Более низкий порог для медленных ботов
         $blockThreshold = $isMobile ? 12 : 10;
         
         $requests = $trackingData['requests'];
         $timeSpent = time() - ($trackingData['first_seen'] ?? time());
         
-        // 1. Подозрительный User-Agent (большой вес для медленных)
         if ($this->isSuspiciousUserAgent($userAgent)) {
             $score += $isMobile ? 8 : 10;
         }
         
-        // 2. Анализ долгосрочной активности
-        if ($timeSpent > 3600) { // Больше часа активности
+        if ($timeSpent > 3600) {
             $requestsPerHour = ($requests * 3600) / $timeSpent;
             
-            // Подозрительно: много запросов за длительное время
             if ($requestsPerHour > 30 && $requests > 20) {
                 $score += 4;
             }
             
-            // Очень подозрительно: стабильная активность без перерывов
-            if ($requestsPerHour > 10 && $timeSpent > 7200) { // 2+ часа
+            if ($requestsPerHour > 10 && $timeSpent > 7200) {
                 $score += 3;
             }
         }
         
-        // 3. Анализ паттернов страниц (для медленных ботов)
         $uniquePages = array_unique($trackingData['pages'] ?? []);
         $totalPages = count($trackingData['pages'] ?? []);
         
         if ($totalPages > 10) {
             $pageVariety = count($uniquePages) / $totalPages;
             
-            // Медленный бот часто посещает одни и те же страницы
             if ($pageVariety < 0.3 && $totalPages > 15) {
                 $score += 3;
             }
             
-            // Слишком систематический обход
             if ($pageVariety > 0.8 && $totalPages > 25) {
                 $score += 2;
             }
         }
         
-        // 4. Отсутствие типичного пользовательского поведения
         $currentHeaders = $this->collectHeaders();
         if (!isset($currentHeaders['HTTP_REFERER']) && $requests > 10) {
             $score += 1;
         }
         
-        // 5. Множественные IP для одного хеша (подозрительно)
         $uniqueIPs = array_unique($trackingData['ips'] ?? []);
         if (count($uniqueIPs) > 3 && $requests > 10) {
             $score += 2;
         }
         
-        // 6. НОВОЕ: Анализ регулярности запросов для медленных ботов
         if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 8) {
             $times = $trackingData['request_times'];
             $intervals = [];
@@ -508,7 +491,6 @@ class RedisBotProtectionNoSessions {
                 }
                 $variance /= count($intervals);
                 
-                // Слишком регулярные интервалы подозрительны (1-10 минут)
                 if ($variance < $this->slowBotSettings['suspicious_regularity_variance'] && 
                     $avgInterval > 60 && $avgInterval < 600) {
                     $score += 4;
@@ -519,9 +501,6 @@ class RedisBotProtectionNoSessions {
         return $score >= $blockThreshold;
     }
     
-    /**
-     * НОВЫЙ МЕТОД: Расширенное отслеживание для подозрительных случаев
-     */
     private function enableExtendedTracking($ip, $reason = 'Potential slow bot') {
         try {
             $extendedKey = $this->trackingPrefix . 'extended:' . hash('md5', $ip);
@@ -542,9 +521,6 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    /**
-     * НОВЫЙ МЕТОД: Проверка расширенного отслеживания
-     */
     private function checkExtendedTracking($ip) {
         try {
             $extendedKey = $this->trackingPrefix . 'extended:' . hash('md5', $ip);
@@ -555,9 +531,6 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    /**
-     * НОВЫЙ МЕТОД: Получение данных трекинга
-     */
     private function getUserTrackingData($ip) {
         try {
             $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
@@ -568,9 +541,6 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    /**
-     * НОВЫЙ МЕТОД: Проверка на потенциального медленного бота
-     */
     private function isPotentialSlowBot($trackingData) {
         if (!$trackingData || $trackingData['requests'] < 5) {
             return false;
@@ -579,15 +549,11 @@ class RedisBotProtectionNoSessions {
         $timeSpent = time() - ($trackingData['first_seen'] ?? time());
         $requests = $trackingData['requests'];
         
-        // Подозрительные паттерны медленных ботов:
-        
-        // 1. Долгая активность с умеренным количеством запросов
         if ($timeSpent > ($this->slowBotSettings['long_session_hours'] * 3600) && 
             $requests > 10 && $requests < 100) {
             return true;
         }
         
-        // 2. Очень равномерное распределение запросов
         if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 8) {
             $times = $trackingData['request_times'];
             $intervals = [];
@@ -604,15 +570,13 @@ class RedisBotProtectionNoSessions {
                 }
                 $variance /= count($intervals);
                 
-                // Слишком регулярные интервалы подозрительны
                 if ($variance < $this->slowBotSettings['suspicious_regularity_variance'] && 
-                    $avgInterval > 60 && $avgInterval < 600) { // 1-10 минут между запросами
+                    $avgInterval > 60 && $avgInterval < 600) {
                     return true;
                 }
             }
         }
         
-        // 3. Отсутствие типичных пользовательских заголовков при долгой активности
         if ($timeSpent > 3600 && $requests > 8) {
             $headers = $this->collectHeaders();
             $missingHeaders = 0;
@@ -629,9 +593,6 @@ class RedisBotProtectionNoSessions {
         return false;
     }
     
-    /**
-     * УЛУЧШЕННЫЙ МЕТОД: analyzeUserHashBehavior с медленными ботами
-     */
     private function analyzeUserHashBehavior() {
         $trackingData = $this->trackUserHashActivity();
         
@@ -639,18 +600,12 @@ class RedisBotProtectionNoSessions {
             return false;
         }
         
-        // Сначала стандартный анализ
         $standardResult = $this->performStandardUserHashAnalysis($trackingData);
-        
-        // Потом анализ медленных ботов
         $slowBotResult = $this->analyzeSlowBot($trackingData);
         
         return $standardResult || $slowBotResult;
     }
     
-    /**
-     * НОВЫЙ МЕТОД: Стандартный анализ (вынесен из старого analyzeUserHashBehavior)
-     */
     private function performStandardUserHashAnalysis($trackingData) {
         $score = 0;
         $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
@@ -659,12 +614,10 @@ class RedisBotProtectionNoSessions {
         
         $blockThreshold = $isMobile ? 20 : 18;
         
-        // 1. Подозрительный User-Agent
         if ($this->isSuspiciousUserAgent($userAgent)) {
             $score += $isMobile ? 15 : 20;
         }
         
-        // 2. Анализ частоты запросов
         $requests = $trackingData['requests'];
         $timeSpent = time() - $trackingData['first_seen'];
         
@@ -682,7 +635,6 @@ class RedisBotProtectionNoSessions {
             }
         }
         
-        // 3. Анализ разнообразия страниц
         $uniquePages = array_unique($trackingData['pages'] ?? []);
         $totalPages = count($trackingData['pages'] ?? []);
         
@@ -693,7 +645,6 @@ class RedisBotProtectionNoSessions {
             }
         }
         
-        // 4. Анализ регулярности запросов
         if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 15) {
             $intervals = [];
             $times = array_slice($trackingData['request_times'], -20);
@@ -717,7 +668,6 @@ class RedisBotProtectionNoSessions {
             }
         }
         
-        // 5. Быстрые последовательные запросы
         if (isset($trackingData['request_times']) && count($trackingData['request_times']) >= 10) {
             $lastTen = array_slice($trackingData['request_times'], -10);
             $timeDiff = end($lastTen) - reset($lastTen);
@@ -731,13 +681,11 @@ class RedisBotProtectionNoSessions {
             }
         }
         
-        // 6. Множественные IP-адреса
         $uniqueIPs = array_unique($trackingData['ips'] ?? []);
         if (count($uniqueIPs) > 15) {
             $score += 8;
         }
         
-        // 7. Проверка на повторные нарушения
         $userHash = $this->generateUserHash();
         $statsKey = $this->userHashPrefix . 'stats:' . $userHash;
         $blockCount = $this->redis->hget($statsKey, 'block_count') ?: 0;
@@ -750,7 +698,208 @@ class RedisBotProtectionNoSessions {
     }
     
     /**
-     * ОБНОВЛЕННЫЙ МЕТОД protect() с поддержкой медленных ботов
+     * НОВЫЙ МЕТОД: Проверка rate limit
+     */
+    private function checkRateLimit($ip) {
+        try {
+            $rateLimitKey = $this->trackingPrefix . 'ratelimit:' . hash('md5', $ip);
+            $current = time();
+            
+            $data = $this->redis->get($rateLimitKey);
+            
+            if (!$data) {
+                $data = [
+                    'requests_1min' => 1,
+                    'requests_5min' => 1,
+                    'requests_1hour' => 1,
+                    'window_1min_start' => $current,
+                    'window_5min_start' => $current,
+                    'window_1hour_start' => $current,
+                    'last_request' => $current,
+                    'violations' => 0
+                ];
+                
+                $this->redis->setex($rateLimitKey, 3600, $data);
+                return ['allowed' => true, 'reason' => null];
+            }
+            
+            if ($current - $data['window_1min_start'] >= 60) {
+                $data['requests_1min'] = 0;
+                $data['window_1min_start'] = $current;
+            }
+            
+            if ($current - $data['window_5min_start'] >= 300) {
+                $data['requests_5min'] = 0;
+                $data['window_5min_start'] = $current;
+            }
+            
+            if ($current - $data['window_1hour_start'] >= 3600) {
+                $data['requests_1hour'] = 0;
+                $data['window_1hour_start'] = $current;
+            }
+            
+            $data['requests_1min']++;
+            $data['requests_5min']++;
+            $data['requests_1hour']++;
+            $data['last_request'] = $current;
+            
+            $violations = [];
+            
+            if ($data['requests_1min'] > $this->rateLimitSettings['max_requests_per_minute']) {
+                $violations[] = 'requests_per_minute';
+            }
+            
+            if ($data['requests_5min'] > $this->rateLimitSettings['max_requests_per_5min']) {
+                $violations[] = 'requests_per_5min';
+            }
+            
+            if ($data['requests_1hour'] > $this->rateLimitSettings['max_requests_per_hour']) {
+                $violations[] = 'requests_per_hour';
+            }
+            
+            if (!empty($violations)) {
+                $data['violations']++;
+                $this->redis->setex($rateLimitKey, 3600, $data);
+                
+                return [
+                    'allowed' => false,
+                    'reason' => 'Rate limit exceeded: ' . implode(', ', $violations),
+                    'violations' => $violations,
+                    'violation_count' => $data['violations'],
+                    'stats' => [
+                        '1min' => $data['requests_1min'],
+                        '5min' => $data['requests_5min'],
+                        '1hour' => $data['requests_1hour']
+                    ]
+                ];
+            }
+            
+            $this->redis->setex($rateLimitKey, 3600, $data);
+            return ['allowed' => true, 'reason' => null];
+            
+        } catch (Exception $e) {
+            error_log("Error in checkRateLimit: " . $e->getMessage());
+            return ['allowed' => true, 'reason' => null];
+        }
+    }
+    
+    /**
+     * НОВЫЙ МЕТОД: Детекция всплесков активности
+     */
+    private function detectBurst($ip) {
+        try {
+            $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
+            $data = $this->redis->get($trackingKey);
+            
+            if (!$data || !isset($data['request_times'])) {
+                return false;
+            }
+            
+            $recentRequests = array_filter($data['request_times'], function($time) {
+                return (time() - $time) <= $this->rateLimitSettings['burst_window'];
+            });
+            
+            if (count($recentRequests) >= $this->rateLimitSettings['burst_threshold']) {
+                return [
+                    'detected' => true,
+                    'requests_in_window' => count($recentRequests),
+                    'threshold' => $this->rateLimitSettings['burst_threshold'],
+                    'window' => $this->rateLimitSettings['burst_window']
+                ];
+            }
+            
+            return false;
+            
+        } catch (Exception $e) {
+            error_log("Error in detectBurst: " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * НОВЫЙ МЕТОД: Детекция смены User-Agent
+     */
+    private function detectUserAgentSwitching($ip) {
+        try {
+            $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
+            $data = $this->redis->get($trackingKey);
+            
+            if (!$data) {
+                return false;
+            }
+            
+            $uniqueUA = array_unique($data['user_agents'] ?? []);
+            $uaCount = count($uniqueUA);
+            
+            if ($uaCount >= $this->rateLimitSettings['ua_change_threshold']) {
+                $timeSpent = time() - ($data['first_seen'] ?? time());
+                
+                if ($timeSpent < $this->rateLimitSettings['ua_change_time_window']) {
+                    return [
+                        'detected' => true,
+                        'unique_ua_count' => $uaCount,
+                        'time_window' => $timeSpent,
+                        'threshold' => $this->rateLimitSettings['ua_change_threshold'],
+                        'user_agents' => array_map(function($ua) {
+                            return substr($ua, 0, 50) . '...';
+                        }, $uniqueUA)
+                    ];
+                }
+            }
+            
+            return false;
+            
+        } catch (Exception $e) {
+            error_log("Error in detectUserAgentSwitching: " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * НОВЫЙ МЕТОД: Прогрессивная блокировка
+     */
+    private function applyProgressiveBlock($ip, $reason, $violationData = null) {
+        try {
+            $blockKey = $this->blockPrefix . 'ip:' . hash('md5', $ip);
+            $historyKey = $this->blockPrefix . 'history:' . hash('md5', $ip);
+            
+            $history = $this->redis->get($historyKey) ?: ['count' => 0, 'last_block' => 0];
+            $history['count']++;
+            $history['last_block'] = time();
+            
+            $blockDuration = $this->rateLimitSettings['progressive_block_duration'];
+            
+            if ($history['count'] >= 3) {
+                $blockDuration = $this->rateLimitSettings['aggressive_block_duration'] * $history['count'];
+            }
+            
+            $blockData = [
+                'ip' => $ip,
+                'blocked_at' => time(),
+                'blocked_reason' => $reason,
+                'violation_count' => $history['count'],
+                'block_duration' => $blockDuration,
+                'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+                'uri' => $_SERVER['REQUEST_URI'] ?? '',
+                'violation_data' => $violationData
+            ];
+            
+            $this->redis->setex($blockKey, $blockDuration, $blockData);
+            $this->redis->setex($historyKey, 86400 * 7, $history);
+            
+            $hours = round($blockDuration / 3600, 1);
+            error_log("RATE LIMIT BLOCK: $ip | Count: {$history['count']} | Duration: {$hours}h | $reason");
+            
+            return true;
+            
+        } catch (Exception $e) {
+            error_log("Error in applyProgressiveBlock: " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * ОБНОВЛЕННЫЙ МЕТОД protect() с rate limiting
      */
     public function protect() {
         if ($this->isStaticFile()) {
@@ -770,29 +919,53 @@ class RedisBotProtectionNoSessions {
             return;
         }
         
-        // 1. ПРОВЕРКИ: блокировка по хешу пользователя
         if ($this->isUserHashBlocked()) {
             $this->sendBlockResponse();
         }
         
-        // 2. ПРОВЕРКИ: блокировка cookie
         if ($this->isCookieBlocked()) {
             $this->sendBlockResponse();
         }
         
-        // 3. ПРОВЕРКИ: блокировка IP ТОЛЬКО для подозрительных User-Agent
         if ($this->isBlocked($ip) && $this->isSuspiciousUserAgent($userAgent)) {
             $this->sendBlockResponse();
         }
         
-        // 4. НОВОЕ: Проверка расширенного отслеживания
+        // НОВОЕ: Проверка rate limit
+        $rateLimitResult = $this->checkRateLimit($ip);
+        if (!$rateLimitResult['allowed']) {
+            if ($rateLimitResult['violation_count'] >= 3) {
+                $this->applyProgressiveBlock($ip, $rateLimitResult['reason'], $rateLimitResult);
+                $this->blockUserHash('Repeated rate limit violations');
+                $this->sendBlockResponse();
+            }
+            error_log("RATE LIMIT WARNING: $ip | " . $rateLimitResult['reason'] . " | Violations: " . $rateLimitResult['violation_count']);
+        }
+        
+        // НОВОЕ: Детекция смены User-Agent
+        $uaSwitching = $this->detectUserAgentSwitching($ip);
+        if ($uaSwitching && $uaSwitching['detected']) {
+            $this->applyProgressiveBlock($ip, 'User-Agent switching detected', $uaSwitching);
+            $this->blockUserHash('UA switching');
+            if (isset($_COOKIE[$this->cookieName])) {
+                $this->blockCookieHash();
+            }
+            $this->sendBlockResponse();
+        }
+        
+        // НОВОЕ: Детекция всплесков
+        $burstDetected = $this->detectBurst($ip);
+        if ($burstDetected && $burstDetected['detected']) {
+            $this->applyProgressiveBlock($ip, 'Burst activity detected', $burstDetected);
+            $this->blockUserHash('Burst activity');
+            $this->sendBlockResponse();
+        }
+        
         $hasExtendedTracking = $this->checkExtendedTracking($ip);
         
-        // 5. ПРОВЕРКИ: валидный cookie
         if ($this->hasValidCookie()) {
             $this->trackUserHashActivity();
             
-            // Анализ с учетом расширенного отслеживания
             if ($this->shouldAnalyzeIP($ip) || $hasExtendedTracking) {
                 if ($this->analyzeRequest($ip)) {
                     if ($this->isSuspiciousUserAgent($userAgent)) {
@@ -809,7 +982,6 @@ class RedisBotProtectionNoSessions {
             return;
         }
         
-        // 6. АНАЛИЗ ДЛЯ НОВЫХ ПОЛЬЗОВАТЕЛЕЙ (включая медленных ботов)
         if ($this->shouldAnalyzeIP($ip) || $hasExtendedTracking) {
             if ($this->analyzeRequest($ip)) {
                 if ($this->isSuspiciousUserAgent($userAgent)) {
@@ -819,7 +991,6 @@ class RedisBotProtectionNoSessions {
                     }
                     $this->blockUserHash('Bot detected');
                 } else {
-                    // НОВОЕ: Включаем расширенное отслеживание для подозрительного поведения
                     if (!$hasExtendedTracking) {
                         $this->enableExtendedTracking($ip, 'Suspicious browser behavior');
                     }
@@ -834,7 +1005,6 @@ class RedisBotProtectionNoSessions {
             }
         }
         
-        // 7. АНАЛИЗ ПОВЕДЕНИЯ ПО ХЕШУ (включая медленных ботов)
         if ($this->analyzeUserHashBehavior()) {
             if ($this->isSuspiciousUserAgent($userAgent)) {
                 $this->blockIP($ip, 'Bot behavior confirmed by user hash analysis');
@@ -852,7 +1022,6 @@ class RedisBotProtectionNoSessions {
             $this->sendBlockResponse();
         }
         
-        // 8. НОВОЕ: Дополнительная проверка для потенциально медленных ботов
         $trackingData = $this->getUserTrackingData($ip);
         if ($trackingData && $this->isPotentialSlowBot($trackingData)) {
             if (!$hasExtendedTracking) {
@@ -860,16 +1029,12 @@ class RedisBotProtectionNoSessions {
             }
         }
         
-        // 9. ИНИЦИАЛИЗАЦИЯ
         if (!isset($_COOKIE[$this->cookieName])) {
             $this->setVisitorCookie();
             $this->initTracking($ip);
         }
     }
     
-    /**
-     * УЛУЧШЕННЫЙ МЕТОД: shouldAnalyzeIP с учетом медленных ботов
-     */
     private function shouldAnalyzeIP($ip) {
         try {
             $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
@@ -880,17 +1045,14 @@ class RedisBotProtectionNoSessions {
                 $timeSpent = time() - ($data['first_seen'] ?? time());
                 $suspicious_ua = $this->isSuspiciousUserAgent($_SERVER['HTTP_USER_AGENT'] ?? '');
                 
-                // Подозрительный UA анализируем сразу
                 if ($suspicious_ua) {
                     return true;
                 }
                 
-                // НОВОЕ: Анализ медленных ботов
-                if ($timeSpent > 1800 && $requests >= 5) { // 30+ минут, 5+ запросов
+                if ($timeSpent > 1800 && $requests >= 5) {
                     return true;
                 }
                 
-                // Стандартная логика
                 if ($requests > 5) {
                     return true;
                 }
@@ -902,7 +1064,6 @@ class RedisBotProtectionNoSessions {
                     }
                 }
                 
-                // Быстрые последовательные запросы
                 if (isset($data['request_times']) && count($data['request_times']) >= 7) {
                     $recentTimes = array_slice($data['request_times'], -7);
                     $timeSpan = end($recentTimes) - reset($recentTimes);
@@ -955,7 +1116,6 @@ class RedisBotProtectionNoSessions {
         return false;
     }
     
-    // БЕЗ ЛОГИРОВАНИЯ легитимных ботов
     private function logBotVisit($ip, $userAgent, $type) {
         try {
             $logEntry = [
@@ -975,11 +1135,7 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    /**
-     * УЛУЧШЕННАЯ проверка поисковиков с быстрым rDNS
-     */
     private function isVerifiedSearchEngine($ip, $userAgent) {
-        // Сначала быстрая проверка User-Agent
         $detectedEngine = null;
         foreach ($this->allowedSearchEngines as $engine => $config) {
             foreach ($config['user_agent_patterns'] as $pattern) {
@@ -994,21 +1150,14 @@ class RedisBotProtectionNoSessions {
             return false;
         }
         
-        // Проверяем rDNS с улучшенной логикой
         return $this->verifySearchEngineByRDNS($ip, $this->allowedSearchEngines[$detectedEngine]['rdns_patterns']);
     }
     
-    /**
-     * УЛУЧШЕННАЯ функция проверки rDNS с поддержкой IPv4/IPv6
-     * Быстрая, надежная, с кешированием и таймаутами
-     */
     private function verifySearchEngineByRDNS($ip, $allowedPatterns) {
         try {
-            // Нормализуем IP
             $normalizedIP = $this->normalizeIP($ip);
             $cacheKey = $this->rdnsPrefix . 'cache:' . hash('md5', $normalizedIP);
             
-            // Проверяем кеш
             $cached = $this->redis->get($cacheKey);
             if ($cached !== false) {
                 return $cached['verified'];
@@ -1019,11 +1168,9 @@ class RedisBotProtectionNoSessions {
             $error = '';
             
             try {
-                // ЭТАП 1: Обратный DNS (IP → hostname)
-                $hostname = $this->getHostnameWithTimeout($normalizedIP, 2); // 2 сек таймаут
+                $hostname = $this->getHostnameWithTimeout($normalizedIP, 2);
                 
                 if ($hostname && $hostname !== $normalizedIP) {
-                    // ЭТАП 2: Проверяем, что hostname соответствует разрешенным паттернам
                     $hostnameMatches = false;
                     foreach ($allowedPatterns as $pattern) {
                         if ($this->matchesDomainPattern($hostname, $pattern)) {
@@ -1033,8 +1180,7 @@ class RedisBotProtectionNoSessions {
                     }
                     
                     if ($hostnameMatches) {
-                        // ЭТАП 3: Прямой DNS (hostname → IP) для подтверждения
-                        $forwardIPs = $this->getIPsWithTimeout($hostname, 2); // 2 сек таймаут
+                        $forwardIPs = $this->getIPsWithTimeout($hostname, 2);
                         
                         if ($forwardIPs && $this->ipInArray($normalizedIP, $forwardIPs)) {
                             $verified = true;
@@ -1046,7 +1192,6 @@ class RedisBotProtectionNoSessions {
                 $error = $e->getMessage();
             }
             
-            // Кешируем результат (включая неудачные попытки)
             $cacheData = [
                 'ip' => $normalizedIP,
                 'hostname' => $hostname,
@@ -1055,7 +1200,6 @@ class RedisBotProtectionNoSessions {
                 'error' => $error
             ];
             
-            // Кешируем успешные проверки на 30 мин, неудачные на 5 мин
             $cacheTTL = $verified ? $this->ttlSettings['rdns_cache'] : 300;
             $this->redis->setex($cacheKey, $cacheTTL, $cacheData);
             
@@ -1066,32 +1210,20 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    /**
-     * НОВАЯ функция: получение hostname с таймаутом
-     */
     private function getHostnameWithTimeout($ip, $timeoutSec = 2) {
-        // Устанавливаем таймаут для DNS запросов
         $originalTimeout = ini_get('default_socket_timeout');
         ini_set('default_socket_timeout', $timeoutSec);
         
         try {
             $hostname = @gethostbyaddr($ip);
-            
-            // Возвращаем исходный таймаут
             ini_set('default_socket_timeout', $originalTimeout);
-            
-            // gethostbyaddr возвращает IP при неудаче
             return ($hostname !== $ip) ? $hostname : false;
-            
         } catch (Exception $e) {
             ini_set('default_socket_timeout', $originalTimeout);
             return false;
         }
     }
     
-    /**
-     * НОВАЯ функция: получение IP списка с таймаутом 
-     */
     private function getIPsWithTimeout($hostname, $timeoutSec = 2) {
         $originalTimeout = ini_get('default_socket_timeout');
         ini_set('default_socket_timeout', $timeoutSec);
@@ -1099,13 +1231,11 @@ class RedisBotProtectionNoSessions {
         $allIPs = [];
         
         try {
-            // Получаем IPv4 адреса
             $ipv4List = @gethostbynamel($hostname);
             if ($ipv4List) {
                 $allIPs = array_merge($allIPs, $ipv4List);
             }
             
-            // Получаем IPv6 адреса (если доступно)
             if (function_exists('dns_get_record')) {
                 $records = @dns_get_record($hostname, DNS_AAAA);
                 if ($records) {
@@ -1126,31 +1256,22 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    /**
-     * НОВАЯ функция: проверка соответствия домена паттерну
-     */
     private function matchesDomainPattern($hostname, $pattern) {
         $hostname = strtolower(trim($hostname));
         $pattern = strtolower(trim($pattern));
         
-        // Точное совпадение
         if ($hostname === $pattern) {
             return true;
         }
         
-        // Паттерн начинается с точки = проверяем суффикс
         if (strpos($pattern, '.') === 0) {
             return substr($hostname, -strlen($pattern)) === $pattern;
         }
         
-        // Иначе проверяем, что hostname заканчивается на .$pattern
         $fullPattern = '.' . $pattern;
         return substr($hostname, -strlen($fullPattern)) === $fullPattern;
     }
     
-    /**
-     * НОВАЯ функция: проверка наличия IP в массиве (с учетом нормализации)
-     */
     private function ipInArray($needle, $haystack) {
         $normalizedNeedle = $this->normalizeIP($needle);
         
@@ -1163,7 +1284,6 @@ class RedisBotProtectionNoSessions {
         return false;
     }
     
-    // БЕЗ ЛОГИРОВАНИЯ поисковиков
     private function logSearchEngineVisit($ip, $userAgent) {
         try {
             $logEntry = [
@@ -1346,7 +1466,7 @@ class RedisBotProtectionNoSessions {
                 $existing['user_agents'][] = $_SERVER['HTTP_USER_AGENT'] ?? '';
                 $existing['user_agents'] = array_unique($existing['user_agents']);
                 $existing['request_times'][] = time();
-                $existing['real_ip'] = $ip; // ДОБАВЛЕНО для исправления проблемы "unknown"
+                $existing['real_ip'] = $ip;
                 
                 if (count($existing['request_times']) > 25) {
                     $existing['request_times'] = array_slice($existing['request_times'], -25);
@@ -1368,7 +1488,7 @@ class RedisBotProtectionNoSessions {
                     'headers' => $this->collectHeaders(),
                     'session_id' => 'no_session',
                     'request_times' => [time()],
-                    'real_ip' => $ip // ДОБАВЛЕНО для исправления проблемы "unknown"
+                    'real_ip' => $ip
                 ];
                 
                 $this->redis->setex($trackingKey, $this->ttlSettings['tracking_ip'], $data);
@@ -1383,7 +1503,7 @@ class RedisBotProtectionNoSessions {
         $importantHeaders = [
             'HTTP_USER_AGENT', 'HTTP_ACCEPT', 'HTTP_ACCEPT_LANGUAGE', 
             'HTTP_ACCEPT_ENCODING', 'HTTP_REFERER', 'HTTP_X_FORWARDED_FOR',
-            'HTTP_CF_CONNECTING_IP', 'HTTP_X_REAL_IP', 'REMOTE_ADDR' // ДОБАВЛЕНО для исправления "unknown"
+            'HTTP_CF_CONNECTING_IP', 'HTTP_X_REAL_IP', 'REMOTE_ADDR'
         ];
         
         foreach ($importantHeaders as $header) {
@@ -1394,7 +1514,6 @@ class RedisBotProtectionNoSessions {
         return $headers;
     }
     
-    // ЛОГИРУЕМ ТОЛЬКО ФАКТ БЛОКИРОВКИ COOKIE
     private function blockCookieHash() {
         try {
             if (!isset($_COOKIE[$this->cookieName])) {
@@ -1418,7 +1537,6 @@ class RedisBotProtectionNoSessions {
             
             $this->redis->setex($blockKey, $this->ttlSettings['cookie_blocked'], $blockData);
             
-            // КРАТКОЕ ЛОГИРОВАНИЕ
             error_log("Bot blocked [COOKIE]: " . substr($data['hash'], 0, 8) . " | IP: " . $this->getRealIP());
         } catch (Exception $e) {
             error_log("Error blocking cookie hash: " . $e->getMessage());
@@ -1469,7 +1587,6 @@ class RedisBotProtectionNoSessions {
         return false;
     }
     
-    // БЕЗ ДЕТАЛЬНОГО ЛОГИРОВАНИЯ
     private function analyzeRequest($ip) {
         try {
             $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
@@ -1590,7 +1707,6 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    // ЛОГИРУЕМ ТОЛЬКО ФАКТ БЛОКИРОВКИ IP
     private function blockIP($ip, $reason = 'Bot behavior detected') {
         try {
             $blockKey = $this->blockPrefix . 'ip:' . hash('md5', $ip);
@@ -1612,7 +1728,6 @@ class RedisBotProtectionNoSessions {
             $blockDuration = $isRepeatOffender ? $this->ttlSettings['ip_blocked_repeat'] : $this->ttlSettings['ip_blocked'];
             $this->redis->setex($blockKey, $blockDuration, $blockData);
             
-            // КРАТКОЕ ЛОГИРОВАНИЕ
             $durHours = round($blockDuration / 3600);
             error_log("Bot blocked [IP]: $ip | " . ($isRepeatOffender ? "REPEAT | " : "") . "{$durHours}h | $reason");
         } catch (Exception $e) {
@@ -1629,9 +1744,6 @@ class RedisBotProtectionNoSessions {
         die('Rate limit exceeded. Please try again later.');
     }
     
-    /**
-     * ФУНКЦИЯ ДЛЯ ТЕСТИРОВАНИЯ rDNS (используйте для отладки)
-     */
     public function testRDNS($ip, $userAgent = '') {
         $normalizedIP = $this->normalizeIP($ip);
         
@@ -1639,7 +1751,6 @@ class RedisBotProtectionNoSessions {
         echo "Нормализованный IP: $normalizedIP\n";
         echo "User-Agent: $userAgent\n\n";
         
-        // Определяем поисковик по UA
         $detectedEngine = null;
         if ($userAgent) {
             foreach ($this->allowedSearchEngines as $engine => $config) {
@@ -1662,7 +1773,6 @@ class RedisBotProtectionNoSessions {
         $allowedPatterns = $this->allowedSearchEngines[$detectedEngine]['rdns_patterns'];
         echo "Разрешенные домены: " . implode(', ', $allowedPatterns) . "\n\n";
         
-        // Обратный DNS
         echo "🔍 Шаг 1: Обратный DNS (IP → hostname)\n";
         $hostname = $this->getHostnameWithTimeout($normalizedIP, 3);
         echo "Результат: " . ($hostname ?: 'НЕ НАЙДЕН') . "\n\n";
@@ -1672,7 +1782,6 @@ class RedisBotProtectionNoSessions {
             return false;
         }
         
-        // Проверка паттерна
         echo "🔍 Шаг 2: Проверка домена\n";
         $hostnameMatches = false;
         foreach ($allowedPatterns as $pattern) {
@@ -1688,7 +1797,6 @@ class RedisBotProtectionNoSessions {
             return false;
         }
         
-        // Прямой DNS
         echo "\n🔍 Шаг 3: Прямой DNS (hostname → IP)\n";
         $forwardIPs = $this->getIPsWithTimeout($hostname, 3);
         echo "Найденные IP: " . implode(', ', $forwardIPs) . "\n";
@@ -1704,7 +1812,7 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    // МЕТОДЫ ДЛЯ АДМИНИСТРИРОВАНИЯ (с минимальным логированием)
+    // АДМИНИСТРАТИВНЫЕ МЕТОДЫ
     
     public function getUserHashInfo($userHash = null) {
         try {
@@ -1743,7 +1851,6 @@ class RedisBotProtectionNoSessions {
                 'tracking_cleared' => $this->redis->del($trackingKey) > 0
             ];
             
-            // ЛОГИРУЕМ РАЗБЛОКИРОВКУ
             error_log("UNBLOCKED [HASH]: " . substr($userHash, 0, 8) . " | Manual");
             return $result;
         } catch (Exception $e) {
@@ -1752,7 +1859,6 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    // БЕЗ ЛОГИРОВАНИЯ диагностики
     public function diagnoseUserHash() {
         $ip = $this->getRealIP();
         $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
@@ -1837,11 +1943,82 @@ class RedisBotProtectionNoSessions {
         return $cleaned;
     }
     
+    public function getRateLimitStats($ip) {
+        try {
+            $rateLimitKey = $this->trackingPrefix . 'ratelimit:' . hash('md5', $ip);
+            $historyKey = $this->blockPrefix . 'history:' . hash('md5', $ip);
+            
+            return [
+                'ip' => $ip,
+                'current_stats' => $this->redis->get($rateLimitKey),
+                'block_history' => $this->redis->get($historyKey),
+                'is_blocked' => $this->isBlocked($ip),
+                'extended_tracking' => $this->checkExtendedTracking($ip)
+            ];
+        } catch (Exception $e) {
+            error_log("Error getting rate limit stats: " . $e->getMessage());
+            return [];
+        }
+    }
+    
+    public function resetRateLimit($ip) {
+        try {
+            $rateLimitKey = $this->trackingPrefix . 'ratelimit:' . hash('md5', $ip);
+            $historyKey = $this->blockPrefix . 'history:' . hash('md5', $ip);
+            
+            $result = [
+                'rate_limit_cleared' => $this->redis->del($rateLimitKey) > 0,
+                'history_cleared' => $this->redis->del($historyKey) > 0
+            ];
+            
+            error_log("RATE LIMIT RESET: $ip | Manual");
+            return $result;
+        } catch (Exception $e) {
+            error_log("Error resetting rate limit: " . $e->getMessage());
+            return ['error' => $e->getMessage()];
+        }
+    }
+    
+    public function getTopRateLimitViolators($limit = 10) {
+        try {
+            $rateLimitKeys = $this->redis->keys($this->trackingPrefix . 'ratelimit:*');
+            $violators = [];
+            
+            foreach ($rateLimitKeys as $key) {
+                $data = $this->redis->get($key);
+                if ($data && isset($data['violations']) && $data['violations'] > 0) {
+                    $violators[] = [
+                        'key' => $key,
+                        'violations' => $data['violations'],
+                        'requests_1min' => $data['requests_1min'] ?? 0,
+                        'requests_5min' => $data['requests_5min'] ?? 0,
+                        'requests_1hour' => $data['requests_1hour'] ?? 0,
+                        'last_request' => date('Y-m-d H:i:s', $data['last_request'] ?? 0)
+                    ];
+                }
+            }
+            
+            usort($violators, function($a, $b) {
+                return $b['violations'] - $a['violations'];
+            });
+            
+            return array_slice($violators, 0, $limit);
+            
+        } catch (Exception $e) {
+            error_log("Error getting top violators: " . $e->getMessage());
+            return [];
+        }
+    }
+    
     public function getStats() {
         $stats = [
             'blocked_ips' => 0,
             'blocked_cookies' => 0,
             'tracking_records' => 0,
+            'rate_limit_tracking' => 0,
+            'rate_limit_violations' => 0,
+            'extended_tracking_active' => 0,
+            'block_history_records' => 0,
             'total_keys' => 0,
             'memory_usage' => 0
         ];
@@ -1855,6 +2032,24 @@ class RedisBotProtectionNoSessions {
             
             $trackingRecords = $this->redis->keys($this->trackingPrefix . 'ip:*');
             $stats['tracking_records'] = count($trackingRecords);
+            
+            $rateLimitKeys = $this->redis->keys($this->trackingPrefix . 'ratelimit:*');
+            $stats['rate_limit_tracking'] = count($rateLimitKeys);
+            
+            $violations = 0;
+            foreach ($rateLimitKeys as $key) {
+                $data = $this->redis->get($key);
+                if ($data && isset($data['violations'])) {
+                    $violations += $data['violations'];
+                }
+            }
+            $stats['rate_limit_violations'] = $violations;
+            
+            $extendedTracking = $this->redis->keys($this->trackingPrefix . 'extended:*');
+            $stats['extended_tracking_active'] = count($extendedTracking);
+            
+            $historyKeys = $this->redis->keys($this->blockPrefix . 'history:*');
+            $stats['block_history_records'] = count($historyKeys);
             
             $allKeys = $this->redis->keys('*');
             $stats['total_keys'] = count($allKeys);
@@ -1872,7 +2067,6 @@ class RedisBotProtectionNoSessions {
         return $stats;
     }
     
-    // БЕЗ ЛОГИРОВАНИЯ очистки
     public function cleanup($force = false) {
         try {
             $cleaned = 0;
@@ -1883,9 +2077,11 @@ class RedisBotProtectionNoSessions {
                 ['pattern' => $this->rdnsPrefix . 'cache:*', 'priority' => 1],
                 ['pattern' => $this->userHashPrefix . 'tracking:*', 'priority' => 1],
                 ['pattern' => $this->trackingPrefix . 'extended:*', 'priority' => 1],
+                ['pattern' => $this->trackingPrefix . 'ratelimit:*', 'priority' => 1],
                 ['pattern' => $this->blockPrefix . 'ip:*', 'priority' => 2],
                 ['pattern' => $this->cookiePrefix . 'blocked:*', 'priority' => 2],
                 ['pattern' => $this->userHashPrefix . 'blocked:*', 'priority' => 2],
+                ['pattern' => $this->blockPrefix . 'history:*', 'priority' => 2],
                 ['pattern' => 'logs:*', 'priority' => 3]
             ];
             
@@ -1935,7 +2131,6 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    // БЕЗ ЛОГИРОВАНИЯ глубокой очистки
     public function deepCleanup() {
         try {
             $totalCleaned = 0;
@@ -1985,7 +2180,6 @@ class RedisBotProtectionNoSessions {
                 'extended_tracking_cleared' => $this->redis->del($extendedKey) > 0
             ];
             
-            // ЛОГИРУЕМ РАЗБЛОКИРОВКУ
             error_log("UNBLOCKED [IP]: $ip | Manual");
             return $result;
         } catch (Exception $e) {
@@ -2021,6 +2215,10 @@ class RedisBotProtectionNoSessions {
         return $this->slowBotSettings;
     }
     
+    public function getRateLimitSettings() {
+        return $this->rateLimitSettings;
+    }
+    
     public function updateTTLSettings($newSettings) {
         $this->ttlSettings = array_merge($this->ttlSettings, $newSettings);
         error_log("TTL settings updated: " . json_encode($newSettings));
@@ -2029,6 +2227,11 @@ class RedisBotProtectionNoSessions {
     public function updateSlowBotSettings($newSettings) {
         $this->slowBotSettings = array_merge($this->slowBotSettings, $newSettings);
         error_log("Slow bot settings updated: " . json_encode($newSettings));
+    }
+    
+    public function updateRateLimitSettings($newSettings) {
+        $this->rateLimitSettings = array_merge($this->rateLimitSettings, $newSettings);
+        error_log("Rate limit settings updated: " . json_encode($newSettings));
     }
     
     public function __destruct() {
@@ -2042,7 +2245,10 @@ class RedisBotProtectionNoSessions {
     }
 }
 
-// ИСПОЛЬЗОВАНИЕ ФИНАЛЬНОЙ ВЕРСИИ:
+// ========================================
+// ИСПОЛЬЗОВАНИЕ ФИНАЛЬНОЙ ВЕРСИИ
+// ========================================
+
 try {
     $protection = new RedisBotProtectionNoSessions(
         '127.0.0.1',    // Redis host
@@ -2053,13 +2259,217 @@ try {
     
     $protection->protect();
     
+    // ====== ПРИМЕРЫ АДМИНИСТРИРОВАНИЯ ======
+    
+    // Получить общую статистику
+    // $stats = $protection->getStats();
+    // echo "Заблокировано IP: " . $stats['blocked_ips'] . "\n";
+    // echo "Нарушений rate limit: " . $stats['rate_limit_violations'] . "\n";
+    // echo "Активных отслеживаний: " . $stats['tracking_records'] . "\n";
+    
+    // Получить топ нарушителей rate limit
+    // $violators = $protection->getTopRateLimitViolators(10);
+    // foreach ($violators as $v) {
+    //     echo "Нарушений: " . $v['violations'] . " | ";
+    //     echo "Запросов/мин: " . $v['requests_1min'] . " | ";
+    //     echo "Последний: " . $v['last_request'] . "\n";
+    // }
+    
+    // Проверить статус конкретного IP
+    // $ip = '1.2.3.4';
+    // $rateLimitStats = $protection->getRateLimitStats($ip);
+    // print_r($rateLimitStats);
+    // 
+    // $blockInfo = $protection->getBlockedIPInfo($ip);
+    // print_r($blockInfo);
+    
+    // Разблокировать IP и сбросить все данные
+    // $protection->unblockIP('1.2.3.4');
+    // $protection->resetRateLimit('1.2.3.4');
+    // $protection->unblockUserHash(); // текущий пользователь
+    
+    // Настроить лимиты под ваш сайт
+    // $protection->updateRateLimitSettings([
+    //     'max_requests_per_minute' => 120,  // Более мягкий лимит для крупных сайтов
+    //     'max_requests_per_5min' => 400,
+    //     'burst_threshold' => 30,            // Увеличить порог всплесков
+    //     'ua_change_threshold' => 3          // Строже к смене UA
+    // ]);
+    
+    // Настроить детекцию медленных ботов
+    // $protection->updateSlowBotSettings([
+    //     'min_requests_for_analysis' => 5,
+    //     'long_session_hours' => 3
+    // ]);
+    
+    // Диагностика текущего пользователя
+    // $diagnosis = $protection->diagnoseUserHash();
+    // echo "Hash: " . $diagnosis['stable_hash'] . "\n";
+    // echo "IP: " . $diagnosis['ip'] . "\n";
+    // echo "Устройство: " . $diagnosis['device_type'] . "\n";
+    // echo "Браузер: " . $diagnosis['browser']['name'] . " " . $diagnosis['browser']['version'] . "\n";
+    
+    // Получить информацию о хеше пользователя
+    // $hashInfo = $protection->getUserHashInfo();
+    // print_r($hashInfo);
+    
+    // Ручная очистка Redis
+    // $cleaned = $protection->cleanup(true);  // Полная очистка
+    // echo "Очищено записей: $cleaned\n";
+    // 
+    // $deepCleaned = $protection->deepCleanup();  // Глубокая очистка
+    // echo "Глубоко очищено: $deepCleaned\n";
+    
     // ПРИМЕРЫ ТЕСТИРОВАНИЯ rDNS (раскомментируйте для тестов):
+    // echo "\n=== ТЕСТИРОВАНИЕ ПОИСКОВИКОВ ===\n\n";
     // $protection->testRDNS('66.249.66.1', 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
+    // echo "\n" . str_repeat("=", 50) . "\n\n";
     // $protection->testRDNS('40.77.167.181', 'Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)');
+    // echo "\n" . str_repeat("=", 50) . "\n\n";
     // $protection->testRDNS('1.2.3.4', 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
     
 } catch (Exception $e) {
     error_log("CRITICAL: Bot protection failed - " . $e->getMessage());
     // В случае ошибки Redis - продолжаем работу без защиты
 }
+
+/*
+====================================================================
+ЧТО ДЕЛАЕТ НОВАЯ ЗАЩИТА
+====================================================================
+
+1. RATE LIMITING - ограничивает количество запросов:
+   ✓ 60 запросов в минуту (настраивается)
+   ✓ 200 запросов за 5 минут
+   ✓ 1000 запросов в час
+   ✓ При превышении - прогрессивная блокировка
+
+2. ДЕТЕКЦИЯ СМЕНЫ USER-AGENT:
+   ✓ Блокирует IP, которые часто меняют UA
+   ✓ Порог: 5 различных UA за 5 минут
+   ✓ Помогает против ротации User-Agent
+
+3. BURST DETECTION (всплески активности):
+   ✓ Обнаруживает 20+ запросов за 10 секунд
+   ✓ Немедленная блокировка при детекции
+   ✓ Защита от flood-атак
+
+4. ПРОГРЕССИВНАЯ БЛОКИРОВКА:
+   ✓ 1-е нарушение: 30 минут блокировки
+   ✓ 2-е нарушение: 1 час
+   ✓ 3+ нарушения: 2+ часа (растет с каждым разом)
+   ✓ История блокировок хранится 7 дней
+
+5. ДЕТЕКЦИЯ МЕДЛЕННЫХ БОТОВ:
+   ✓ Обнаруживает ботов с низкой активностью
+   ✓ Анализирует паттерны долгосрочного поведения
+   ✓ Регулярность запросов, разнообразие страниц
+
+6. РАСШИРЕННОЕ ОТСЛЕЖИВАНИЕ:
+   ✓ Автоматически включается для подозрительных
+   ✓ Более строгий анализ поведения
+   ✓ 24 часа детального мониторинга
+
+7. ВЕРИФИКАЦИЯ ПОИСКОВИКОВ:
+   ✓ Проверка Google, Bing, Yandex и других
+   ✓ rDNS верификация (обратный + прямой DNS)
+   ✓ Кеширование результатов проверки
+
+====================================================================
+РЕКОМЕНДАЦИИ ПО НАСТРОЙКЕ
+====================================================================
+
+ДЛЯ НЕБОЛЬШИХ САЙТОВ (< 1000 посетителей/день):
+   - Оставьте настройки по умолчанию
+   - max_requests_per_minute: 60
+   - burst_threshold: 20
+
+ДЛЯ СРЕДНИХ САЙТОВ (1000-10000 посетителей/день):
+   $protection->updateRateLimitSettings([
+       'max_requests_per_minute' => 90,
+       'max_requests_per_5min' => 300,
+       'burst_threshold' => 30
+   ]);
+
+ДЛЯ КРУПНЫХ САЙТОВ (> 10000 посетителей/день):
+   $protection->updateRateLimitSettings([
+       'max_requests_per_minute' => 120,
+       'max_requests_per_5min' => 500,
+       'max_requests_per_hour' => 2000,
+       'burst_threshold' => 40
+   ]);
+   
+   Регулярно проверяйте:
+   - getTopRateLimitViolators() для мониторинга
+   - getStats() для общей статистики
+
+ДЛЯ API И ВЫСОКОНАГРУЖЕННЫХ ПРИЛОЖЕНИЙ:
+   $protection->updateRateLimitSettings([
+       'max_requests_per_minute' => 180,
+       'max_requests_per_5min' => 800,
+       'burst_threshold' => 50,
+       'ua_change_threshold' => 10  // API могут менять UA
+   ]);
+
+СТРОГИЙ РЕЖИМ (максимальная защита):
+   $protection->updateRateLimitSettings([
+       'max_requests_per_minute' => 30,
+       'max_requests_per_5min' => 100,
+       'burst_threshold' => 10,
+       'ua_change_threshold' => 3
+   ]);
+
+====================================================================
+МОНИТОРИНГ И ОТЛАДКА
+====================================================================
+
+Регулярно проверяйте логи:
+   tail -f /var/log/php_errors.log | grep "RATE LIMIT"
+   tail -f /var/log/php_errors.log | grep "Bot blocked"
+
+Проверка статистики (добавьте в cron каждый час):
+   $stats = $protection->getStats();
+   if ($stats['rate_limit_violations'] > 100) {
+       // Отправить уведомление администратору
+   }
+
+Еженедельная очистка (добавьте в cron):
+   $protection->deepCleanup();
+
+====================================================================
+TROUBLESHOOTING
+====================================================================
+
+Если блокируются легитимные пользователи:
+1. Проверьте логи: grep "RATE LIMIT BLOCK" /var/log/php_errors.log
+2. Увеличьте лимиты для вашего типа сайта
+3. Разблокируйте конкретный IP: $protection->unblockIP('x.x.x.x')
+4. Сбросьте счетчики: $protection->resetRateLimit('x.x.x.x')
+
+Если пропускаются боты:
+1. Уменьшите пороги в настройках
+2. Проверьте логи на паттерны: $protection->getBlockedIPInfo('x.x.x.x')
+3. Добавьте в список подозрительных UA в методе isSuspiciousUserAgent()
+
+Если Redis падает или недоступен:
+- Скрипт продолжит работу БЕЗ защиты
+- Проверьте подключение к Redis
+- Убедитесь что Redis запущен: redis-cli ping
+
+====================================================================
+БЕЗОПАСНОСТЬ
+====================================================================
+
+ВАЖНО: Измените секретный ключ!
+   private $secretKey = 'your_secret_key_here_change_this12345!@#;
+   
+Используйте сложный уникальный ключ для вашего сайта.
+
+ВАЖНО: Настройте Redis правильно!
+   - Используйте пароль для Redis
+   - Ограничьте доступ к Redis по IP
+   - Используйте отдельную БД для bot protection
+
+====================================================================
+*/
 ?>
