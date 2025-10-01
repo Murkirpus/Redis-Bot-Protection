@@ -9,7 +9,7 @@ define('ADMIN_LOGIN', 'murkir');
 define('ADMIN_PASSWORD', 'murkir.pp.ua');
 
 // Настройки rDNS
-define('ENABLE_RDNS', true);
+define('ENABLE_RDNS', false);
 define('RDNS_TIMEOUT', 1);
 define('RDNS_CACHE_TTL', 86400);
 
