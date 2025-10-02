@@ -1181,6 +1181,7 @@ if ($isLoggedIn && $redis) {
                    Session expires: <?php echo date('H:i:s', $_SESSION['admin_login_time'] + 3600); ?></p>
             </div>
             <div>
+			<a href="redis_test.php" class="btn btn-secondary">📊 Test Page</a>
                 <a href="?logout=1" class="btn btn-danger">🚪 Выйти</a>
             </div>
         </div>
