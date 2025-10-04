@@ -26,7 +26,7 @@ https://github.com/Murkirpus/ShieldPHP/
 Perfect for high-traffic websites needing robust bot protection without breaking legitimate users or search engines.
 
 Страница для теста в реальном времени нашей системы безопасности!
-https://kinoprostor.xyz/bot_protection/redis_test.php?
+https://kinoprostor.xyz/bot_protection/redis_test.php
 
  # Redis MurKir Security v2.2 - Полное описание системы
 
