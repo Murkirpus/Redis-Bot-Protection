@@ -1,4 +1,7 @@
-# Redis MurKir Security v2.1
+# Redis MurKir Security v2.2
+
+Страница для теста нашей системы безопасности!
+https://kinoprostor.xyz/bot_protection/redis_test.php?
 
 Обновлено 1.10.2025
 🎯 Что добавлено:
