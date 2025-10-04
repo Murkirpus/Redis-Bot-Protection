@@ -24,10 +24,11 @@ https://github.com/Murkirpus/ShieldPHP/
 🔧 **Easy integration** - Single file inclusion, minimal configuration required
 
 Perfect for high-traffic websites needing robust bot protection without breaking legitimate users or search engines.
- 
- # Redis MurKir Security v2.0 - Полное описание системы
 
-Создана новая версия! 13.08.2025
+Страница для теста в реальном времени нашей системы безопасности!
+https://kinoprostor.xyz/bot_protection/redis_test.php?
+
+ # Redis MurKir Security v2.2 - Полное описание системы
 
 ## 🛡️ Что это такое?
 
