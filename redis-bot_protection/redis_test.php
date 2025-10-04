@@ -1,6 +1,6 @@
 <?php
 /**
- * Redis Bot Protection - Test Suite
+ * Redis MurKir Security - Test Suite
  * Комплексное тестирование всех функций системы
  */
 
@@ -19,7 +19,7 @@ header('Content-Type: text/html; charset=utf-8');
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Redis Bot Protection - Test Suite</title>
+    <title>Redis MurKir Security - Test Suite</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -262,7 +262,7 @@ header('Content-Type: text/html; charset=utf-8');
 <body>
     <div class="container">
         <div class="header">
-            <h1>🛡️ Redis Bot Protection - Test Suite</h1>
+            <h1>🛡️ Redis MurKir Security - Test Suite</h1>
             <p>Комплексное тестирование системы защиты от ботов</p>
         </div>
 
