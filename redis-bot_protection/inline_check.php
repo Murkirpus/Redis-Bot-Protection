@@ -52,6 +52,24 @@ class RedisBotProtectionNoSessions {
         'aggressive_block_duration' => 7200,     // Агрессивная блокировка (2 часа)
     ];
     
+    // Настройки защиты от переполнения Redis
+    private $globalProtectionSettings = [
+        'cleanup_threshold' => 5000,             // Начать очистку при достижении
+        'cleanup_batch_size' => 100,             // Удалять за один раз
+        'cleanup_probability' => 50,             // Проверять каждый N-й запрос (1 из 50 = 2%)
+        'max_cleanup_time_ms' => 50,            // Максимум 50ms на очистку
+    ];
+    
+    // Настройки rate limiting для rDNS проверок
+    private $rdnsLimitSettings = [
+        'max_rdns_per_minute' => 60,            // Максимум rDNS проверок в минуту
+        'rdns_cache_ttl' => 1800,               // Кеш результатов 30 минут
+        'rdns_negative_cache_ttl' => 300,       // Кеш негативных результатов 5 минут
+        'rdns_on_limit_action' => 'skip',       // 'skip' или 'block' при превышении
+    ];
+    
+    private $globalPrefix = 'global:';
+    
     // Список поисковиков с точными паттернами
     private $allowedSearchEngines = [
         'googlebot' => [
@@ -117,7 +135,7 @@ class RedisBotProtectionNoSessions {
     
     public function __construct($redisHost = '127.0.0.1', $redisPort = 6379, $redisPassword = null, $redisDatabase = 0) {
         $this->initRedis($redisHost, $redisPort, $redisPassword, $redisDatabase);
-        $this->autoCleanup();
+        
     }
     
     private function initRedis($host, $port, $password, $database) {
@@ -148,55 +166,6 @@ class RedisBotProtectionNoSessions {
         } catch (Exception $e) {
             error_log("CRITICAL: Redis connection failed - " . $e->getMessage());
             throw $e;
-        }
-    }
-    
-    private function autoCleanup() {
-        try {
-            $lastCleanupKey = 'last_cleanup';
-            $lastCleanup = $this->redis->get($lastCleanupKey);
-            
-            if (!$lastCleanup || (time() - $lastCleanup) > $this->ttlSettings['cleanup_interval']) {
-                $this->aggressiveCleanup();
-                $this->redis->setex($lastCleanupKey, $this->ttlSettings['cleanup_interval'], time());
-            }
-        } catch (Exception $e) {
-            error_log("Cleanup error: " . $e->getMessage());
-        }
-    }
-    
-    private function aggressiveCleanup() {
-        try {
-            $cleaned = 0;
-            $startTime = microtime(true);
-            $maxExecutionTime = 0.05;
-            
-            $patterns = [
-                $this->trackingPrefix . 'ip:*',
-                $this->userHashPrefix . 'tracking:*',
-                $this->rdnsPrefix . 'cache:*',
-                $this->trackingPrefix . 'extended:*'
-            ];
-            
-            foreach ($patterns as $pattern) {
-                if ((microtime(true) - $startTime) > $maxExecutionTime) break;
-                
-                $keys = array_slice($this->redis->keys($pattern), 0, 25);
-                foreach ($keys as $key) {
-                    if ((microtime(true) - $startTime) > $maxExecutionTime) break;
-                    
-                    $ttl = $this->redis->ttl($key);
-                    if ($ttl === -1 || ($ttl > 0 && $ttl < 450)) {
-                        $this->redis->del($key);
-                        $cleaned++;
-                    }
-                }
-                
-                if ($cleaned > 50) break;
-            }
-            
-        } catch (Exception $e) {
-            error_log("Cleanup error: " . $e->getMessage());
         }
     }
     
@@ -698,6 +667,156 @@ class RedisBotProtectionNoSessions {
     }
     
     /**
+     * НОВЫЙ МЕТОД: Проверка rate limit для rDNS
+     */
+    private function checkRDNSRateLimit() {
+        try {
+            $currentMinute = floor(time() / 60); // Текущая минута
+            $rateLimitKey = $this->rdnsPrefix . 'ratelimit:' . $currentMinute;
+            
+            $currentCount = $this->redis->get($rateLimitKey);
+            
+            if ($currentCount === false) {
+                // Первый запрос в эту минуту
+                $this->redis->setex($rateLimitKey, 120, 1); // TTL 2 минуты для безопасности
+                return ['allowed' => true, 'count' => 1, 'limit' => $this->rdnsLimitSettings['max_rdns_per_minute']];
+            }
+            
+            $currentCount = (int)$currentCount;
+            
+            if ($currentCount >= $this->rdnsLimitSettings['max_rdns_per_minute']) {
+                // Лимит превышен
+                error_log("rDNS rate limit exceeded: $currentCount/{$this->rdnsLimitSettings['max_rdns_per_minute']} in current minute");
+                return [
+                    'allowed' => false,
+                    'count' => $currentCount,
+                    'limit' => $this->rdnsLimitSettings['max_rdns_per_minute'],
+                    'reason' => 'rDNS rate limit exceeded'
+                ];
+            }
+            
+            // Инкрементируем счетчик
+            $this->redis->incr($rateLimitKey);
+            
+            return [
+                'allowed' => true,
+                'count' => $currentCount + 1,
+                'limit' => $this->rdnsLimitSettings['max_rdns_per_minute']
+            ];
+            
+        } catch (Exception $e) {
+            error_log("Error in checkRDNSRateLimit: " . $e->getMessage());
+            // При ошибке - разрешаем проверку
+            return ['allowed' => true, 'count' => 0, 'limit' => $this->rdnsLimitSettings['max_rdns_per_minute']];
+        }
+    }
+    
+    /**
+     * Получить статистику rDNS rate limit
+     */
+    public function getRDNSRateLimitStats() {
+        try {
+            $currentMinute = floor(time() / 60);
+            $prevMinute = $currentMinute - 1;
+            
+            $currentKey = $this->rdnsPrefix . 'ratelimit:' . $currentMinute;
+            $prevKey = $this->rdnsPrefix . 'ratelimit:' . $prevMinute;
+            
+            $currentCount = $this->redis->get($currentKey) ?: 0;
+            $prevCount = $this->redis->get($prevKey) ?: 0;
+            
+            // Подсчет кеша
+            $cacheKeys = $this->redis->keys($this->rdnsPrefix . 'cache:*');
+            $cacheCount = count($cacheKeys);
+            
+            $verifiedCount = 0;
+            $notVerifiedCount = 0;
+            
+            foreach (array_slice($cacheKeys, 0, 100) as $key) { // Проверяем первые 100
+                $data = $this->redis->get($key);
+                if ($data && isset($data['verified'])) {
+                    if ($data['verified']) {
+                        $verifiedCount++;
+                    } else {
+                        $notVerifiedCount++;
+                    }
+                }
+            }
+            
+            return [
+                'current_minute_requests' => (int)$currentCount,
+                'previous_minute_requests' => (int)$prevCount,
+                'limit_per_minute' => $this->rdnsLimitSettings['max_rdns_per_minute'],
+                'cache_entries' => $cacheCount,
+                'verified_in_cache' => $verifiedCount,
+                'not_verified_in_cache' => $notVerifiedCount,
+                'limit_reached' => $currentCount >= $this->rdnsLimitSettings['max_rdns_per_minute'],
+                'settings' => $this->rdnsLimitSettings
+            ];
+            
+        } catch (Exception $e) {
+            error_log("Error getting rDNS stats: " . $e->getMessage());
+            return [];
+        }
+    }
+    
+    /**
+     * Очистить кеш rDNS
+     */
+    public function clearRDNSCache() {
+        try {
+            $cacheKeys = $this->redis->keys($this->rdnsPrefix . 'cache:*');
+            $deleted = 0;
+            
+            foreach ($cacheKeys as $key) {
+                $this->redis->del($key);
+                $deleted++;
+            }
+            
+            error_log("Cleared rDNS cache: $deleted entries");
+            return $deleted;
+            
+        } catch (Exception $e) {
+            error_log("Error clearing rDNS cache: " . $e->getMessage());
+            return 0;
+        }
+    }
+    
+    /**
+     * Сбросить счетчики rDNS rate limit
+     */
+    public function resetRDNSRateLimit() {
+        try {
+            $currentMinute = floor(time() / 60);
+            $rateLimitKey = $this->rdnsPrefix . 'ratelimit:' . $currentMinute;
+            
+            $result = $this->redis->del($rateLimitKey);
+            error_log("rDNS rate limit reset for current minute");
+            
+            return $result > 0;
+            
+        } catch (Exception $e) {
+            error_log("Error resetting rDNS rate limit: " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * Обновить настройки rDNS rate limiting
+     */
+    public function updateRDNSSettings($newSettings) {
+        $this->rdnsLimitSettings = array_merge($this->rdnsLimitSettings, $newSettings);
+        error_log("rDNS settings updated: " . json_encode($newSettings));
+    }
+    
+    /**
+     * Получить настройки rDNS
+     */
+    public function getRDNSSettings() {
+        return $this->rdnsLimitSettings;
+    }
+    
+    /**
      * НОВЫЙ МЕТОД: Проверка rate limit
      */
     private function checkRateLimit($ip) {
@@ -906,6 +1025,12 @@ class RedisBotProtectionNoSessions {
             return;
         }
         
+        // ВЕРОЯТНОСТНАЯ ПРОВЕРКА переполнения Redis (не каждый запрос!)
+        // При 1000 req/min это всего 20 проверок/мин (2%)
+        if (rand(1, $this->globalProtectionSettings['cleanup_probability']) === 1) {
+            $this->manageTrackedIPs();
+        }
+        
         $ip = $this->getRealIP();
         $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
         
@@ -1035,6 +1160,170 @@ class RedisBotProtectionNoSessions {
         }
     }
     
+    /**
+     * ОПТИМИЗИРОВАННАЯ защита от переполнения Redis (БЕЗ торможения)
+     */
+    private function manageTrackedIPs() {
+        try {
+            // ШАГ 1: Быстрая проверка - нужна ли очистка вообще
+            // Используем кешированный счетчик (обновляется редко)
+            $countCacheKey = $this->globalPrefix . 'tracked_count_cache';
+            $cachedCount = $this->redis->get($countCacheKey);
+            
+            // Если кеш пустой или устарел (обновляем раз в минуту)
+            if ($cachedCount === false) {
+                $approxCount = $this->getApproximateTrackedCount();
+                $this->redis->setex($countCacheKey, 60, $approxCount);
+                $cachedCount = $approxCount;
+            }
+            
+            // Если далеко от лимита - выходим сразу (быстро!)
+            if ($cachedCount < $this->globalProtectionSettings['cleanup_threshold']) {
+                return 0;
+            }
+            
+            // ШАГ 2: Очистка нужна - используем SCAN (не блокирует Redis)
+            $cleaned = 0;
+            $maxCleanupTime = $this->globalProtectionSettings['max_cleanup_time_ms'] / 1000; // в секунды
+            $startTime = microtime(true);
+            $batchSize = $this->globalProtectionSettings['cleanup_batch_size'];
+            
+            // SCAN итератор (безопасный для production)
+            $iterator = null;
+            $pattern = $this->trackingPrefix . 'ip:*';
+            
+            do {
+                // SCAN возвращает порциями, не блокируя Redis
+                $keys = $this->redis->scan($iterator, $pattern, 50); // 50 ключей за раз
+                
+                if ($keys === false) break;
+                
+                foreach ($keys as $key) {
+                    // Лимит времени - прерываем если долго
+                    if ((microtime(true) - $startTime) > $maxCleanupTime) {
+                        break 2;
+                    }
+                    
+                    // Лимит количества
+                    if ($cleaned >= $batchSize) {
+                        break 2;
+                    }
+                    
+                    // БЫСТРАЯ проверка: смотрим только TTL (без GET данных)
+                    $ttl = $this->redis->ttl($key);
+                    
+                    // Стратегия 1: Удаляем ключи с TTL < 10 минут (скоро истекут)
+                    if ($ttl > 0 && $ttl < 600) {
+                        $this->redis->del($key);
+                        $this->decrementTrackedCounter();
+                        $cleaned++;
+                        continue;
+                    }
+                    
+                    // Стратегия 2: Для старых ключей проверяем активность
+                    if ($ttl === -1 || $ttl > 3600) {
+                        $data = $this->redis->get($key);
+                        
+                        if ($data && isset($data['first_seen'], $data['requests'])) {
+                            $age = time() - $data['first_seen'];
+                            
+                            // Удаляем старые (>2 часа) с низкой активностью (<10 запросов)
+                            if ($age > 7200 && $data['requests'] < 10) {
+                                $this->redis->del($key);
+                                $this->decrementTrackedCounter();
+                                $cleaned++;
+                            }
+                            // Удаляем очень старые (>6 часов) независимо от активности
+                            elseif ($age > 21600) {
+                                $this->redis->del($key);
+                                $this->decrementTrackedCounter();
+                                $cleaned++;
+                            }
+                        }
+                    }
+                }
+                
+            } while ($iterator !== 0 && $iterator !== null);
+            
+            // ШАГ 3: Обновляем счетчик после очистки
+            if ($cleaned > 0) {
+                $newCount = max(0, $cachedCount - $cleaned);
+                $this->redis->setex($countCacheKey, 60, $newCount);
+                error_log("Redis cleanup: removed $cleaned tracked IPs (approx " . 
+                         round((microtime(true) - $startTime) * 1000, 2) . "ms)");
+            }
+            
+            return $cleaned;
+            
+        } catch (Exception $e) {
+            error_log("Error in manageTrackedIPs: " . $e->getMessage());
+            return 0;
+        }
+    }
+    
+    /**
+     * Быстрая примерная оценка количества tracked IP
+     */
+    private function getApproximateTrackedCount() {
+        try {
+            // Вариант 1: Используем отдельный счетчик (инкремент/декремент)
+            $counterKey = $this->globalPrefix . 'tracked_counter';
+            $count = $this->redis->get($counterKey);
+            
+            if ($count !== false) {
+                return (int)$count;
+            }
+            
+            // Вариант 2: Точный подсчет (только если счетчик сброшен)
+            $iterator = null;
+            $counted = 0;
+            $maxToCount = 1000; // Считаем максимум 1000 для оценки
+            
+            while ($counted < $maxToCount) {
+                $keys = $this->redis->scan($iterator, $this->trackingPrefix . 'ip:*', 100);
+                if ($keys === false) break;
+                
+                $counted += count($keys);
+                
+                if ($iterator === 0 || $iterator === null) break;
+            }
+            
+            // Сохраняем в счетчик
+            $this->redis->setex($counterKey, 300, $counted); // 5 минут кеш
+            
+            return $counted;
+            
+        } catch (Exception $e) {
+            error_log("Error getting tracked count: " . $e->getMessage());
+            return 0;
+        }
+    }
+    
+    /**
+     * Инкремент счетчика tracked IP (вызывать при добавлении)
+     */
+    private function incrementTrackedCounter() {
+        try {
+            $counterKey = $this->globalPrefix . 'tracked_counter';
+            $this->redis->incr($counterKey);
+            $this->redis->expire($counterKey, 3600); // 1 час
+        } catch (Exception $e) {
+            // Не критично, просто счетчик не обновится
+        }
+    }
+    
+    /**
+     * Декремент счетчика tracked IP (вызывать при удалении)
+     */
+    private function decrementTrackedCounter() {
+        try {
+            $counterKey = $this->globalPrefix . 'tracked_counter';
+            $this->redis->decr($counterKey);
+        } catch (Exception $e) {
+            // Не критично
+        }
+    }
+    
     private function shouldAnalyzeIP($ip) {
         try {
             $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
@@ -1156,6 +1445,30 @@ class RedisBotProtectionNoSessions {
     private function verifySearchEngineByRDNS($ip, $allowedPatterns) {
         try {
             $normalizedIP = $this->normalizeIP($ip);
+            
+            // Проверяем rate limit для rDNS
+            $rdnsLimitCheck = $this->checkRDNSRateLimit();
+            if (!$rdnsLimitCheck['allowed']) {
+                // При превышении лимита - используем кеш или пропускаем
+                $cacheKey = $this->rdnsPrefix . 'cache:' . hash('md5', $normalizedIP);
+                $cached = $this->redis->get($cacheKey);
+                
+                if ($cached !== false) {
+                    // Есть в кеше - используем
+                    return $cached['verified'];
+                }
+                
+                // Нет в кеше - действуем по настройке
+                if ($this->rdnsLimitSettings['rdns_on_limit_action'] === 'block') {
+                    error_log("rDNS rate limit exceeded, blocking IP: $normalizedIP");
+                    return false;
+                } else {
+                    // 'skip' - пропускаем проверку, считаем неверифицированным
+                    error_log("rDNS rate limit exceeded, skipping verification for: $normalizedIP");
+                    return false;
+                }
+            }
+            
             $cacheKey = $this->rdnsPrefix . 'cache:' . hash('md5', $normalizedIP);
             
             $cached = $this->redis->get($cacheKey);
@@ -1200,7 +1513,11 @@ class RedisBotProtectionNoSessions {
                 'error' => $error
             ];
             
-            $cacheTTL = $verified ? $this->ttlSettings['rdns_cache'] : 300;
+            // Разный TTL для положительных и отрицательных результатов
+            $cacheTTL = $verified ? 
+                $this->rdnsLimitSettings['rdns_cache_ttl'] : 
+                $this->rdnsLimitSettings['rdns_negative_cache_ttl'];
+            
             $this->redis->setex($cacheKey, $cacheTTL, $cacheData);
             
             return $verified;
@@ -1480,6 +1797,7 @@ class RedisBotProtectionNoSessions {
                 
                 $this->redis->setex($trackingKey, $this->ttlSettings['tracking_ip'], $existing);
             } else {
+                // НОВАЯ запись - инкрементируем счетчик
                 $data = [
                     'first_seen' => time(),
                     'requests' => 1,
@@ -1492,6 +1810,9 @@ class RedisBotProtectionNoSessions {
                 ];
                 
                 $this->redis->setex($trackingKey, $this->ttlSettings['tracking_ip'], $data);
+                
+                // Увеличиваем счетчик tracked IP
+                $this->incrementTrackedCounter();
             }
         } catch (Exception $e) {
             error_log("Error in initTracking: " . $e->getMessage());
@@ -1811,8 +2132,7 @@ class RedisBotProtectionNoSessions {
             return false;
         }
     }
-    
-    // АДМИНИСТРАТИВНЫЕ МЕТОДЫ
+	// АДМИНИСТРАТИВНЫЕ МЕТОДЫ
     
     public function getUserHashInfo($userHash = null) {
         try {
@@ -2219,6 +2539,10 @@ class RedisBotProtectionNoSessions {
         return $this->rateLimitSettings;
     }
     
+    public function getGlobalProtectionSettings() {
+        return $this->globalProtectionSettings;
+    }
+    
     public function updateTTLSettings($newSettings) {
         $this->ttlSettings = array_merge($this->ttlSettings, $newSettings);
         error_log("TTL settings updated: " . json_encode($newSettings));
@@ -2232,6 +2556,67 @@ class RedisBotProtectionNoSessions {
     public function updateRateLimitSettings($newSettings) {
         $this->rateLimitSettings = array_merge($this->rateLimitSettings, $newSettings);
         error_log("Rate limit settings updated: " . json_encode($newSettings));
+    }
+    
+    public function updateGlobalProtectionSettings($newSettings) {
+        $this->globalProtectionSettings = array_merge($this->globalProtectionSettings, $newSettings);
+        error_log("Global protection settings updated: " . json_encode($newSettings));
+    }
+    
+    public function getRedisMemoryInfo() {
+        try {
+            $info = $this->redis->info('memory');
+            $counterKey = $this->globalPrefix . 'tracked_counter';
+            $trackedCount = $this->redis->get($counterKey) ?: 0;
+            
+            return [
+                'used_memory' => $info['used_memory_human'] ?? 'unknown',
+                'used_memory_peak' => $info['used_memory_peak_human'] ?? 'unknown',
+                'tracked_ips_count' => $trackedCount,
+                'cleanup_threshold' => $this->globalProtectionSettings['cleanup_threshold'],
+                'cleanup_needed' => $trackedCount >= $this->globalProtectionSettings['cleanup_threshold']
+            ];
+        } catch (Exception $e) {
+            error_log("Error getting Redis memory info: " . $e->getMessage());
+            return [];
+        }
+    }
+    
+    public function forceCleanup($aggressive = false) {
+        try {
+            if ($aggressive) {
+                // Агрессивная очистка - удаляем все старые записи
+                $iterator = null;
+                $cleaned = 0;
+                
+                do {
+                    $keys = $this->redis->scan($iterator, $this->trackingPrefix . 'ip:*', 100);
+                    if ($keys === false) break;
+                    
+                    foreach ($keys as $key) {
+                        $data = $this->redis->get($key);
+                        if ($data && isset($data['first_seen'])) {
+                            $age = time() - $data['first_seen'];
+                            // Удаляем все старше 1 часа
+                            if ($age > 3600) {
+                                $this->redis->del($key);
+                                $this->decrementTrackedCounter();
+                                $cleaned++;
+                            }
+                        }
+                    }
+                } while ($iterator !== 0 && $iterator !== null);
+                
+                error_log("Aggressive cleanup completed: removed $cleaned tracked IPs");
+                return $cleaned;
+            } else {
+                // Обычная принудительная очистка
+                return $this->manageTrackedIPs();
+            }
+        } catch (Exception $e) {
+            error_log("Error in forceCleanup: " . $e->getMessage());
+            return 0;
+        }
     }
     
     public function __destruct() {
@@ -2296,6 +2681,51 @@ try {
     //     'ua_change_threshold' => 3          // Строже к смене UA
     // ]);
     
+    // Настроить защиту от переполнения Redis
+    // $protection->updateGlobalProtectionSettings([
+    //     'cleanup_threshold' => 10000,       // Для крупных сайтов
+    //     'cleanup_batch_size' => 200,        // Удалять больше за раз
+    //     'cleanup_probability' => 100,       // Проверять реже (1%)
+    //     'max_cleanup_time_ms' => 100        // Больше времени на очистку
+    // ]);
+    
+    // Настроить rDNS rate limiting
+    // $protection->updateRDNSSettings([
+    //     'max_rdns_per_minute' => 120,       // Больше проверок для крупных сайтов
+    //     'rdns_cache_ttl' => 3600,           // Кеш на 1 час
+    //     'rdns_negative_cache_ttl' => 600,   // Негативный кеш 10 минут
+    //     'rdns_on_limit_action' => 'skip'    // 'skip' или 'block'
+    // ]);
+    
+    // Проверить статистику rDNS
+    // $rdnsStats = $protection->getRDNSRateLimitStats();
+    // echo "rDNS запросов в текущую минуту: " . $rdnsStats['current_minute_requests'] . "/" . $rdnsStats['limit_per_minute'] . "\n";
+    // echo "Записей в кеше: " . $rdnsStats['cache_entries'] . "\n";
+    // echo "Верифицировано: " . $rdnsStats['verified_in_cache'] . "\n";
+    // if ($rdnsStats['limit_reached']) {
+    //     echo "ВНИМАНИЕ: Лимит rDNS достигнут!\n";
+    // }
+    
+    // Очистить кеш rDNS (если нужно пересоздать)
+    // $cleared = $protection->clearRDNSCache();
+    // echo "Очищено записей rDNS кеша: $cleared\n";
+    
+    // Сбросить счетчики rDNS rate limit
+    // $protection->resetRDNSRateLimit();
+    
+    // Проверить состояние памяти Redis
+    // $memInfo = $protection->getRedisMemoryInfo();
+    // echo "Используемая память: " . $memInfo['used_memory'] . "\n";
+    // echo "Отслеживаемых IP: " . $memInfo['tracked_ips_count'] . "\n";
+    // echo "Нужна очистка: " . ($memInfo['cleanup_needed'] ? 'ДА' : 'НЕТ') . "\n";
+    
+    // Принудительная очистка Redis
+    // $cleaned = $protection->forceCleanup();  // Обычная очистка
+    // echo "Очищено записей: $cleaned\n";
+    // 
+    // $cleaned = $protection->forceCleanup(true);  // Агрессивная (все >1 часа)
+    // echo "Агрессивно очищено: $cleaned\n";
+    
     // Настроить детекцию медленных ботов
     // $protection->updateSlowBotSettings([
     //     'min_requests_for_analysis' => 5,
@@ -2339,47 +2769,62 @@ try {
 ====================================================================
 
 1. RATE LIMITING - ограничивает количество запросов:
-   ✓ 60 запросов в минуту (настраивается)
-   ✓ 200 запросов за 5 минут
-   ✓ 1000 запросов в час
-   ✓ При превышении - прогрессивная блокировка
+   ✔ 60 запросов в минуту (настраивается)
+   ✔ 200 запросов за 5 минут
+   ✔ 1000 запросов в час
+   ✔ При превышении - прогрессивная блокировка
 
 2. ДЕТЕКЦИЯ СМЕНЫ USER-AGENT:
-   ✓ Блокирует IP, которые часто меняют UA
-   ✓ Порог: 5 различных UA за 5 минут
-   ✓ Помогает против ротации User-Agent
+   ✔ Блокирует IP, которые часто меняют UA
+   ✔ Порог: 5 различных UA за 5 минут
+   ✔ Помогает против ротации User-Agent
 
 3. BURST DETECTION (всплески активности):
-   ✓ Обнаруживает 20+ запросов за 10 секунд
-   ✓ Немедленная блокировка при детекции
-   ✓ Защита от flood-атак
+   ✔ Обнаруживает 20+ запросов за 10 секунд
+   ✔ Немедленная блокировка при детекции
+   ✔ Защита от flood-атак
 
 4. ПРОГРЕССИВНАЯ БЛОКИРОВКА:
-   ✓ 1-е нарушение: 30 минут блокировки
-   ✓ 2-е нарушение: 1 час
-   ✓ 3+ нарушения: 2+ часа (растет с каждым разом)
-   ✓ История блокировок хранится 7 дней
+   ✔ 1-е нарушение: 30 минут блокировки
+   ✔ 2-е нарушение: 1 час
+   ✔ 3+ нарушения: 2+ часа (растет с каждым разом)
+   ✔ История блокировок хранится 7 дней
 
 5. ДЕТЕКЦИЯ МЕДЛЕННЫХ БОТОВ:
-   ✓ Обнаруживает ботов с низкой активностью
-   ✓ Анализирует паттерны долгосрочного поведения
-   ✓ Регулярность запросов, разнообразие страниц
+   ✔ Обнаруживает ботов с низкой активностью
+   ✔ Анализирует паттерны долгосрочного поведения
+   ✔ Регулярность запросов, разнообразие страниц
 
 6. РАСШИРЕННОЕ ОТСЛЕЖИВАНИЕ:
-   ✓ Автоматически включается для подозрительных
-   ✓ Более строгий анализ поведения
-   ✓ 24 часа детального мониторинга
+   ✔ Автоматически включается для подозрительных
+   ✔ Более строгий анализ поведения
+   ✔ 24 часа детального мониторинга
 
 7. ВЕРИФИКАЦИЯ ПОИСКОВИКОВ:
-   ✓ Проверка Google, Bing, Yandex и других
-   ✓ rDNS верификация (обратный + прямой DNS)
-   ✓ Кеширование результатов проверки
+   ✔ Проверка Google, Bing, Yandex и других
+   ✔ rDNS верификация (обратный + прямой DNS)
+   ✔ Кеширование результатов проверки
+
+8. RATE LIMITING ДЛЯ rDNS:
+   ✔ Ограничение rDNS проверок (60/минуту по умолчанию)
+   ✔ Защита от перегрузки DNS серверов
+   ✔ Умное кеширование (30 мин позитив, 5 мин негатив)
+   ✔ Настраиваемое действие при превышении (skip/block)
+   ✔ Статистика использования rDNS
+
+9. ЗАЩИТА ОТ ПЕРЕПОЛНЕНИЯ REDIS:
+   ✔ Автоматическая очистка старых записей
+   ✔ Вероятностная проверка (2% запросов)
+   ✔ SCAN вместо KEYS (не блокирует Redis)
+   ✔ Максимум 50ms на одну очистку
+   ✔ Счетчик tracked IP для быстрой проверки
+   ✔ Умное удаление: старые + неактивные первыми
 
 ====================================================================
 РЕКОМЕНДАЦИИ ПО НАСТРОЙКЕ
 ====================================================================
 
-ДЛЯ НЕБОЛЬШИХ САЙТОВ (< 1000 посетителей/день):
+ДЛЯ НЕБОЛЬШИХ САЙТОВ (<1000 посетителей/день):
    - Оставьте настройки по умолчанию
    - max_requests_per_minute: 60
    - burst_threshold: 20
@@ -2419,6 +2864,78 @@ try {
        'ua_change_threshold' => 3
    ]);
 
+НАСТРОЙКИ rDNS RATE LIMITING:
+
+ДЛЯ НЕБОЛЬШИХ САЙТОВ (<1000 посетителей/день):
+   // Оставьте по умолчанию:
+   // max_rdns_per_minute: 60
+   // rdns_cache_ttl: 1800 (30 минут)
+
+ДЛЯ СРЕДНИХ САЙТОВ (1000-10000 посетителей/день):
+   $protection->updateRDNSSettings([
+       'max_rdns_per_minute' => 120,
+       'rdns_cache_ttl' => 3600,           // 1 час
+       'rdns_negative_cache_ttl' => 600    // 10 минут
+   ]);
+
+ДЛЯ КРУПНЫХ САЙТОВ (>10000 посетителей/день):
+   $protection->updateRDNSSettings([
+       'max_rdns_per_minute' => 200,
+       'rdns_cache_ttl' => 7200,           // 2 часа
+       'rdns_negative_cache_ttl' => 900,   // 15 минут
+       'rdns_on_limit_action' => 'skip'    // Не блокировать при превышении
+   ]);
+
+ДЛЯ ОЧЕНЬ КРУПНЫХ (>100000 посетителей/день):
+   $protection->updateRDNSSettings([
+       'max_rdns_per_minute' => 300,       // Или выше
+       'rdns_cache_ttl' => 14400,          // 4 часа
+       'rdns_negative_cache_ttl' => 1800,  // 30 минут
+       'rdns_on_limit_action' => 'skip'
+   ]);
+   
+   // ВАЖНО: Рассмотрите отдельный DNS кеш сервер (dnsmasq/unbound)
+
+ЕСЛИ МНОГО ПОИСКОВЫХ БОТОВ:
+   $protection->updateRDNSSettings([
+       'max_rdns_per_minute' => 500,
+       'rdns_cache_ttl' => 86400,          // 24 часа (боты стабильны)
+       'rdns_negative_cache_ttl' => 3600
+   ]);
+
+НАСТРОЙКИ ЗАЩИТЫ ОТ ПЕРЕПОЛНЕНИЯ:
+
+ДЛЯ НЕБОЛЬШИХ САЙТОВ (<1000 посетителей/день):
+   // Оставьте по умолчанию:
+   // cleanup_threshold: 5000
+   // cleanup_probability: 50 (2% запросов)
+
+ДЛЯ СРЕДНИХ САЙТОВ (1000-10000 посетителей/день):
+   $protection->updateGlobalProtectionSettings([
+       'cleanup_threshold' => 10000,
+       'cleanup_batch_size' => 150,
+       'cleanup_probability' => 75  // 1.3% запросов
+   ]);
+
+ДЛЯ КРУПНЫХ САЙТОВ (>10000 посетителей/день):
+   $protection->updateGlobalProtectionSettings([
+       'cleanup_threshold' => 20000,
+       'cleanup_batch_size' => 200,
+       'cleanup_probability' => 100, // 1% запросов
+       'max_cleanup_time_ms' => 100  // Больше времени на очистку
+   ]);
+
+ДЛЯ ОЧЕНЬ КРУПНЫХ (>100000 посетителей/день):
+   $protection->updateGlobalProtectionSettings([
+       'cleanup_threshold' => 50000,
+       'cleanup_batch_size' => 500,
+       'cleanup_probability' => 200, // 0.5% запросов
+       'max_cleanup_time_ms' => 200
+   ]);
+   
+   // + Рассмотрите выделенный Redis сервер
+   // + Настройте Redis persistence (AOF/RDB)
+
 ====================================================================
 МОНИТОРИНГ И ОТЛАДКА
 ====================================================================
@@ -2426,6 +2943,8 @@ try {
 Регулярно проверяйте логи:
    tail -f /var/log/php_errors.log | grep "RATE LIMIT"
    tail -f /var/log/php_errors.log | grep "Bot blocked"
+   tail -f /var/log/php_errors.log | grep "Redis cleanup"
+   tail -f /var/log/php_errors.log | grep "rDNS rate limit"
 
 Проверка статистики (добавьте в cron каждый час):
    $stats = $protection->getStats();
@@ -2433,8 +2952,50 @@ try {
        // Отправить уведомление администратору
    }
 
+Мониторинг rDNS (каждый час):
+   $rdnsStats = $protection->getRDNSRateLimitStats();
+   if ($rdnsStats['limit_reached']) {
+       error_log("WARNING: rDNS rate limit reached! Current: " . 
+                $rdnsStats['current_minute_requests'] . "/" . 
+                $rdnsStats['limit_per_minute']);
+       
+       // Опционально: увеличить лимит или очистить старый кеш
+       if ($rdnsStats['cache_entries'] > 10000) {
+           $protection->clearRDNSCache();
+       }
+   }
+   
+   // Логировать статистику
+   error_log("rDNS Stats: " . 
+            "Current: {$rdnsStats['current_minute_requests']}, " .
+            "Cache: {$rdnsStats['cache_entries']}, " .
+            "Verified: {$rdnsStats['verified_in_cache']}");
+
+Проверка памяти Redis (каждые 30 минут):
+   $memInfo = $protection->getRedisMemoryInfo();
+   if ($memInfo['cleanup_needed']) {
+       error_log("WARNING: Redis cleanup needed! Tracked IPs: " . 
+                $memInfo['tracked_ips_count']);
+       // Опционально: принудительная очистка
+       $protection->forceCleanup();
+   }
+
 Еженедельная очистка (добавьте в cron):
    $protection->deepCleanup();
+   
+Ежедневная агрессивная очистка (для крупных сайтов):
+   $cleaned = $protection->forceCleanup(true);
+   error_log("Daily aggressive cleanup: removed $cleaned records");
+
+Мониторинг производительности:
+   // Проверяйте время очистки в логах:
+   // "Redis cleanup: removed 150 tracked IPs (approx 45.23ms)"
+   
+   // Если время >100ms регулярно:
+   $protection->updateGlobalProtectionSettings([
+       'cleanup_batch_size' => 50,  // Уменьшите размер батча
+       'max_cleanup_time_ms' => 80  // Уменьшите лимит времени
+   ]);
 
 ====================================================================
 TROUBLESHOOTING
@@ -2451,6 +3012,25 @@ TROUBLESHOOTING
 2. Проверьте логи на паттерны: $protection->getBlockedIPInfo('x.x.x.x')
 3. Добавьте в список подозрительных UA в методе isSuspiciousUserAgent()
 
+Проблемы с rDNS верификацией:
+1. Проверьте лимит: $rdnsStats = $protection->getRDNSRateLimitStats()
+2. Если лимит часто достигается:
+   $protection->updateRDNSSettings([
+       'max_rdns_per_minute' => 200,  // Увеличить лимит
+       'rdns_cache_ttl' => 7200       // Увеличить кеш
+   ]);
+3. Очистить старый кеш: $protection->clearRDNSCache()
+4. Проверить DNS сервер: dig -x <IP> (должен работать быстро)
+5. Если DNS медленный - рассмотрите локальный DNS кеш (dnsmasq)
+6. Тестировать конкретный IP: $protection->testRDNS('66.249.66.1', 'Googlebot')
+
+Блокируются легитимные поисковики:
+1. Проверьте что rDNS не превышает лимит
+2. Убедитесь что rdns_on_limit_action = 'skip' (не 'block')
+3. Увеличьте кеш TTL для верифицированных ботов:
+   $protection->updateRDNSSettings(['rdns_cache_ttl' => 86400]);
+4. Проверьте логи: grep "rDNS" /var/log/php_errors.log
+
 Если Redis падает или недоступен:
 - Скрипт продолжит работу БЕЗ защиты
 - Проверьте подключение к Redis
@@ -2461,7 +3041,7 @@ TROUBLESHOOTING
 ====================================================================
 
 ВАЖНО: Измените секретный ключ!
-   private $secretKey = 'your_secret_key_here_change_this12345!@#;
+   private $secretKey = 'your_secret_key_here_change_this12345!@#$';
    
 Используйте сложный уникальный ключ для вашего сайта.
 
@@ -2469,6 +3049,22 @@ TROUBLESHOOTING
    - Используйте пароль для Redis
    - Ограничьте доступ к Redis по IP
    - Используйте отдельную БД для bot protection
+
+ВАЖНО: Оптимизируйте DNS для rDNS проверок!
+   - Установите локальный DNS кеш (dnsmasq, unbound)
+   - Настройте systemd-resolved правильно
+   - Проверьте /etc/resolv.conf на корректность
+   - Увеличьте TTL кеша для rDNS результатов
+   
+МОНИТОРИНГ rDNS:
+   # Проверить сколько rDNS запросов в минуту
+   watch -n 5 'redis-cli --scan --pattern "bot_protection:rdns:ratelimit:*" | xargs redis-cli mget'
+   
+   # Размер rDNS кеша
+   redis-cli --scan --pattern "bot_protection:rdns:cache:*" | wc -l
+   
+   # Производительность DNS
+   time dig -x 66.249.66.1  # Должно быть <50ms
 
 ====================================================================
 */
