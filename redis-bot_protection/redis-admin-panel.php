@@ -1,5 +1,5 @@
 <?php
-// redis-admin_panel.php - Административная панель для управления системой защиты от ботов
+// admin_panel.php - Административная панель для управления системой защиты от ботов
 session_start();
 
 // ==================== КОНФИГУРАЦИЯ ====================
@@ -311,7 +311,7 @@ if (!isLoggedIn() && (!isset($_POST['action']) || $_POST['action'] !== 'login'))
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Вход - Bot Protection Admin</title>
+        <title>Вход - Redis MurKir Security - Admin Panel</title>
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
             body {
@@ -382,10 +382,11 @@ if (!isLoggedIn() && (!isset($_POST['action']) || $_POST['action'] !== 'login'))
     </head>
     <body>
         <div class="login-container">
-            <h1>🛡️ Bot Protection Admin</h1>
+            <h1>🛡️ Redis MurKir Security - Admin Panel</h1>
             <?php if ($message): ?>
                 <div class="error"><?php echo htmlspecialchars($message); ?></div>
             <?php endif; ?>
+			<a href="redis_test.php" target="_blank" rel="noopener noreferrer" class="btn btn-primary">📊 Test Page</a>
             <form method="POST">
                 <input type="hidden" name="action" value="login">
                 <div class="form-group">
@@ -821,6 +822,7 @@ $rdnsStats['not_verified_in_cache'] = $notVerifiedCount;
         <div class="header-content">
             <h1>🛡️ Redis MurKir Security - Admin Panel</h1>
             <div class="user-info">
+			<a href="redis_test.php" target="_blank" rel="noopener noreferrer" class="btn btn-primary">📊 Test Page</a>
                 <span>👤 <?php echo htmlspecialchars($_SESSION['admin_username'] ?? 'Admin'); ?></span>
                 <form method="POST" style="display: inline;">
                     <input type="hidden" name="action" value="logout">
