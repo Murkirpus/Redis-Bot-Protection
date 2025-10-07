@@ -536,471 +536,362 @@ if ($section === 'logs') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Redis MurKir Security - Admin Panel</title>
     <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    
-    body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-        background: #f5f7fa;
-        color: #333;
-        font-size: 16px;
-    }
-    
-    .header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 15px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    }
-    
-    .header-content {
-        max-width: 1400px;
-        margin: 0 auto;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 10px;
-    }
-    
-    .header h1 {
-        font-size: clamp(18px, 4vw, 24px);
-        flex: 1;
-        min-width: 200px;
-    }
-    
-    .user-info {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
-    }
-    
-    .user-info span {
-        font-size: clamp(12px, 2.5vw, 14px);
-    }
-    
-    .container {
-        max-width: 1400px;
-        margin: 15px auto;
-        padding: 0 15px;
-    }
-    
-    .nav {
-        background: white;
-        border-radius: 10px;
-        padding: 10px;
-        margin-bottom: 15px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-    }
-    
-    .nav::-webkit-scrollbar {
-        height: 4px;
-    }
-    
-    .nav::-webkit-scrollbar-track {
-        background: #f1f1f1;
-    }
-    
-    .nav::-webkit-scrollbar-thumb {
-        background: #667eea;
-        border-radius: 2px;
-    }
-    
-    .nav a {
-        padding: 8px 15px;
-        text-decoration: none;
-        color: #667eea;
-        border-radius: 5px;
-        transition: all 0.3s;
-        white-space: nowrap;
-        font-size: clamp(12px, 2.5vw, 14px);
-        flex-shrink: 0;
-    }
-    
-    .nav a:hover {
-        background: #f0f0f0;
-    }
-    
-    .nav a.active {
-        background: #667eea;
-        color: white;
-    }
-    
-    .stats-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 15px;
-        margin-bottom: 20px;
-    }
-    
-    .stat-card {
-        background: white;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        min-width: 0;
-    }
-    
-    .stat-card h3 {
-        font-size: clamp(12px, 2.5vw, 14px);
-        color: #888;
-        margin-bottom: 8px;
-        word-wrap: break-word;
-    }
-    
-    .stat-card .value {
-        font-size: clamp(24px, 6vw, 32px);
-        font-weight: bold;
-        color: #667eea;
-        word-break: break-all;
-    }
-    
-    .stat-card.warning .value { color: #f59e0b; }
-    .stat-card.danger .value { color: #ef4444; }
-    .stat-card.success .value { color: #10b981; }
-    
-    .card {
-        background: white;
-        border-radius: 10px;
-        padding: 15px;
-        margin-bottom: 20px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        overflow: hidden;
-    }
-    
-    .card-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 15px;
-        flex-wrap: wrap;
-        gap: 10px;
-    }
-
-    .card h2 {
-        color: #333;
-        font-size: clamp(16px, 3.5vw, 20px);
-        word-wrap: break-word;
-        margin: 0;
-    }
-    
-    .card h3 {
-        margin-top: 20px;
-        margin-bottom: 10px;
-        font-size: clamp(14px, 3vw, 18px);
-    }
-    
-    /* Адаптивные таблицы */
-    .table-wrapper {
-        width: 100%;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        margin-bottom: 15px;
-    }
-    
-    .table-wrapper::-webkit-scrollbar {
-        height: 8px;
-    }
-    
-    .table-wrapper::-webkit-scrollbar-track {
-        background: #f1f1f1;
-        border-radius: 4px;
-    }
-    
-    .table-wrapper::-webkit-scrollbar-thumb {
-        background: #667eea;
-        border-radius: 4px;
-    }
-    
-    table {
-        width: 100%;
-        border-collapse: collapse;
-        min-width: 600px;
-    }
-    
-    th, td {
-        padding: 12px 8px;
-        text-align: left;
-        border-bottom: 1px solid #eee;
-        font-size: clamp(11px, 2.5vw, 14px);
-    }
-    
-    th {
-        background: #f9fafb;
-        font-weight: 600;
-        color: #555;
-        position: sticky;
-        top: 0;
-        z-index: 10;
-    }
-    
-    tr:hover {
-        background: #f9fafb;
-    }
-    
-    .btn {
-        padding: 8px 16px;
-        border: none;
-        border-radius: 5px;
-        cursor: pointer;
-        font-size: clamp(12px, 2.5vw, 14px);
-        transition: all 0.3s;
-        text-decoration: none;
-        display: inline-block;
-        text-align: center;
-        white-space: nowrap;
-    }
-    
-    .btn-primary {
-        background: #667eea;
-        color: white;
-    }
-    
-    .btn-primary:hover {
-        background: #5568d3;
-    }
-    
-    .btn-danger {
-        background: #ef4444;
-        color: white;
-    }
-    
-    .btn-danger:hover {
-        background: #dc2626;
-    }
-    
-    .btn-success {
-        background: #10b981;
-        color: white;
-    }
-    
-    .btn-success:hover {
-        background: #059669;
-    }
-    
-    .btn-warning {
-        background: #f59e0b;
-        color: white;
-    }
-    
-    .btn-warning:hover {
-        background: #d97706;
-    }
-    
-    .btn-small {
-        padding: 5px 10px;
-        font-size: clamp(11px, 2vw, 12px);
-    }
-    
-    .message {
-        padding: 12px;
-        border-radius: 5px;
-        margin-bottom: 15px;
-        font-size: clamp(12px, 2.5vw, 14px);
-        word-wrap: break-word;
-    }
-    
-    .message.success {
-        background: #d1fae5;
-        color: #065f46;
-    }
-    
-    .message.error {
-        background: #fee2e2;
-        color: #991b1b;
-    }
-    
-    .message.info {
-        background: #dbeafe;
-        color: #1e40af;
-    }
-    
-    .badge {
-        display: inline-block;
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-size: clamp(10px, 2vw, 12px);
-        font-weight: 600;
-        white-space: nowrap;
-    }
-    
-    .badge-success { background: #d1fae5; color: #065f46; }
-    .badge-danger { background: #fee2e2; color: #991b1b; }
-    .badge-warning { background: #fef3c7; color: #92400e; }
-    .badge-info { background: #dbeafe; color: #1e40af; }
-    .badge-bot { background: #e0e7ff; color: #3730a3; }
-    .badge-search { background: #cffafe; color: #0e7490; }
-
-    .ip-info {
-        font-family: monospace;
-        background: #f8f9fa;
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-size: clamp(11px, 2.5vw, 13px);
-        word-break: break-all;
-    }
-    
-    .copyable {
-        cursor: pointer;
-        padding: 2px 6px;
-        border-radius: 4px;
-        transition: all 0.2s ease;
-        border: 1px solid transparent;
-        display: inline-block;
-        word-break: break-all;
-        max-width: 100%;
-    }
-    
-    .copyable:hover {
-        background-color: #e9ecef;
-        border-color: #667eea;
-    }
-    
-    .copyable:active {
-        background-color: #667eea;
-        color: white;
-    }
-    
-    .pagination {
-        display: flex;
-        gap: 5px;
-        justify-content: center;
-        margin-top: 20px;
-        flex-wrap: wrap;
-    }
-    
-    .pagination a {
-        padding: 8px 12px;
-        border: 1px solid #ddd;
-        border-radius: 5px;
-        text-decoration: none;
-        color: #667eea;
-        font-size: clamp(12px, 2.5vw, 14px);
-        min-width: 40px;
-        text-align: center;
-    }
-    
-    .pagination a:hover {
-        background: #f0f0f0;
-    }
-    
-    .pagination a.active {
-        background: #667eea;
-        color: white;
-        border-color: #667eea;
-    }
-    
-    .grid-2 {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-        gap: 20px;
-    }
-    
-    .progress-bar {
-        width: 100%;
-        height: 20px;
-        background: #e5e7eb;
-        border-radius: 10px;
-        overflow: hidden;
-        margin-top: 10px;
-    }
-    
-    .progress-fill {
-        height: 100%;
-        background: #667eea;
-        transition: width 0.3s;
-    }
-    
-    .progress-fill.warning { background: #f59e0b; }
-    .progress-fill.danger { background: #ef4444; }
-    
-    code {
-        background: #f3f4f6;
-        padding: 2px 6px;
-        border-radius: 3px;
-        font-family: 'Courier New', monospace;
-        font-size: clamp(11px, 2.5vw, 13px);
-        word-break: break-all;
-    }
-    
-    .actions {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        margin-bottom: 20px;
-    }
-    
-    .search-box {
-        width: 100%;
-        max-width: 400px;
-        padding: 10px;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        margin-bottom: 15px;
-        font-size: clamp(12px, 2.5vw, 14px);
-    }
-    
-    tr.danger-critical { background-color: #fee2e2 !important; }
-    tr.danger-warning { background-color: #fef3c7 !important; }
-    tr.danger-normal:hover { background: #f9fafb; }
-    
-    @media (max-width: 768px) {
-        body { font-size: 14px; }
-        .header { padding: 12px; }
-        .header-content { flex-direction: column; align-items: flex-start; }
-        .header h1 { font-size: 18px; width: 100%; }
-        .user-info { width: 100%; justify-content: space-between; }
-        .container { margin: 10px auto; padding: 0 10px; }
-        .nav { padding: 8px; gap: 6px; }
-        .nav a { padding: 6px 12px; font-size: 12px; }
-        .stats-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
-        .stat-card { padding: 12px; }
-        .stat-card h3 { font-size: 11px; margin-bottom: 6px; }
-        .stat-card .value { font-size: 20px; }
-        .card { padding: 12px; border-radius: 8px; }
-        .card h2 { font-size: 16px; margin-bottom: 12px; }
-        .card h3 { font-size: 14px; margin-top: 15px; }
-        .table-wrapper { margin: 0 -12px; padding: 0 12px; }
-        table { font-size: 11px; min-width: 500px; }
-        th, td { padding: 8px 6px; font-size: 11px; }
-        th { font-size: 10px; white-space: nowrap; }
-        .btn { padding: 6px 12px; font-size: 12px; }
-        .btn-small { padding: 4px 8px; font-size: 10px; }
-        .actions { gap: 8px; }
-        .actions form { flex: 1; min-width: 120px; }
-        .actions .btn { width: 100%; }
-        .grid-2 { grid-template-columns: 1fr; gap: 15px; }
-        .message { padding: 10px; font-size: 12px; }
-        .badge { font-size: 10px; padding: 3px 6px; }
-        .ip-info { font-size: 10px; padding: 3px 6px; }
-        .copyable { font-size: 11px; }
-        .search-box { font-size: 14px; padding: 8px; max-width: 100%; }
-        .pagination { gap: 4px; }
-        .pagination a { padding: 6px 10px; font-size: 12px; min-width: 35px; }
-        code { font-size: 10px; padding: 2px 4px; }
-        @media (max-width: 480px) {
-            table { min-width: 400px; }
-            .stats-grid { grid-template-columns: 1fr; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #f5f7fa;
+            color: #333;
         }
-    }
-    
-    @media (min-width: 769px) and (max-width: 1024px) {
-        .stats-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
-        .grid-2 { grid-template-columns: repeat(2, 1fr); }
-        th, td { padding: 10px 7px; font-size: 13px; }
-    }
-    
-    @media print {
-        .header, .nav, .actions, .btn, .pagination { display: none !important; }
-        .card { page-break-inside: avoid; }
-        body { background: white; }
-    }
-</style>
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+        }
+        
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        
+        .nav {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .nav a {
+            padding: 10px 20px;
+            text-decoration: none;
+            color: #667eea;
+            border-radius: 5px;
+            transition: all 0.3s;
+        }
+        
+        .nav a:hover {
+            background: #f0f0f0;
+        }
+        
+        .nav a.active {
+            background: #667eea;
+            color: white;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        
+        .stat-card h3 {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 10px;
+        }
+        
+        .stat-card .value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .stat-card.warning .value { color: #f59e0b; }
+        .stat-card.danger .value { color: #ef4444; }
+        .stat-card.success .value { color: #10b981; }
+        
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        
+        .card h2 {
+            margin-bottom: 20px;
+            color: #333;
+            font-size: 20px;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        
+        th {
+            background: #f9fafb;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        tr:hover {
+            background: #f9fafb;
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5568d3;
+        }
+        
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+        
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #059669;
+        }
+        
+        .btn-warning {
+            background: #f59e0b;
+            color: white;
+        }
+        
+        .btn-warning:hover {
+            background: #d97706;
+        }
+        
+        .btn-small {
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+        
+        .message {
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        
+        .message.success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .message.error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .message.info {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .badge-success { background: #d1fae5; color: #065f46; }
+        .badge-danger { background: #fee2e2; color: #991b1b; }
+        .badge-warning { background: #fef3c7; color: #92400e; }
+        .badge-info { background: #dbeafe; color: #1e40af; }
+        
+        .ip-info {
+            font-family: monospace;
+            background: #f8f9fa;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        
+        .copyable {
+            cursor: pointer;
+            padding: 2px 6px;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+            border: 1px solid transparent;
+            display: inline-block;
+            word-break: break-all;
+            max-width: 100%;
+        }
+        
+        .copyable:hover {
+            background-color: #e9ecef;
+            border-color: #667eea;
+        }
+        
+        .copyable:active {
+            background-color: #667eea;
+            color: white;
+        }
+        
+        .pagination {
+            display: flex;
+            gap: 5px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+        
+        .pagination a {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            text-decoration: none;
+            color: #667eea;
+        }
+        
+        .pagination a:hover {
+            background: #f0f0f0;
+        }
+        
+        .pagination a.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+        
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e5e7eb;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: #667eea;
+            transition: width 0.3s;
+        }
+        
+        .progress-fill.warning { background: #f59e0b; }
+        .progress-fill.danger { background: #ef4444; }
+        
+        code {
+            background: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+        
+        .actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        
+        .search-box {
+            width: 100%;
+            max-width: 300px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        
+        /* Цветовая индикация опасности */
+        tr.danger-critical {
+            background-color: #fee2e2 !important;
+        }
+        
+        tr.danger-warning {
+            background-color: #fef3c7 !important;
+        }
+        
+        tr.danger-normal:hover {
+            background: #f9fafb;
+        }
+        
+        @media (max-width: 768px) {
+            .grid-2 {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .header-content {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            table {
+                font-size: 12px;
+            }
+            
+            th, td {
+                padding: 8px;
+            }
+        }
+    </style>
 </head>
 <body>
     <div class="header">
@@ -1950,47 +1841,105 @@ if ($section === 'logs') {
             </div>
 
         <?php elseif ($section === 'settings'): ?>
-            <div class="grid-2">
-                <div class="card">
-                    <h2>Rate Limit настройки</h2>
-                    <?php $rateLimitSettings = $protection->getRateLimitSettings(); ?>
-                    <table>
-                        <?php foreach ($rateLimitSettings as $key => $value): ?>
-                            <tr><td><code><?php echo htmlspecialchars($key); ?></code></td><td><strong><?php echo htmlspecialchars($value); ?></strong></td></tr>
-                        <?php endforeach; ?>
-                    </table>
-                </div>
-                
-                <div class="card">
-                    <h2>TTL настройки</h2>
-                    <?php $ttlSettings = $protection->getTTLSettings(); ?>
-                    <table>
-                        <?php foreach ($ttlSettings as $key => $value): ?>
-                            <tr><td><code><?php echo htmlspecialchars($key); ?></code></td><td><strong><?php echo number_format($value); ?> сек</strong></td></tr>
-                        <?php endforeach; ?>
-                    </table>
-                </div>
-                
-                <div class="card">
-                    <h2>Защита от переполнения</h2>
-                    <?php $globalSettings = $protection->getGlobalProtectionSettings(); ?>
-                    <table>
-                        <?php foreach ($globalSettings as $key => $value): ?>
-                            <tr><td><code><?php echo htmlspecialchars($key); ?></code></td><td><strong><?php echo htmlspecialchars($value); ?></strong></td></tr>
-                        <?php endforeach; ?>
-                    </table>
-                </div>
-                
-                <div class="card">
-                    <h2>Slow Bot настройки</h2>
-                    <?php $slowBotSettings = $protection->getSlowBotSettings(); ?>
-                    <table>
-                        <?php foreach ($slowBotSettings as $key => $value): ?>
-                            <tr><td><code><?php echo htmlspecialchars($key); ?></code></td><td><strong><?php echo htmlspecialchars($value); ?></strong></td></tr>
-                        <?php endforeach; ?>
-                    </table>
-                </div>
+    <div class="grid-2">
+        <div class="card">
+            <h2>Rate Limit настройки</h2>
+            <?php 
+            $rateLimitSettings = $protection->getRateLimitSettings(); 
+            if (!empty($rateLimitSettings)):
+            ?>
+            <div class="table-wrapper">
+                <table>
+                    <?php foreach ($rateLimitSettings as $key => $value): ?>
+                        <tr>
+                            <td><code><?php echo htmlspecialchars($key); ?></code></td>
+                            <td><strong><?php echo htmlspecialchars($value); ?></strong></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </table>
             </div>
+            <?php else: ?>
+                <p style="color: #999;">Настройки не найдены</p>
+            <?php endif; ?>
+        </div>
+        
+        <div class="card">
+            <h2>TTL настройки</h2>
+            <?php 
+            $ttlSettings = $protection->getTTLSettings(); 
+            if (!empty($ttlSettings)):
+            ?>
+            <div class="table-wrapper">
+                <table>
+                    <?php foreach ($ttlSettings as $key => $value): ?>
+                        <tr>
+                            <td><code><?php echo htmlspecialchars($key); ?></code></td>
+                            <td><strong><?php echo number_format($value); ?> сек</strong></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </table>
+            </div>
+            <?php else: ?>
+                <p style="color: #999;">Настройки не найдены</p>
+            <?php endif; ?>
+        </div>
+        
+        <div class="card">
+            <h2>Защита от переполнения</h2>
+            <?php 
+            $globalSettings = $protection->getGlobalProtectionSettings(); 
+            if (!empty($globalSettings)):
+            ?>
+            <div class="table-wrapper">
+                <table>
+                    <?php foreach ($globalSettings as $key => $value): ?>
+                        <tr>
+                            <td><code><?php echo htmlspecialchars($key); ?></code></td>
+                            <td><strong><?php echo htmlspecialchars($value); ?></strong></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </table>
+            </div>
+            <?php else: ?>
+                <p style="color: #999;">Настройки не найдены</p>
+            <?php endif; ?>
+        </div>
+        
+        <div class="card">
+            <h2>Slow Bot настройки</h2>
+            <?php 
+            $slowBotSettings = $protection->getSlowBotSettings(); 
+            if (!empty($slowBotSettings)):
+            ?>
+            <div class="table-wrapper">
+                <table>
+                    <?php foreach ($slowBotSettings as $key => $value): ?>
+                        <tr>
+                            <td><code><?php echo htmlspecialchars($key); ?></code></td>
+                            <td><strong><?php echo htmlspecialchars($value); ?></strong></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </table>
+            </div>
+            <?php else: ?>
+                <p style="color: #999;">Настройки не найдены</p>
+            <?php endif; ?>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h2>⚠️ Изменение настроек</h2>
+        <p style="margin-bottom: 15px;">
+            Для изменения настроек отредактируйте соответствующие методы в классе <code>RedisBotProtectionNoSessions</code>:
+        </p>
+        <ul style="line-height: 1.8;">
+            <li><code>updateRateLimitSettings()</code> - настройки ограничения запросов</li>
+            <li><code>updateTTLSettings()</code> - время жизни записей</li>
+            <li><code>updateGlobalProtectionSettings()</code> - защита от переполнения</li>
+            <li><code>updateSlowBotSettings()</code> - детекция медленных ботов</li>
+            <li><code>updateRDNSSettings()</code> - настройки R-DNS верификации</li>
+        </ul>
+    </div>
         <?php endif; ?>
         
         <div style="text-align: center; padding: 20px; color: #888; font-size: 14px;">
