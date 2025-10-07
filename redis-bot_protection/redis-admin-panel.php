@@ -25,16 +25,7 @@ function isLoggedIn() {
 }
 
 function login($username, $password) {
-    // Временное решение: прямое сравнение
-    // После успешного входа замените на хеш bcrypt для безопасности
-    if ($username === ADMIN_USERNAME && $password === ADMIN_PASSWORD) {
-        $_SESSION['admin_logged_in'] = true;
-        $_SESSION['admin_username'] = $username;
-        $_SESSION['login_time'] = time();
-        return true;
-    }
-    
-    // Если в конфиге хеш - проверяем через password_verify
+    // Проверка через bcrypt хеш
     if ($username === ADMIN_USERNAME && password_verify($password, ADMIN_PASSWORD)) {
         $_SESSION['admin_logged_in'] = true;
         $_SESSION['admin_username'] = $username;
@@ -371,7 +362,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // ==================== ПРОВЕРКА АВТОРИЗАЦИИ ====================
-if (!isLoggedIn() && (!isset($_POST['action']) || $_POST['action'] !== 'login')) {
+if (!isLoggedIn()) {
     ?>
     <!DOCTYPE html>
     <html lang="ru">
