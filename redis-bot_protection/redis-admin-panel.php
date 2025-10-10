@@ -1400,129 +1400,158 @@ if ($section === 'logs') {
             </div>
 
         <?php elseif ($section === 'rate_limits'): ?>
-            <div class="card">
-                <h2>Rate Limit нарушения и отслеживание</h2>
-                <?php
-                $allRateLimits = [];
-                $iterator = null;
-                do {
-                    $keys = $redis->scan($iterator, 'bot_protection:tracking:ratelimit:*', 100);
-                    if ($keys !== false && is_array($keys)) {
-                        foreach ($keys as $key) {
-                            $data = $redis->get($key);
-                            if ($data && is_array($data)) {
-                                $hashPart = str_replace('bot_protection:tracking:ratelimit:', '', $key);
-                                $allRateLimits[] = [ 'hash' => $hashPart, 'data' => $data, 'ttl' => $redis->ttl($key), 'key' => $key ];
-                            }
-                        }
-                    }
-                } while ($iterator > 0 && $iterator !== null);
-                
-                usort($allRateLimits, function($a, $b) {
-                    return ($b['data']['violations'] ?? 0) - ($a['data']['violations'] ?? 0);
-                });
-                
-                $total = count($allRateLimits);
-                $offset = ($page - 1) * ITEMS_PER_PAGE;
-                $pageRateLimits = array_slice($allRateLimits, $offset, ITEMS_PER_PAGE);
-                
-                foreach ($pageRateLimits as &$rlData) {
-                    $trackingKey = 'bot_protection:tracking:ip:' . $rlData['hash'];
-                    $trackingData = $redis->get($trackingKey);
-                    
-                    if ($trackingData && is_array($trackingData) && isset($trackingData['real_ip'])) {
-                        $rlData['ip'] = $trackingData['real_ip'];
-                        $rlData['hostname'] = getRDNSFast($redis, $rlData['ip']);
-                    } else {
-                        $rlData['ip'] = 'N/A';
-                        $rlData['hostname'] = 'N/A';
+    <div class="card">
+        <h2>Rate Limit нарушения и отслеживание</h2>
+        <?php
+        $allRateLimits = [];
+        $iterator = null;
+        do {
+            $keys = $redis->scan($iterator, 'bot_protection:tracking:ratelimit:*', 100);
+            if ($keys !== false && is_array($keys)) {
+                foreach ($keys as $key) {
+                    $data = $redis->get($key);
+                    if ($data && is_array($data)) {
+                        $hashPart = str_replace('bot_protection:tracking:ratelimit:', '', $key);
+                        $allRateLimits[] = [ 'hash' => $hashPart, 'data' => $data, 'ttl' => $redis->ttl($key), 'key' => $key ];
                     }
                 }
-                unset($rlData);
-                
-                if ($total > 0):
-                ?>
-                    <input type="text" class="search-box" placeholder="🔍 Поиск..." onkeyup="filterTable(this, 'rate-limits-table')">
-                    <p style="margin-bottom: 15px;">Всего записей: <strong><?php echo $total; ?></strong></p>
-                    <div class="table-wrapper">
-                    <table id="rate-limits-table">
-                        <thead>
-                            <tr>
-                                <th>IP адрес</th>
-                                <th>Hostname (rDNS)</th>
-                                <th>IP Hash</th>
-                                <th>Нарушений</th>
-                                <th>Запросов/мин</th>
-                                <th>Последний запрос</th>
-                                <th>TTL</th>
-                                <th>Действия</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($pageRateLimits as $rlData): 
-                                $data = $rlData['data'];
-                                $violations = $data['violations'] ?? 0;
-                                
-                                $rowClass = 'danger-normal';
-                                if ($violations > 10) $rowClass = 'danger-critical';
-                                elseif ($violations > 5) $rowClass = 'danger-warning';
-                            ?>
-                                <tr class="<?php echo $rowClass; ?>">
-                                    <td>
-                                        <?php if ($rlData['ip'] !== 'N/A'): ?>
-                                            <span class="ip-info copyable" onclick="copyToClipboard('<?php echo addslashes($rlData['ip']); ?>', this)" title="Нажмите для копирования"><?php echo htmlspecialchars($rlData['ip']); ?></span>
-                                        <?php else: ?>
-                                            <span style="color: #6c757d;">N/A</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td style="font-size: 11px; max-width: 200px; overflow: hidden;">
-                                        <?php if ($rlData['hostname'] !== 'N/A' && $rlData['hostname'] !== 'Timeout/N/A' && $rlData['hostname'] !== 'rDNS disabled'): ?>
-                                            <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($rlData['hostname']); ?>', this)" title="Нажмите для копирования"><?php echo htmlspecialchars($rlData['hostname']); ?></span>
-                                        <?php else: ?>
-                                            <span style="color: #6c757d;"><?php echo htmlspecialchars($rlData['hostname']); ?></span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td>
-                                        <span class="ip-info copyable" onclick="copyToClipboard('<?php echo addslashes($rlData['hash']); ?>', this)" title="Нажмите для копирования"><?php echo substr($rlData['hash'], 0, 12); ?>...</span>
-                                    </td>
-                                    <td>
-                                        <?php if ($violations > 10) echo '<span class="badge badge-danger">🔥 ' . $violations . '</span>';
-                                        elseif ($violations > 5) echo '<span class="badge badge-warning">⚠️ ' . $violations . '</span>';
-                                        else echo '<span class="badge badge-info">👀 ' . $violations . '</span>'; ?>
-                                    </td>
-                                    <td><strong><?php echo $data['requests_1min'] ?? 0; ?></strong></td>
-                                    <td><?php echo date('d.m H:i:s', $data['last_request'] ?? 0); ?></td>
-                                    <td><?php $ttl = $rlData['ttl']; if ($ttl > 0) echo floor($ttl / 60) . 'm'; else echo '—'; ?></td>
-                                    <td>
-                                        <form method="POST" style="display: inline;">
-                                            <input type="hidden" name="action" value="reset_rate_limit">
-                                            <input type="hidden" name="key" value="<?php echo htmlspecialchars($rlData['key']); ?>">
-                                            <button type="submit" class="btn btn-small btn-success" onclick="return confirm('Сбросить rate limit?');" title="Сбросить счетчики">🔄 Reset</button>
-                                        </form>
-                                        <?php if ($rlData['ip'] !== 'N/A'): ?>
-                                            <form method="POST" style="display: inline; margin-left: 5px;">
-                                                <input type="hidden" name="action" value="block_ip_from_rate_limit">
-                                                <input type="hidden" name="ip" value="<?php echo htmlspecialchars($rlData['ip']); ?>">
-                                                <button type="submit" class="btn btn-small btn-danger" onclick="return confirm('Заблокировать IP <?php echo htmlspecialchars($rlData['ip']); ?>?');" title="Заблокировать IP">🚫 Block</button>
-                                            </form>
-                                        <?php endif; ?>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                    </div>
-                    <?php $totalPages = ceil($total / ITEMS_PER_PAGE); if ($totalPages > 1): ?>
-                        <div class="pagination">
-                            <?php for ($i = 1; $i <= min($totalPages, 10); $i++): ?>
-                                <a href="?section=rate_limits&page=<?php echo $i; ?>" class="<?php echo $i === $page ? 'active' : ''; ?>"><?php echo $i; ?></a>
-                            <?php endfor; ?>
-                        </div>
-                    <?php endif; ?>
-                <?php else: ?>
-                    <div class="message info">Нет записей rate limit в Redis.</div>
-                <?php endif; ?>
+            }
+        } while ($iterator > 0 && $iterator !== null);
+        
+        usort($allRateLimits, function($a, $b) {
+            return ($b['data']['violations'] ?? 0) - ($a['data']['violations'] ?? 0);
+        });
+        
+        $total = count($allRateLimits);
+        $offset = ($page - 1) * ITEMS_PER_PAGE;
+        $pageRateLimits = array_slice($allRateLimits, $offset, ITEMS_PER_PAGE);
+        
+        foreach ($pageRateLimits as &$rlData) {
+            $trackingKey = 'bot_protection:tracking:ip:' . $rlData['hash'];
+            $trackingData = $redis->get($trackingKey);
+            
+            if ($trackingData && is_array($trackingData) && isset($trackingData['real_ip'])) {
+                $rlData['ip'] = $trackingData['real_ip'];
+                $rlData['hostname'] = getRDNSFast($redis, $rlData['ip']);
+            } else {
+                $rlData['ip'] = 'N/A';
+                $rlData['hostname'] = 'N/A';
+            }
+        }
+        unset($rlData);
+        
+        if ($total > 0):
+        ?>
+            <input type="text" class="search-box" placeholder="🔍 Поиск..." onkeyup="filterTable(this, 'rate-limits-table')">
+            <p style="margin-bottom: 15px;">Всего записей: <strong><?php echo $total; ?></strong></p>
+            <div class="table-wrapper" style="overflow-x: auto;">
+            <table id="rate-limits-table">
+                <thead>
+                    <tr>
+                        <th>IP адрес</th>
+                        <th>Hostname (rDNS)</th>
+                        <th>IP Hash</th>
+                        <th>Нарушений</th>
+                        <th>Запросов/мин</th>
+                        <th>Запросов/5 мин</th>
+                        <th>Запросов/в час</th>
+                        <th>Последний запрос</th>
+                        <th>TTL</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($pageRateLimits as $rlData): 
+                        $data = $rlData['data'];
+                        $violations = $data['violations'] ?? 0;
+                        
+                        $rowClass = 'danger-normal';
+                        if ($violations > 10) $rowClass = 'danger-critical';
+                        elseif ($violations > 5) $rowClass = 'danger-warning';
+                        
+                        // Получаем лимиты из настроек для сравнения
+                        $rateLimitSettings = $protection->getRateLimitSettings();
+                        $limit1min = $rateLimitSettings['max_requests_per_minute'] ?? 60;
+                        $limit5min = $rateLimitSettings['max_requests_per_5min'] ?? 200;
+                        $limit1hour = $rateLimitSettings['max_requests_per_hour'] ?? 1000;
+                        
+                        $req1min = $data['requests_1min'] ?? 0;
+                        $req5min = $data['requests_5min'] ?? 0;
+                        $req1hour = $data['requests_1hour'] ?? 0;
+                    ?>
+                        <tr class="<?php echo $rowClass; ?>">
+                            <td>
+                                <?php if ($rlData['ip'] !== 'N/A'): ?>
+                                    <span class="ip-info copyable" onclick="copyToClipboard('<?php echo addslashes($rlData['ip']); ?>', this)" title="Нажмите для копирования"><?php echo htmlspecialchars($rlData['ip']); ?></span>
+                                <?php else: ?>
+                                    <span style="color: #6c757d;">N/A</span>
+                                <?php endif; ?>
+                            </td>
+                            <td style="font-size: 11px; max-width: 200px; overflow: hidden;">
+                                <?php if ($rlData['hostname'] !== 'N/A' && $rlData['hostname'] !== 'Timeout/N/A' && $rlData['hostname'] !== 'rDNS disabled'): ?>
+                                    <span class="copyable" onclick="copyToClipboard('<?php echo addslashes($rlData['hostname']); ?>', this)" title="Нажмите для копирования"><?php echo htmlspecialchars($rlData['hostname']); ?></span>
+                                <?php else: ?>
+                                    <span style="color: #6c757d;"><?php echo htmlspecialchars($rlData['hostname']); ?></span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <span class="ip-info copyable" onclick="copyToClipboard('<?php echo addslashes($rlData['hash']); ?>', this)" title="Нажмите для копирования"><?php echo substr($rlData['hash'], 0, 12); ?>...</span>
+                            </td>
+                            <td>
+                                <?php if ($violations > 10) echo '<span class="badge badge-danger">🔥 ' . $violations . '</span>';
+                                elseif ($violations > 5) echo '<span class="badge badge-warning">⚠️ ' . $violations . '</span>';
+                                else echo '<span class="badge badge-info">👀 ' . $violations . '</span>'; ?>
+                            </td>
+                            <td>
+                                <strong><?php echo $req1min; ?></strong>
+                                <?php if ($req1min > $limit1min * 0.8): ?>
+                                    <span class="badge badge-warning" style="font-size: 10px;">⚠️ <?php echo round(($req1min / $limit1min) * 100); ?>%</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <strong><?php echo $req5min; ?></strong>
+                                <?php if ($req5min > $limit5min * 0.8): ?>
+                                    <span class="badge badge-warning" style="font-size: 10px;">⚠️ <?php echo round(($req5min / $limit5min) * 100); ?>%</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <strong><?php echo $req1hour; ?></strong>
+                                <?php if ($req1hour > $limit1hour * 0.8): ?>
+                                    <span class="badge badge-warning" style="font-size: 10px;">⚠️ <?php echo round(($req1hour / $limit1hour) * 100); ?>%</span>
+                                <?php endif; ?>
+                            </td>
+                            <td style="font-size: 11px;"><?php echo date('d.m H:i:s', $data['last_request'] ?? 0); ?></td>
+                            <td><?php $ttl = $rlData['ttl']; if ($ttl > 0) echo floor($ttl / 60) . 'm'; else echo '—'; ?></td>
+                            <td>
+                                <form method="POST" style="display: inline;">
+                                    <input type="hidden" name="action" value="reset_rate_limit">
+                                    <input type="hidden" name="key" value="<?php echo htmlspecialchars($rlData['key']); ?>">
+                                    <button type="submit" class="btn btn-small btn-success" onclick="return confirm('Сбросить rate limit?');" title="Сбросить счетчики">🔄 Reset</button>
+                                </form>
+                                <?php if ($rlData['ip'] !== 'N/A'): ?>
+                                    <form method="POST" style="display: inline; margin-left: 5px;">
+                                        <input type="hidden" name="action" value="block_ip_from_rate_limit">
+                                        <input type="hidden" name="ip" value="<?php echo htmlspecialchars($rlData['ip']); ?>">
+                                        <button type="submit" class="btn btn-small btn-danger" onclick="return confirm('Заблокировать IP <?php echo htmlspecialchars($rlData['ip']); ?>?');" title="Заблокировать IP">🚫 Block</button>
+                                    </form>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
             </div>
+            <?php $totalPages = ceil($total / ITEMS_PER_PAGE); if ($totalPages > 1): ?>
+                <div class="pagination">
+                    <?php for ($i = 1; $i <= min($totalPages, 10); $i++): ?>
+                        <a href="?section=rate_limits&page=<?php echo $i; ?>" class="<?php echo $i === $page ? 'active' : ''; ?>"><?php echo $i; ?></a>
+                    <?php endfor; ?>
+                </div>
+            <?php endif; ?>
+        <?php else: ?>
+            <div class="message info">Нет записей rate limit в Redis.</div>
+        <?php endif; ?>
+    </div>
 
         <?php elseif ($section === 'extended_tracking'): ?>
              <div class="card">
