@@ -1,9 +1,4 @@
 <img src="./images/Screenshot 2025-10-13 153857.png" alt="Демонстрация" width="800">
-<img src="./images/Screenshot 2025-07-10 165512.png" alt="Демонстрация" width="800">
-<img src="./images/Screenshot 2025-07-10 170349.png" alt="Демонстрация" width="800">
-<img src="./images/Screenshot 2025-07-23 154827.png" alt="Демонстрация" width="800">
-<img src="./images/Screenshot_20250813-211317.jpg" alt="Демонстрация" width="800">
-
 ShieldPHP
 DDoS protection system with progressive blocking, Redis/MariaDB storage, reCAPTCHA unblocking and administrative interface. Includes automatic blocking under critical loads, IP whitelists, bot detection and multi-layered protection (.htaccess, Nginx, iptables). Works with IPv4/IPv6.
 https://github.com/Murkirpus/ShieldPHP/
