@@ -1,4 +1,4 @@
-<img src="./images/Screenshot 2025-07-10 163228.png" alt="Демонстрация" width="800">
+<img src="./images/Screenshot 2025-10-13 153857.png" alt="Демонстрация" width="800">
 <img src="./images/Screenshot 2025-07-10 165512.png" alt="Демонстрация" width="800">
 <img src="./images/Screenshot 2025-07-10 170349.png" alt="Демонстрация" width="800">
 <img src="./images/Screenshot 2025-07-23 154827.png" alt="Демонстрация" width="800">
