@@ -42,6 +42,35 @@ function logout() {
     exit;
 }
 
+// Генерация токена для рекапчи
+function generateCaptchaToken() {
+    if (!isset($_SESSION['captcha_token'])) {
+        $_SESSION['captcha_token'] = bin2hex(random_bytes(32));
+        $_SESSION['captcha_time'] = time();
+    }
+    return $_SESSION['captcha_token'];
+}
+
+// Проверка рекапчи
+function validateCaptcha() {
+    if (!isset($_POST['captcha_token']) || !isset($_SESSION['captcha_token']) || 
+        $_POST['captcha_token'] !== $_SESSION['captcha_token']) {
+        return false;
+    }
+    if (!isset($_POST['human_check']) || $_POST['human_check'] !== 'verified') {
+        return false;
+    }
+    if (!empty($_POST['website']) || !empty($_POST['email_confirm'])) {
+        return false;
+    }
+    if (isset($_SESSION['captcha_time']) && (time() - $_SESSION['captcha_time']) < 2) {
+        return false;
+    }
+    if (!isset($_POST['mouse_moved']) || $_POST['mouse_moved'] !== 'yes') {
+        return false;
+    }
+    return true;
+}
 // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
 // Функция rDNS
@@ -127,14 +156,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             switch ($_POST['action']) {
                 case 'login':
-                    if (login($_POST['username'] ?? '', $_POST['password'] ?? '')) {
-                        header('Location: ' . $_SERVER['PHP_SELF']);
-                        exit;
-                    } else {
-                        $message = 'Неверные учетные данные';
-                        $messageType = 'error';
-                    }
-                    break;
+    if (!validateCaptcha()) {
+        $message = 'Пожалуйста, подтвердите, что вы не робот';
+        $messageType = 'error';
+        break;
+    }
+    if (login($_POST['username'] ?? '', $_POST['password'] ?? '')) {
+        unset($_SESSION['captcha_token'], $_SESSION['captcha_time']);
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit;
+    } else {
+        $message = 'Неверные учетные данные';
+        $messageType = 'error';
+    }
+    break;
                     
                 case 'logout':
                     logout();
@@ -436,6 +471,71 @@ if (!isLoggedIn()) {
                 margin-bottom: 20px;
                 font-size: 14px;
             }
+			.captcha-box {
+    border: 2px solid #ddd;
+    border-radius: 5px;
+    padding: 15px;
+    margin-bottom: 20px;
+    background: #f9f9f9;
+    transition: all 0.3s;
+}
+.captcha-box.verified {
+    border-color: #10b981;
+    background: #f0fff4;
+}
+.captcha-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.custom-checkbox {
+    width: 28px;
+    height: 28px;
+    border: 2px solid #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: white;
+    transition: all 0.3s;
+}
+.custom-checkbox:hover {
+    border-color: #667eea;
+}
+.custom-checkbox.checked {
+    background: #10b981;
+    border-color: #10b981;
+}
+.checkmark {
+    display: none;
+    color: white;
+    font-size: 18px;
+    font-weight: bold;
+}
+.custom-checkbox.checked .checkmark {
+    display: block;
+}
+.spinner {
+    display: none;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #eee;
+    border-top: 2px solid #667eea;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+.custom-checkbox.loading .spinner {
+    display: block;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+.hidden-field {
+    position: absolute;
+    left: -9999px;
+}
         </style>
     </head>
     <body>
@@ -446,7 +546,23 @@ if (!isLoggedIn()) {
             <?php endif; ?>
 			<a href="redis_test.php" target="_blank" rel="noopener noreferrer" class="btn btn-primary">📊 Test Page</a>
             <form method="POST">
+			<?php $captchaToken = generateCaptchaToken(); ?>
                 <input type="hidden" name="action" value="login">
+				<input type="hidden" name="captcha_token" value="<?php echo $captchaToken; ?>">
+<input type="hidden" name="human_check" id="humanCheck" value="">
+<input type="hidden" name="mouse_moved" id="mouseMoved" value="no">
+<input type="text" name="website" class="hidden-field" tabindex="-1" autocomplete="off">
+<input type="email" name="email_confirm" class="hidden-field" tabindex="-1" autocomplete="off">
+
+<div class="captcha-box" id="captchaBox">
+    <div class="captcha-content">
+        <div class="custom-checkbox" id="customCheckbox">
+            <span class="checkmark">✓</span>
+            <div class="spinner"></div>
+        </div>
+        <span>Я не робот</span>
+    </div>
+</div>
                 <div class="form-group">
                     <label>Имя пользователя</label>
                     <input type="text" name="username" required autofocus>
@@ -458,6 +574,36 @@ if (!isLoggedIn()) {
                 <button type="submit">Войти</button>
             </form>
         </div>
+		<script>
+let mouseMoved = false;
+document.addEventListener('mousemove', function() {
+    if (!mouseMoved) {
+        mouseMoved = true;
+        document.getElementById('mouseMoved').value = 'yes';
+    }
+});
+
+const checkbox = document.getElementById('customCheckbox');
+const captchaBox = document.getElementById('captchaBox');
+const humanCheck = document.getElementById('humanCheck');
+const loginBtn = document.querySelector('button[type="submit"]');
+
+loginBtn.disabled = true;
+loginBtn.style.opacity = '0.5';
+
+checkbox.addEventListener('click', function() {
+    if (this.classList.contains('checked')) return;
+    this.classList.add('loading');
+    setTimeout(function() {
+        checkbox.classList.remove('loading');
+        checkbox.classList.add('checked');
+        captchaBox.classList.add('verified');
+        humanCheck.value = 'verified';
+        loginBtn.disabled = false;
+        loginBtn.style.opacity = '1';
+    }, 1500);
+});
+</script>
     </body>
     </html>
     <?php
