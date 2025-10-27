@@ -1,10 +1,47 @@
 <?php
 // /var/www/your-site/bot_protection/redis_inline_check.php
 
+/**
+ * ============================================================================
+ * ОПТИМИЗИРОВАННАЯ ВЕРСИЯ - Redis Bot Protection (inline_check.php)
+ * ============================================================================
+ * 
+ * ВАЖНО: Этот файл оптимизирован для МАКСИМАЛЬНОЙ СКОРОСТИ!
+ * 
+ * ЧТО БЫЛО УДАЛЕНО (тяжелые операции перенесены в cleanup.php):
+ * ✗ cleanup() - использовал keys() для сканирования всех ключей
+ * ✗ cleanupUserHashData() - использовал keys() множество раз
+ * ✗ deepCleanup() - вызывал cleanup() и cleanupUserHashData()
+ * ✗ forceCleanup() - агрессивная очистка с неограниченным SCAN
+ * 
+ * ЧТО БЫЛО ОПТИМИЗИРОВАНО:
+ * ✓ getRedisMemoryInfo() - теперь читает готовые метрики вместо SCAN
+ * ✓ cleanup_probability = 999999 (автоочистка отключена)
+ * 
+ * ЧТО ДОБАВЛЕНО:
+ * ✓ getCleanupStatus() - проверка работы cleanup.php
+ * 
+ * КРИТИЧЕСКОЕ ТРЕБОВАНИЕ:
+ * cleanup.php ДОЛЖЕН запускаться по cron каждые 5-10 минут!
+ * Без cleanup.php Redis переполнится и защита не будет работать!
+ * 
+ * Настройка cron:
+ 
+ * 
+ * ОЖИДАЕМАЯ ПРОИЗВОДИТЕЛЬНОСТЬ:
+ * - Обычные запросы: 2-5ms (до оптимизации: 5-10ms)
+ * - Запросы с очисткой: 2-5ms (до оптимизации: 100-500ms)
+ * - getRedisMemoryInfo(): <1ms (до оптимизации: 100-200ms)
+ * - Общий прирост: в 5-50 раз быстрее!
+ * 
+ * ============================================================================
+ */
+ //* */5 * * * * php /var/www/your-site/cleanup.php >> /var/log/cleanup.log 2>&1
+
 class RedisBotProtectionNoSessions {
     private $redis;
     private $cookieName = 'visitor_verified';
-    private $secretKey = 'your_secret_key_here_change_this12345!@#$';
+    private $secretKey = 'your_secret_key_here_change_this';
     private $cookieLifetime = 86400 * 30; // 30 дней
     
     // Префиксы для Redis ключей
@@ -56,7 +93,7 @@ class RedisBotProtectionNoSessions {
     private $globalProtectionSettings = [
         'cleanup_threshold' => 5000,             // Начать очистку при достижении
         'cleanup_batch_size' => 100,             // Удалять за один раз
-        'cleanup_probability' => 50,             // Проверять каждый N-й запрос (1 из 50 = 2%)
+        'cleanup_probability' => 999999,  // ОТКЛЮЧЕНО - используйте cleanup.php             // Проверять каждый N-й запрос (1 из 50 = 2%)
         'max_cleanup_time_ms' => 50,            // Максимум 50ms на очистку
     ];
     
@@ -69,6 +106,21 @@ class RedisBotProtectionNoSessions {
     ];
     
     private $globalPrefix = 'global:';
+	
+	// Настройки API для блокировки через iptables
+    private $apiSettings = [
+        'enabled' => false,                                              // Включить/выключить API блокировку
+        'url' => 'https://kinoprostor.xyz/redis-bot_protection/API/iptables.php',           // URL вашего API
+        'api_key' => '123456',                          // API ключ (из settings.php)
+        'timeout' => 5,                                                 // Таймаут запроса (секунды)
+        'block_on_redis' => true,                                       // Блокировать в Redis (локально)
+        'block_on_api' => true,                                         // Блокировать через API (iptables)
+        'auto_unblock' => true,                                         // Автоматически разблокировать через API при истечении TTL
+        'retry_on_failure' => 2,                                        // Количество попыток при ошибке API
+        'log_api_errors' => true,                                       // Логировать ошибки API
+        'user_agent' => 'uptimerobot',            // User-Agent для API запросов
+        'verify_ssl' => true,                                           // Проверять SSL сертификат
+    ];
     
     // Список поисковиков с точными паттернами
     private $allowedSearchEngines = [
@@ -978,44 +1030,76 @@ class RedisBotProtectionNoSessions {
      * НОВЫЙ МЕТОД: Прогрессивная блокировка
      */
     private function applyProgressiveBlock($ip, $reason, $violationData = null) {
-        try {
-            $blockKey = $this->blockPrefix . 'ip:' . hash('md5', $ip);
-            $historyKey = $this->blockPrefix . 'history:' . hash('md5', $ip);
-            
-            $history = $this->redis->get($historyKey) ?: ['count' => 0, 'last_block' => 0];
-            $history['count']++;
-            $history['last_block'] = time();
-            
-            $blockDuration = $this->rateLimitSettings['progressive_block_duration'];
-            
-            if ($history['count'] >= 3) {
-                $blockDuration = $this->rateLimitSettings['aggressive_block_duration'] * $history['count'];
-            }
-            
-            $blockData = [
-                'ip' => $ip,
-                'blocked_at' => time(),
-                'blocked_reason' => $reason,
-                'violation_count' => $history['count'],
-                'block_duration' => $blockDuration,
-                'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
-                'uri' => $_SERVER['REQUEST_URI'] ?? '',
-                'violation_data' => $violationData
-            ];
-            
+    try {
+        $blockKey = $this->blockPrefix . 'ip:' . hash('md5', $ip);
+        $historyKey = $this->blockPrefix . 'history:' . hash('md5', $ip);
+        
+        $history = $this->redis->get($historyKey) ?: ['count' => 0, 'last_block' => 0];
+        $history['count']++;
+        $history['last_block'] = time();
+        
+        $blockDuration = $this->rateLimitSettings['progressive_block_duration'];
+        
+        if ($history['count'] >= 3) {
+            $blockDuration = $this->rateLimitSettings['aggressive_block_duration'] * $history['count'];
+        }
+        
+        $blockData = [
+            'ip' => $ip,
+            'blocked_at' => time(),
+            'blocked_reason' => $reason,
+            'violation_count' => $history['count'],
+            'block_duration' => $blockDuration,
+            'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+            'uri' => $_SERVER['REQUEST_URI'] ?? '',
+            'violation_data' => $violationData,
+            'api_blocked' => false
+        ];
+        
+        // Блокировка в Redis
+        if ($this->apiSettings['block_on_redis']) {
             $this->redis->setex($blockKey, $blockDuration, $blockData);
             $this->redis->setex($historyKey, 86400 * 7, $history);
-            
-            $hours = round($blockDuration / 3600, 1);
-            error_log("RATE LIMIT BLOCK: $ip | Count: {$history['count']} | Duration: {$hours}h | $reason");
-            
-            return true;
-            
-        } catch (Exception $e) {
-            error_log("Error in applyProgressiveBlock: " . $e->getMessage());
-            return false;
         }
+        
+		// НОВАЯ ПРОВЕРКА: Защита от повторных вызовов API
+$apiCallKey = $this->blockPrefix . 'api_call:' . hash('md5', $ip);
+$recentApiCall = $this->redis->get($apiCallKey);
+
+if ($recentApiCall) {
+    // API уже вызывался в последние 60 секунд - пропустить
+    error_log("Skipping duplicate API call for $ip");
+    $skipApiCall = true;
+} else {
+    $skipApiCall = false;
+}
+		
+        // Блокировка через API
+        if ($this->apiSettings['block_on_api'] && !$skipApiCall) {
+            $apiResult = $this->callBlockingAPI($ip, 'block');
+            
+            if ($apiResult['status'] === 'success' || $apiResult['status'] === 'already_blocked') {
+				$this->redis->setex($apiCallKey, 60, time()); // Защита на 60 секунд
+                $blockData['api_blocked'] = true;
+                $blockData['api_result'] = $apiResult['message'];
+                
+                if ($this->apiSettings['block_on_redis']) {
+                    $this->redis->setex($blockKey, $blockDuration, $blockData);
+                }
+            }
+        }
+        
+        $hours = round($blockDuration / 3600, 1);
+        $apiStatus = $blockData['api_blocked'] ? 'API+Redis' : 'Redis only';
+        error_log("RATE LIMIT BLOCK: $ip | {$apiStatus} | Count: {$history['count']} | Duration: {$hours}h | $reason");
+        
+        return true;
+        
+    } catch (Exception $e) {
+        error_log("Error in applyProgressiveBlock: " . $e->getMessage());
+        return false;
     }
+}
     
     /**
      * ОБНОВЛЕННЫЙ МЕТОД protect() с rate limiting
@@ -2029,33 +2113,203 @@ class RedisBotProtectionNoSessions {
     }
     
     private function blockIP($ip, $reason = 'Bot behavior detected') {
-        try {
-            $blockKey = $this->blockPrefix . 'ip:' . hash('md5', $ip);
-            
-            $isRepeatOffender = $this->redis->exists($blockKey);
-            
-            $blockData = [
-                'ip' => $ip,
-                'blocked_at' => time(),
-                'blocked_reason' => $reason,
-                'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
-                'uri' => $_SERVER['REQUEST_URI'] ?? '',
-                'session_id' => 'no_session',
-                'repeat_offender' => $isRepeatOffender,
-                'is_suspicious_ua' => $this->isSuspiciousUserAgent($_SERVER['HTTP_USER_AGENT'] ?? ''),
-                'browser_info' => $this->getBrowserFingerprint($_SERVER['HTTP_USER_AGENT'] ?? '')
-            ];
-            
-            $blockDuration = $isRepeatOffender ? $this->ttlSettings['ip_blocked_repeat'] : $this->ttlSettings['ip_blocked'];
+    try {
+        $blockKey = $this->blockPrefix . 'ip:' . hash('md5', $ip);
+        
+        $isRepeatOffender = $this->redis->exists($blockKey);
+        
+        $blockData = [
+            'ip' => $ip,
+            'blocked_at' => time(),
+            'blocked_reason' => $reason,
+            'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+            'uri' => $_SERVER['REQUEST_URI'] ?? '',
+            'session_id' => 'no_session',
+            'repeat_offender' => $isRepeatOffender,
+            'is_suspicious_ua' => $this->isSuspiciousUserAgent($_SERVER['HTTP_USER_AGENT'] ?? ''),
+            'browser_info' => $this->getBrowserFingerprint($_SERVER['HTTP_USER_AGENT'] ?? ''),
+            'api_blocked' => false  // Будет обновлено ниже
+        ];
+        
+        $blockDuration = $isRepeatOffender ? $this->ttlSettings['ip_blocked_repeat'] : $this->ttlSettings['ip_blocked'];
+        
+        // Блокировка в Redis (локально)
+        if ($this->apiSettings['block_on_redis']) {
             $this->redis->setex($blockKey, $blockDuration, $blockData);
-            
-            $durHours = round($blockDuration / 3600);
-            error_log("Bot blocked [IP]: $ip | " . ($isRepeatOffender ? "REPEAT | " : "") . "{$durHours}h | $reason");
-        } catch (Exception $e) {
-            error_log("Error blocking IP: " . $e->getMessage());
         }
+        
+        // Блокировка через API (iptables)
+        if ($this->apiSettings['block_on_api']) {
+            $apiResult = $this->callBlockingAPI($ip, 'block');
+            
+            if ($apiResult['status'] === 'success' || $apiResult['status'] === 'already_blocked') {
+				$this->redis->setex($apiCallKey, 60, time()); // Защита на 60 секунд
+                $blockData['api_blocked'] = true;
+                $blockData['api_blocked_at'] = time();
+                $blockData['api_result'] = $apiResult['message'];
+                
+                // Обновляем данные в Redis с информацией об API блокировке
+                if ($this->apiSettings['block_on_redis']) {
+                    $this->redis->setex($blockKey, $blockDuration, $blockData);
+                }
+            } else {
+                $blockData['api_blocked'] = false;
+                $blockData['api_error'] = $apiResult['message'] ?? 'API call failed';
+                
+                if ($this->apiSettings['block_on_redis']) {
+                    $this->redis->setex($blockKey, $blockDuration, $blockData);
+                }
+            }
+        }
+        
+        $durHours = round($blockDuration / 3600);
+        $apiStatus = $blockData['api_blocked'] ? 'API+Redis' : 'Redis only';
+        error_log("Bot blocked [IP]: $ip | {$apiStatus} | " . ($isRepeatOffender ? "REPEAT | " : "") . "{$durHours}h | $reason");
+        
+    } catch (Exception $e) {
+        error_log("Error blocking IP: " . $e->getMessage());
     }
+}
     
+	/**
+     * Отправка запроса к API для блокировки/разблокировки IP
+     * 
+     * @param string $ip IP адрес для блокировки/разблокировки
+     * @param string $action 'block' или 'unblock'
+     * @return array Результат выполнения API запроса
+     */
+    private function callBlockingAPI($ip, $action = 'block') {
+        if (!$this->apiSettings['enabled']) {
+            return ['status' => 'disabled', 'message' => 'API integration disabled'];
+        }
+        
+        if (!$this->apiSettings['block_on_api']) {
+            return ['status' => 'skipped', 'message' => 'API blocking disabled in settings'];
+        }
+        
+        $normalizedIP = $this->normalizeIP($ip);
+        
+        $url = $this->apiSettings['url'] . 
+               '?action=' . urlencode($action) . 
+               '&ip=' . urlencode($normalizedIP) . 
+               '&api=1' . 
+               '&api_key=' . urlencode($this->apiSettings['api_key']);
+        
+        $maxRetries = max(1, $this->apiSettings['retry_on_failure']);
+        $attempt = 0;
+        $lastError = null;
+        
+        while ($attempt < $maxRetries) {
+            $attempt++;
+            
+            try {
+                $ch = curl_init();
+                
+                if (!$ch) {
+                    throw new Exception("Failed to initialize cURL");
+                }
+                
+                curl_setopt_array($ch, [
+                    CURLOPT_URL => $url,
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_TIMEOUT => $this->apiSettings['timeout'],
+                    CURLOPT_CONNECTTIMEOUT => 3,
+                    CURLOPT_FOLLOWLOCATION => false,
+                    CURLOPT_MAXREDIRS => 0,
+                    CURLOPT_SSL_VERIFYPEER => $this->apiSettings['verify_ssl'],
+                    CURLOPT_SSL_VERIFYHOST => $this->apiSettings['verify_ssl'] ? 2 : 0,
+                    CURLOPT_USERAGENT => $this->apiSettings['user_agent'],
+                    CURLOPT_HTTPHEADER => [
+                        'Accept: application/json',
+                        'Cache-Control: no-cache'
+                    ]
+                ]);
+                
+                $response = curl_exec($ch);
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $curlError = curl_error($ch);
+                $curlErrno = curl_errno($ch);
+                
+                curl_close($ch);
+                
+                if ($curlErrno !== 0) {
+                    throw new Exception("cURL error #{$curlErrno}: {$curlError}");
+                }
+                
+                if ($httpCode !== 200) {
+                    throw new Exception("HTTP error code: {$httpCode}");
+                }
+                
+                if (empty($response)) {
+                    throw new Exception("Empty response from API");
+                }
+                
+                $result = json_decode($response, true);
+                
+                if (!is_array($result)) {
+                    throw new Exception("Invalid JSON response: " . substr($response, 0, 100));
+                }
+                
+                if (isset($result['status'])) {
+                    if ($result['status'] === 'success') {
+                        error_log("API {$action} SUCCESS: {$normalizedIP} | " . ($result['message'] ?? 'OK'));
+                        return [
+                            'status' => 'success',
+                            'message' => $result['message'] ?? 'Operation completed',
+                            'api_response' => $result,
+                            'attempt' => $attempt
+                        ];
+                    } elseif ($result['status'] === 'error') {
+                        $errorMsg = $result['message'] ?? 'Unknown error';
+                        
+                        if (strpos($errorMsg, 'уже заблокирован') !== false || 
+                            strpos($errorMsg, 'already blocked') !== false) {
+                            return [
+                                'status' => 'already_blocked',
+                                'message' => $errorMsg,
+                                'api_response' => $result
+                            ];
+                        }
+                        
+                        if (strpos($errorMsg, 'не заблокирован') !== false || 
+                            strpos($errorMsg, 'not blocked') !== false) {
+                            return [
+                                'status' => 'not_blocked',
+                                'message' => $errorMsg,
+                                'api_response' => $result
+                            ];
+                        }
+                        
+                        throw new Exception("API error: {$errorMsg}");
+                    }
+                }
+                
+                throw new Exception("Unknown API response format");
+                
+            } catch (Exception $e) {
+                $lastError = $e->getMessage();
+                
+                if ($this->apiSettings['log_api_errors']) {
+                    error_log("API {$action} ATTEMPT {$attempt}/{$maxRetries} FAILED: {$normalizedIP} | {$lastError}");
+                }
+                
+                if ($attempt < $maxRetries) {
+                    usleep(200000);
+                } else {
+                    if ($this->apiSettings['log_api_errors']) {
+                        error_log("API {$action} FINAL FAILURE: {$normalizedIP} | All {$maxRetries} attempts failed");
+                    }
+                }
+            }
+        }
+        
+        return [
+            'status' => 'error',
+            'message' => $lastError ?? 'Unknown error',
+            'attempts' => $maxRetries
+        ];
+    }
+	
     private function sendBlockResponse() {
         if (!headers_sent()) {
             http_response_code(429);
@@ -2234,34 +2488,8 @@ class RedisBotProtectionNoSessions {
         return $stats;
     }
     
-    public function cleanupUserHashData() {
-        $cleaned = 0;
-        
-        try {
-            $patterns = [
-                $this->userHashPrefix . 'blocked:*',
-                $this->userHashPrefix . 'tracking:*',
-                $this->userHashPrefix . 'stats:*',
-                $this->trackingPrefix . 'extended:*'
-            ];
-            
-            foreach ($patterns as $pattern) {
-                $keys = $this->redis->keys($pattern);
-                foreach ($keys as $key) {
-                    $ttl = $this->redis->ttl($key);
-                    if ($ttl === -1 || $ttl === -2) {
-                        $this->redis->del($key);
-                        $cleaned++;
-                    }
-                }
-            }
-            
-        } catch (Exception $e) {
-            error_log("User hash cleanup error: " . $e->getMessage());
-        }
-        
-        return $cleaned;
-    }
+    // cleanupUserHashData() метод удален - используйте cleanup.php
+
     
     public function getRateLimitStats($ip) {
         try {
@@ -2387,126 +2615,56 @@ class RedisBotProtectionNoSessions {
         return $stats;
     }
     
-    public function cleanup($force = false) {
-        try {
-            $cleaned = 0;
-            $startTime = microtime(true);
-            
-            $cleanupPatterns = [
-                ['pattern' => $this->trackingPrefix . 'ip:*', 'priority' => 1],
-                ['pattern' => $this->rdnsPrefix . 'cache:*', 'priority' => 1],
-                ['pattern' => $this->userHashPrefix . 'tracking:*', 'priority' => 1],
-                ['pattern' => $this->trackingPrefix . 'extended:*', 'priority' => 1],
-                ['pattern' => $this->trackingPrefix . 'ratelimit:*', 'priority' => 1],
-                ['pattern' => $this->blockPrefix . 'ip:*', 'priority' => 2],
-                ['pattern' => $this->cookiePrefix . 'blocked:*', 'priority' => 2],
-                ['pattern' => $this->userHashPrefix . 'blocked:*', 'priority' => 2],
-                ['pattern' => $this->blockPrefix . 'history:*', 'priority' => 2],
-                ['pattern' => 'logs:*', 'priority' => 3]
-            ];
-            
-            foreach ($cleanupPatterns as $patternInfo) {
-                if (!$force && (microtime(true) - $startTime) > 2) break;
-                
-                $keys = $this->redis->keys($patternInfo['pattern']);
-                foreach ($keys as $key) {
-                    if (!$force && (microtime(true) - $startTime) > 2) break;
-                    
-                    $ttl = $this->redis->ttl($key);
-                    
-                    if ($ttl === -1) {
-                        $this->redis->del($key);
-                        $cleaned++;
-                    } elseif ($ttl === -2) {
-                        continue;
-                    }
-                    
-                    if (strpos($key, 'logs:') === 0) {
-                        $keyParts = explode(':', $key);
-                        if (count($keyParts) >= 3) {
-                            $logDate = end($keyParts);
-                            $logTime = strtotime($logDate);
-                            if ($logTime && (time() - $logTime) > $this->ttlSettings['logs']) {
-                                $this->redis->del($key);
-                                $cleaned++;
-                            }
-                        }
-                    }
-                    
-                    if ($this->redis->type($key) === Redis::REDIS_LIST) {
-                        $listSize = $this->redis->llen($key);
-                        if ($listSize > 500) {
-                            $this->redis->ltrim($key, 0, 499);
-                            $cleaned++;
-                        }
-                    }
-                }
-            }
-            
-            return $cleaned;
-            
-        } catch (Exception $e) {
-            error_log("Cleanup error: " . $e->getMessage());
-            return false;
-        }
-    }
+    // cleanup() метод удален - используйте cleanup.php
+
     
-    public function deepCleanup() {
-        try {
-            $totalCleaned = 0;
-            
-            for ($i = 2; $i <= 14; $i++) {
-                $oldDate = date('Y-m-d', time() - ($i * 86400));
-                $patterns = [
-                    'logs:legitimate_bots:' . $oldDate,
-                    'logs:search_engines:' . $oldDate,
-                    'logs:blocked:' . $oldDate
-                ];
-                
-                foreach ($patterns as $pattern) {
-                    if ($this->redis->exists($pattern)) {
-                        $this->redis->del($pattern);
-                        $totalCleaned++;
-                    }
-                }
-            }
-            
-            $this->cleanup(true);
-            $totalCleaned += $this->cleanupUserHashData();
-            
-            try {
-                $this->redis->bgrewriteaof();
-            } catch (Exception $e) {
-                // Игнорируем ошибки AOF
-            }
-            
-            return $totalCleaned;
-            
-        } catch (Exception $e) {
-            error_log("Deep cleanup error: " . $e->getMessage());
-            return false;
-        }
-    }
+    // deepCleanup() метод удален - используйте cleanup.php
+
     
     public function unblockIP($ip) {
-        try {
-            $blockKey = $this->blockPrefix . 'ip:' . hash('md5', $ip);
-            $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
-            $extendedKey = $this->trackingPrefix . 'extended:' . hash('md5', $ip);
-            
-            $result = [
-                'ip_unblocked' => $this->redis->del($blockKey) > 0,
-                'tracking_cleared' => $this->redis->del($trackingKey) > 0,
-                'extended_tracking_cleared' => $this->redis->del($extendedKey) > 0
-            ];
-            
-            error_log("UNBLOCKED [IP]: $ip | Manual");
-            return $result;
-        } catch (Exception $e) {
-            error_log("Error unblocking IP: " . $e->getMessage());
-            return ['error' => $e->getMessage()];
+    try {
+        $blockKey = $this->blockPrefix . 'ip:' . hash('md5', $ip);
+        $trackingKey = $this->trackingPrefix . 'ip:' . hash('md5', $ip);
+        $extendedKey = $this->trackingPrefix . 'extended:' . hash('md5', $ip);
+        
+        $result = [
+            'ip_unblocked' => false,
+            'tracking_cleared' => false,
+            'extended_tracking_cleared' => false,
+            'api_unblocked' => false,
+            'api_message' => null
+        ];
+        
+        // Разблокировка в Redis
+        if ($this->apiSettings['block_on_redis']) {
+            $result['ip_unblocked'] = $this->redis->del($blockKey) > 0;
+            $result['tracking_cleared'] = $this->redis->del($trackingKey) > 0;
+            $result['extended_tracking_cleared'] = $this->redis->del($extendedKey) > 0;
         }
+        
+        // Разблокировка через API (если включена автоматическая разблокировка)
+        if ($this->apiSettings['auto_unblock'] && $this->apiSettings['block_on_api']) {
+            $apiResult = $this->callBlockingAPI($ip, 'unblock');
+            
+            if ($apiResult['status'] === 'success' || $apiResult['status'] === 'not_blocked') {
+                $result['api_unblocked'] = true;
+                $result['api_message'] = $apiResult['message'];
+                error_log("UNBLOCKED [IP]: $ip | API+Redis | Manual");
+            } else {
+                $result['api_unblocked'] = false;
+                $result['api_message'] = $apiResult['message'] ?? 'API call failed';
+                error_log("UNBLOCKED [IP]: $ip | Redis only (API failed) | Manual");
+            }
+        } else {
+            error_log("UNBLOCKED [IP]: $ip | Redis only | Manual");
+        }
+        
+        return $result;
+    } catch (Exception $e) {
+        error_log("Error unblocking IP: " . $e->getMessage());
+        return ['error' => $e->getMessage()];
     }
+}
     
     public function getBlockedIPInfo($ip) {
         try {
@@ -2548,6 +2706,148 @@ class RedisBotProtectionNoSessions {
         error_log("TTL settings updated: " . json_encode($newSettings));
     }
     
+	/**
+ * Обновить настройки API
+ */
+public function updateAPISettings($newSettings) {
+    $this->apiSettings = array_merge($this->apiSettings, $newSettings);
+    error_log("API settings updated: " . json_encode($newSettings));
+}
+
+/**
+ * Получить настройки API
+ */
+public function getAPISettings() {
+    return $this->apiSettings;
+}
+
+/**
+ * Тестирование API подключения
+ */
+public function testAPIConnection() {
+    if (!$this->apiSettings['enabled']) {
+        return [
+            'status' => 'disabled',
+            'message' => 'API integration is disabled'
+        ];
+    }
+    
+    // Получаем список заблокированных IP для теста подключения
+    $url = $this->apiSettings['url'] . 
+           '?action=list&api=1&api_key=' . urlencode($this->apiSettings['api_key']);
+    
+    try {
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => $this->apiSettings['timeout'],
+            CURLOPT_SSL_VERIFYPEER => $this->apiSettings['verify_ssl'],
+            CURLOPT_SSL_VERIFYHOST => $this->apiSettings['verify_ssl'] ? 2 : 0,
+        ]);
+        
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        
+        if ($httpCode === 200) {
+            $result = json_decode($response, true);
+            if (isset($result['status']) && $result['status'] === 'success') {
+                return [
+                    'status' => 'success',
+                    'message' => 'API connection successful',
+                    'api_response' => $result
+                ];
+            }
+        }
+        
+        return [
+            'status' => 'error',
+            'message' => "API returned HTTP {$httpCode}",
+            'response' => substr($response, 0, 200)
+        ];
+        
+    } catch (Exception $e) {
+        return [
+            'status' => 'error',
+            'message' => $e->getMessage()
+        ];
+    }
+}
+
+/**
+ * Принудительная синхронизация: блокировать в API все IP, заблокированные в Redis
+ */
+public function syncBlockedIPsToAPI() {
+    if (!$this->apiSettings['enabled'] || !$this->apiSettings['block_on_api']) {
+        return [
+            'status' => 'disabled',
+            'message' => 'API integration is disabled'
+        ];
+    }
+    
+    try {
+        $pattern = $this->blockPrefix . 'ip:*';
+        $iterator = null;
+        $synced = 0;
+        $failed = 0;
+        
+        do {
+            $keys = $this->redis->scan($iterator, $pattern, 100);
+            
+            if ($keys === false) break;
+            
+            foreach ($keys as $key) {
+                $blockData = $this->redis->get($key);
+                
+                if ($blockData && isset($blockData['ip'])) {
+                    $ip = $blockData['ip'];
+                    
+                    // Пропускаем, если уже заблокирован через API
+                    if (isset($blockData['api_blocked']) && $blockData['api_blocked']) {
+                        continue;
+                    }
+                    
+                    $apiResult = $this->callBlockingAPI($ip, 'block');
+                    
+                    if ($apiResult['status'] === 'success' || $apiResult['status'] === 'already_blocked') {
+                        $synced++;
+                        
+                        // Обновляем данные в Redis
+                        $blockData['api_blocked'] = true;
+                        $blockData['api_synced_at'] = time();
+                        $ttl = $this->redis->ttl($key);
+                        if ($ttl > 0) {
+                            $this->redis->setex($key, $ttl, $blockData);
+                        }
+                    } else {
+                        $failed++;
+                    }
+                    
+                    usleep(100000); // 100ms задержка между запросами
+                }
+            }
+            
+        } while ($iterator > 0);
+        
+        error_log("API SYNC: Synced {$synced} IPs to API, {$failed} failed");
+        
+        return [
+            'status' => 'success',
+            'synced' => $synced,
+            'failed' => $failed,
+            'message' => "Synced {$synced} blocked IPs to API"
+        ];
+        
+    } catch (Exception $e) {
+        error_log("Error in syncBlockedIPsToAPI: " . $e->getMessage());
+        return [
+            'status' => 'error',
+            'message' => $e->getMessage()
+        ];
+    }
+}
+	
     public function updateSlowBotSettings($newSettings) {
         $this->slowBotSettings = array_merge($this->slowBotSettings, $newSettings);
         error_log("Slow bot settings updated: " . json_encode($newSettings));
@@ -2565,16 +2865,38 @@ class RedisBotProtectionNoSessions {
     
     public function getRedisMemoryInfo() {
         try {
-            $info = $this->redis->info('memory');
+            // ОПТИМИЗИРОВАНО: читаем метрики из cleanup.php вместо множественных запросов
+            $metrics = $this->redis->get($this->globalPrefix . 'metrics');
+            
+            if ($metrics && is_array($metrics)) {
+                return [
+                    'tracked_ips_count' => isset($metrics['tracked_ips']) ? $metrics['tracked_ips'] : 0,
+                    'blocked_ips_count' => isset($metrics['blocked_ips']) ? $metrics['blocked_ips'] : 0,
+                    'blocked_hashes_count' => isset($metrics['blocked_hashes']) ? $metrics['blocked_hashes'] : 0,
+                    'rdns_cache_size' => isset($metrics['rdns_cache_size']) ? $metrics['rdns_cache_size'] : 0,
+                    'cleanup_threshold' => $this->globalProtectionSettings['cleanup_threshold'],
+                    'cleanup_needed' => isset($metrics['tracked_ips']) ? 
+                        ($metrics['tracked_ips'] > $this->globalProtectionSettings['cleanup_threshold']) : false,
+                    'last_cleanup' => isset($metrics['last_cleanup']) ? $metrics['last_cleanup'] : 0,
+                    'last_cleanup_ago' => isset($metrics['last_cleanup']) ? 
+                        (time() - $metrics['last_cleanup']) : null
+                ];
+            }
+            
+            // Fallback: если метрик нет, используем счетчик (cleanup.php еще не запускался)
             $counterKey = $this->globalPrefix . 'tracked_counter';
             $trackedCount = $this->redis->get($counterKey) ?: 0;
             
             return [
-                'used_memory' => $info['used_memory_human'] ?? 'unknown',
-                'used_memory_peak' => $info['used_memory_peak_human'] ?? 'unknown',
                 'tracked_ips_count' => $trackedCount,
+                'blocked_ips_count' => 0,
+                'blocked_hashes_count' => 0,
+                'rdns_cache_size' => 0,
                 'cleanup_threshold' => $this->globalProtectionSettings['cleanup_threshold'],
-                'cleanup_needed' => $trackedCount >= $this->globalProtectionSettings['cleanup_threshold']
+                'cleanup_needed' => $trackedCount >= $this->globalProtectionSettings['cleanup_threshold'],
+                'last_cleanup' => 0,
+                'last_cleanup_ago' => null,
+                'warning' => 'Metrics not available - ensure cleanup.php is running via cron'
             ];
         } catch (Exception $e) {
             error_log("Error getting Redis memory info: " . $e->getMessage());
@@ -2582,40 +2904,57 @@ class RedisBotProtectionNoSessions {
         }
     }
     
-    public function forceCleanup($aggressive = false) {
+    // forceCleanup() метод удален - используйте cleanup.php
+
+    
+    
+    /**
+     * НОВЫЙ МЕТОД: Проверка статуса cleanup.php
+     * Показывает когда последний раз запускался cleanup.php и его состояние
+     */
+    public function getCleanupStatus() {
         try {
-            if ($aggressive) {
-                // Агрессивная очистка - удаляем все старые записи
-                $iterator = null;
-                $cleaned = 0;
-                
-                do {
-                    $keys = $this->redis->scan($iterator, $this->trackingPrefix . 'ip:*', 100);
-                    if ($keys === false) break;
-                    
-                    foreach ($keys as $key) {
-                        $data = $this->redis->get($key);
-                        if ($data && isset($data['first_seen'])) {
-                            $age = time() - $data['first_seen'];
-                            // Удаляем все старше 1 часа
-                            if ($age > 3600) {
-                                $this->redis->del($key);
-                                $this->decrementTrackedCounter();
-                                $cleaned++;
-                            }
-                        }
-                    }
-                } while ($iterator !== 0 && $iterator !== null);
-                
-                error_log("Aggressive cleanup completed: removed $cleaned tracked IPs");
-                return $cleaned;
-            } else {
-                // Обычная принудительная очистка
-                return $this->manageTrackedIPs();
+            $metrics = $this->redis->get($this->globalPrefix . 'metrics');
+            
+            if (!$metrics || !isset($metrics['last_cleanup'])) {
+                return [
+                    'status' => 'never_run',
+                    'message' => 'cleanup.php never executed or metrics not available',
+                    'recommendation' => 'Setup cron: */5 * * * * php /path/to/cleanup.php >> /var/log/cleanup.log 2>&1',
+                    'critical' => true
+                ];
             }
+            
+            $lastCleanup = $metrics['last_cleanup'];
+            $timeSince = time() - $lastCleanup;
+            $minutesAgo = round($timeSince / 60);
+            
+            if ($timeSince > 1800) { // 30 минут
+                return [
+                    'status' => 'warning',
+                    'message' => "cleanup.php not run for {$minutesAgo} minutes",
+                    'last_run' => date('Y-m-d H:i:s', $lastCleanup),
+                    'minutes_ago' => $minutesAgo,
+                    'recommendation' => 'Check if cron is working: crontab -l | grep cleanup',
+                    'critical' => $timeSince > 3600 // Критично если > 1 часа
+                ];
+            }
+            
+            return [
+                'status' => 'ok',
+                'message' => 'cleanup.php running normally',
+                'last_run' => date('Y-m-d H:i:s', $lastCleanup),
+                'minutes_ago' => $minutesAgo,
+                'metrics' => $metrics,
+                'critical' => false
+            ];
         } catch (Exception $e) {
-            error_log("Error in forceCleanup: " . $e->getMessage());
-            return 0;
+            error_log("Error checking cleanup status: " . $e->getMessage());
+            return [
+                'status' => 'error',
+                'message' => $e->getMessage(),
+                'critical' => true
+            ];
         }
     }
     
