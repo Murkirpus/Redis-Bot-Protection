@@ -544,7 +544,6 @@ if (!isLoggedIn()) {
             <?php if ($message): ?>
                 <div class="error"><?php echo htmlspecialchars($message); ?></div>
             <?php endif; ?>
-			<a href="redis_test.php" target="_blank" rel="noopener noreferrer" class="btn btn-primary">📊 Test Page</a>
             <form method="POST">
 			<?php $captchaToken = generateCaptchaToken(); ?>
                 <input type="hidden" name="action" value="login">
@@ -618,6 +617,22 @@ $section = $_GET['section'] ?? 'dashboard';
 $stats = $protection->getStats();
 $rdnsStats = $protection->getRDNSRateLimitStats();
 $memInfo = $protection->getRedisMemoryInfo();
+
+// Получаем память Redis напрямую (т.к. getRedisMemoryInfo больше не возвращает used_memory)
+try {
+    $redis = new Redis();
+    $redis->connect('127.0.0.1', 6379);
+    $redisInfo = $redis->info('memory');
+    if (is_array($redisInfo) && isset($redisInfo['used_memory_human'])) {
+        $memInfo['used_memory'] = $redisInfo['used_memory_human'];
+    } else {
+        $redisInfo = $redis->info();
+        $memInfo['used_memory'] = $redisInfo['used_memory_human'] ?? 'N/A';
+    }
+    $redis->close();
+} catch (Exception $e) {
+    $memInfo['used_memory'] = 'N/A';
+}
 
 // Подключение к Redis для дополнительных данных
 $redis = new Redis();
@@ -1036,6 +1051,8 @@ if ($section === 'logs') {
             <h1>🛡️ Redis MurKir Security - Admin Panel</h1>
             <div class="user-info">
 			<a href="redis_test.php" target="_blank" rel="noopener noreferrer" class="btn btn-primary">📊 Test Page</a>
+			<a href="/bot_protection/API/iptables.php?api_key=123456" target="_blank" rel="noopener noreferrer" class="btn btn-primary">📊 IP</a>
+			<a href="/counter-xyz/index.php" target="_blank" rel="noopener noreferrer" class="btn btn-primary">📊 Counter</a>
                 <span>👤 <?php echo htmlspecialchars($_SESSION['admin_username'] ?? 'Admin'); ?></span>
                 <form method="POST" style="display: inline;">
                     <input type="hidden" name="action" value="logout">
