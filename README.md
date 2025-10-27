@@ -1,6 +1,8 @@
 <img src="./images/Screenshot 2025-10-13 153857.png" alt="Демонстрация" width="800">
 # Redis MurKir Security - Система защиты от ботов
 
+Добавленна работа с API - теперь можно блокировать IP в iptables!
+
 Подключение защиты. Нужно в самом верху на пример в index.php добавить эту строку.
 
 require_once $_SERVER['DOCUMENT_ROOT'] . '/Redis-Bot-Protection/inline_check.php';
