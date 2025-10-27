@@ -1,0 +1,130 @@
+# Используем Cmnd_Alias для группировки команд
+# Правила для IPv4
+Cmnd_Alias IPTABLES_IPV4 = /sbin/iptables -C INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /sbin/iptables -C INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /sbin/iptables -I INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /sbin/iptables -I INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /sbin/iptables -D INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /sbin/iptables -D INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /sbin/iptables -D INPUT -s * -j DROP, \
+                           /usr/sbin/iptables -C INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /usr/sbin/iptables -C INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /usr/sbin/iptables -I INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /usr/sbin/iptables -I INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /usr/sbin/iptables -D INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /usr/sbin/iptables -D INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /usr/sbin/iptables -D INPUT -s * -j DROP, \
+                           /bin/iptables -C INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /bin/iptables -C INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /bin/iptables -I INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /bin/iptables -I INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /bin/iptables -D INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /bin/iptables -D INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /bin/iptables -D INPUT -s * -j DROP
+
+# Правила для IPv6
+Cmnd_Alias IPTABLES_IPV6 = /sbin/ip6tables -C INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /sbin/ip6tables -C INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /sbin/ip6tables -I INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /sbin/ip6tables -I INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /sbin/ip6tables -D INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /sbin/ip6tables -D INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /sbin/ip6tables -D INPUT -s * -j DROP, \
+                           /usr/sbin/ip6tables -C INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /usr/sbin/ip6tables -C INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /usr/sbin/ip6tables -I INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /usr/sbin/ip6tables -I INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /usr/sbin/ip6tables -D INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /usr/sbin/ip6tables -D INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /usr/sbin/ip6tables -D INPUT -s * -j DROP, \
+                           /bin/ip6tables -C INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /bin/ip6tables -C INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /bin/ip6tables -I INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /bin/ip6tables -I INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /bin/ip6tables -D INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /bin/ip6tables -D INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /bin/ip6tables -D INPUT -s * -j DROP
+
+# Информационные команды
+Cmnd_Alias IPTABLES_INFO = /sbin/iptables -S INPUT, \
+                          /sbin/iptables -L INPUT -n -v, \
+                          /sbin/ip6tables -S INPUT, \
+                          /sbin/ip6tables -L INPUT -n -v, \
+                          /sbin/iptables-save, \
+                          /sbin/ip6tables-save, \
+                          /usr/sbin/iptables -S INPUT, \
+                          /usr/sbin/iptables -L INPUT -n -v, \
+                          /usr/sbin/ip6tables -S INPUT, \
+                          /usr/sbin/ip6tables -L INPUT -n -v, \
+                          /usr/sbin/iptables-save, \
+                          /usr/sbin/ip6tables-save
+
+# Команды для сохранения правил
+Cmnd_Alias IPTABLES_SAVE = /bin/sh -c *iptables-save*rules.v4*, \
+                          /bin/sh -c *ip6tables-save*rules.v6*, \
+                          /usr/bin/service iptables save, \
+                          /usr/bin/service ip6tables save, \
+                          /usr/sbin/service iptables save, \
+                          /usr/sbin/service ip6tables save, \
+                          /bin/systemctl restart iptables, \
+                          /bin/systemctl restart ip6tables, \
+                          /usr/bin/systemctl restart iptables, \
+                          /usr/bin/systemctl restart ip6tables
+
+# Дополнительные команды
+Cmnd_Alias IPTABLES_MISC = /bin/mkdir -p /etc/iptables, \
+                          /usr/bin/mkdir -p /etc/iptables, \
+                          /usr/bin/chmod 755 /etc/iptables, \
+                          /bin/chmod 755 /etc/iptables, \
+                          /usr/bin/chown root\:root /etc/iptables/rules.v4, \
+                          /usr/bin/chown root\:root /etc/iptables/rules.v6, \
+                          /bin/chown root\:root /etc/iptables/rules.v4, \
+                          /bin/chown root\:root /etc/iptables/rules.v6
+
+# Перезагрузка Nginx
+Cmnd_Alias NGINX_RELOAD = /usr/sbin/nginx -s reload, \
+                         /usr/bin/nginx -s reload, \
+                         /bin/systemctl reload nginx, \
+                         /usr/bin/systemctl reload nginx
+
+# НОВЫЕ ПРАВИЛА ДЛЯ ПОДДЕРЖКИ IP.PHP
+
+# Правила ACCEPT для IPv4
+Cmnd_Alias IPTABLES_IPV4_ACCEPT = /sbin/iptables -A INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /sbin/iptables -C INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /sbin/iptables -D INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /usr/sbin/iptables -A INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /usr/sbin/iptables -C INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /usr/sbin/iptables -D INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /bin/iptables -A INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /bin/iptables -C INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /bin/iptables -D INPUT -p tcp -s * --dport * -j ACCEPT
+
+# Правила ACCEPT для IPv6
+Cmnd_Alias IPTABLES_IPV6_ACCEPT = /sbin/ip6tables -A INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /sbin/ip6tables -C INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /sbin/ip6tables -D INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /usr/sbin/ip6tables -A INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /usr/sbin/ip6tables -C INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /usr/sbin/ip6tables -D INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /bin/ip6tables -A INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /bin/ip6tables -C INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /bin/ip6tables -D INPUT -p tcp -s * --dport * -j ACCEPT
+
+# Информационные команды для полного списка правил
+Cmnd_Alias IPTABLES_FULL_INFO = /sbin/iptables -L, \
+                               /usr/sbin/iptables -L, \
+                               /bin/iptables -L, \
+                               /sbin/ip6tables -L, \
+                               /usr/sbin/ip6tables -L, \
+                               /bin/ip6tables -L
+
+# Назначаем права для всех возможных пользователей web-сервера
+nginx ALL=(ALL) NOPASSWD: IPTABLES_IPV4, IPTABLES_IPV6, IPTABLES_INFO, IPTABLES_MISC, IPTABLES_SAVE, NGINX_RELOAD, IPTABLES_IPV4_ACCEPT, IPTABLES_IPV6_ACCEPT, IPTABLES_FULL_INFO
+#www-data ALL=(ALL) NOPASSWD: IPTABLES_IPV4, IPTABLES_IPV6, IPTABLES_INFO, IPTABLES_MISC, IPTABLES_SAVE, NGINX_RELOAD, IPTABLES_IPV4_ACCEPT, IPTABLES_IPV6_ACCEPT, IPTABLES_FULL_INFO
+#apache ALL=(ALL) NOPASSWD: IPTABLES_IPV4, IPTABLES_IPV6, IPTABLES_INFO, IPTABLES_MISC, IPTABLES_SAVE, NGINX_RELOAD, IPTABLES_IPV4_ACCEPT, IPTABLES_IPV6_ACCEPT, IPTABLES_FULL_INFO
+#nobody ALL=(ALL) NOPASSWD: IPTABLES_IPV4, IPTABLES_IPV6, IPTABLES_INFO, IPTABLES_MISC, IPTABLES_SAVE, NGINX_RELOAD, IPTABLES_IPV4_ACCEPT, IPTABLES_IPV6_ACCEPT, IPTABLES_FULL_INFO
+
+#Команды для проверки работоспособности
+#nginx ALL=(ALL) NOPASSWD: /usr/sbin/nginx -s reload, /bin/systemctl reload nginx
+#nginx ALL=(ALL) NOPASSWD: /sbin/iptables, /sbin/ip6tables, /sbin/iptables-save, /sbin/ip6tables-save
