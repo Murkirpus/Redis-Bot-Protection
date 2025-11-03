@@ -1,4 +1,5 @@
 <img src="./images/redis-admin-panel.png" alt="Демонстрация" width="800">
+<img src="./images/iptables.png" alt="Демонстрация" width="800">
 # Redis MurKir Security - Система защиты от ботов
 
 Добавленна работа с API - теперь можно блокировать IP в iptables!
