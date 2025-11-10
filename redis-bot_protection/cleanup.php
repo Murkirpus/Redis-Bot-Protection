@@ -5,6 +5,17 @@
 // ============================================================================
 // Этот скрипт теперь выполняет ВСЮ тяжелую работу по очистке и обслуживанию Redis,
 // освобождая inline_check.php для быстрой обработки запросов
+//
+// ВЕРСИЯ: 1.2 (ИСПРАВЛЕНА)
+// ДАТА: 2025-11-10
+// ИСПРАВЛЕНИЯ:
+//   v1.1 - Комбинированный подход для разблокировки IP через API
+//     - Теперь API вызывается для ВСЕХ IP, где была попытка блокировки через API
+//     - Исправлена проблема пропуска разблокировки при api_blocked = false
+//     - Добавлена проверка на api_error и старые записи без поля api_blocked
+//   v1.2 - User-Agent вынесен в настройки
+//     - Добавлена константа API_USER_AGENT (было захардкожено 'uptimerobot')
+//     - Теперь можно легко изменить User-Agent в настройках
 // ============================================================================
 
 // ============================================================================
@@ -20,9 +31,10 @@ define('REDIS_PREFIX', 'bot_protection:');
 
 // API настройки (должны совпадать с inline_check.php)
 define('API_ENABLED', true);
-define('API_URL', 'https://kinoprostor.xyz/dos/iptables.php');
+define('API_URL', 'https://myapi.com/redis_bot_protection/API/iptables.php');
 define('API_KEY', '12345');  // Ваш API ключ
 define('API_TIMEOUT', 5);
+define('API_USER_AGENT', 'uptimerobot');  // User-Agent для API запросов
 
 // Настройки очистки
 define('TTL_THRESHOLD', 300);  // Разблокировать если TTL < 5 минут (300 сек)
@@ -84,6 +96,9 @@ class AdvancedCleanup {
         'expired' => 0,
         'unblocked_success' => 0,
         'unblocked_failed' => 0,
+        'unblocked_was_api_blocked' => 0,      // Було api_blocked=true
+        'unblocked_had_api_error' => 0,        // Було api_error
+        'unblocked_no_api_field' => 0,         // Не було поля api_blocked (старі записи)
         'api_errors' => array(),
         'tracking_cleaned' => 0,
         'rdns_cleaned' => 0,
@@ -151,7 +166,7 @@ class AdvancedCleanup {
         curl_setopt_array($ch, array(
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => API_TIMEOUT,
-            CURLOPT_USERAGENT => 'uptimerobot',
+            CURLOPT_USERAGENT => API_USER_AGENT,
             CURLOPT_SSL_VERIFYPEER => true,
         ));
         
@@ -287,7 +302,26 @@ class AdvancedCleanup {
                     $ttlDisplay = ($ttl === -1) ? "NO TTL" : "{$ttl}s";
                     $wasApiBlocked = isset($blockData['api_blocked']) && $blockData['api_blocked'];
                     
-                    if ($useAPI && $wasApiBlocked && isset($blockData['ip'])) {
+                    // КОМБІНОВАНИЙ ПІДХІД: Перевіряємо чи була спроба API блокування
+                    // 1. Успішна блокування (api_blocked = true)
+                    // 2. Спроба з помилкою (є поле api_error)
+                    // 3. Старі записи (немає поля api_blocked взагалі)
+                    $wasApiAttempted = ($wasApiBlocked || 
+                                       (isset($blockData['api_error']) && !empty($blockData['api_error'])) ||
+                                       !isset($blockData['api_blocked']));
+                    
+                    // Збір статистики для аналізу
+                    if ($wasApiBlocked) {
+                        $apiScenario = 'api_blocked';
+                    } elseif (isset($blockData['api_error']) && !empty($blockData['api_error'])) {
+                        $apiScenario = 'api_error';
+                    } elseif (!isset($blockData['api_blocked'])) {
+                        $apiScenario = 'no_field';
+                    } else {
+                        $apiScenario = 'unknown';
+                    }
+                    
+                    if ($useAPI && $wasApiAttempted && isset($blockData['ip'])) {
                         $ip = $blockData['ip'];
                         $this->output("  Unblocking IP: $ip (TTL: {$ttlDisplay})... ");
                         
@@ -295,6 +329,16 @@ class AdvancedCleanup {
                         
                         if ($result['status'] === 'success' || $result['status'] === 'not_blocked') {
                             $this->stats['unblocked_success']++;
+                            
+                            // Детальна статистика по сценаріям
+                            if ($apiScenario === 'api_blocked') {
+                                $this->stats['unblocked_was_api_blocked']++;
+                            } elseif ($apiScenario === 'api_error') {
+                                $this->stats['unblocked_had_api_error']++;
+                            } elseif ($apiScenario === 'no_field') {
+                                $this->stats['unblocked_no_api_field']++;
+                            }
+                            
                             $this->output("✓\n");
                             $this->redis->del($key);
                         } else {
@@ -676,6 +720,9 @@ class AdvancedCleanup {
         $this->output("  Checked blocks:           {$this->stats['checked']}\n");
         $this->output("  Expired blocks:           {$this->stats['expired']}\n");
         $this->output("  Successfully unblocked:   {$this->stats['unblocked_success']}\n");
+        $this->output("    └─ Was api_blocked:     {$this->stats['unblocked_was_api_blocked']}\n");
+        $this->output("    └─ Had api_error:       {$this->stats['unblocked_had_api_error']}\n");
+        $this->output("    └─ No api_blocked field: {$this->stats['unblocked_no_api_field']}\n");
         $this->output("  Failed to unblock:        {$this->stats['unblocked_failed']}\n\n");
         
         $this->output("TRACKING & CACHE:\n");
@@ -724,6 +771,7 @@ try {
     echo "\nSettings:\n";
     echo "  Redis: " . REDIS_HOST . ":" . REDIS_PORT . "\n";
     echo "  API: " . (API_ENABLED ? API_URL : 'Disabled') . "\n";
+    echo "  API User-Agent: " . API_USER_AGENT . "\n";
     echo "  TTL threshold: " . TTL_THRESHOLD . " seconds\n";
     echo "  Cleanup threshold: " . CLEANUP_THRESHOLD . " IPs\n";
     echo "  Batch size: " . CLEANUP_BATCH_SIZE . "\n";
