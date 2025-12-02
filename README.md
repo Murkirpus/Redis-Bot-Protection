@@ -1,4 +1,9 @@
-<img src="./images/redis-admin-panel.png" alt="Демонстрация" width="800">
+Есть новая версия с кучей улучшений - блокирует всех кривых и умных ботов!
+Вылаживать или это лишь мне интересно, напишите сюда! 
+https://github.com/Murkirpus/Redis-Bot-Protection/issues
+Ниже скриншоты новой версии!
+<img src="./images/New1.png" alt="Демонстрация" width="800">
+<img src="./images/New2.png" alt="Демонстрация" width="800">
 <img src="./images/iptables.png" alt="Демонстрация" width="800">
 # Redis MurKir Security - Система защиты от ботов
 
