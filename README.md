@@ -1,7 +1,10 @@
 Есть новая версия с кучей улучшений - блокирует всех кривых и умных ботов!
 Вылаживать или это лишь мне интересно, напишите сюда!
+
 https://t.me/murkir_security
+
 https://murkir.pp.ua/news/76-nevidimaya-zaschita-ot-botov-novogo-pokoleniya
+
 Ниже скриншоты новой версии!
 <img src="./images/New.png" alt="Демонстрация" width="800">
 <img src="./images/New2.png" alt="Демонстрация" width="800">
