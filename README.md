@@ -6,7 +6,7 @@ https://t.me/murkir_security
 https://murkir.pp.ua/news/76-nevidimaya-zaschita-ot-botov-novogo-pokoleniya
 
 Ниже скриншоты новой версии!
-<img src="./images/2025-12-04.png" alt="Демонстрация" width="800">
+<img src="./images/2025-12-04.png" alt="Демонстрация" width="400">
 <img src="./images/New.png" alt="Демонстрация" width="800">
 <img src="./images/New2.png" alt="Демонстрация" width="800">
 <img src="./images/iptables.png" alt="Демонстрация" width="800">
