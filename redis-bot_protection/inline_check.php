@@ -296,7 +296,7 @@ class RedisBotProtectionNoSessions {
         'api_key' => '12345',                          // API ключ (из settings.php)
         'timeout' => 5,                                                 // Таймаут запроса (секунды)
         'block_on_redis' => true,                                       // Блокировать в Redis (локально)
-        'block_on_api' => true,                                         // Блокировать через API (iptables)
+        'block_on_api' => false,                                         // Блокировать через API (iptables)
         'auto_unblock' => true,                                         // Автоматически разблокировать через API при истечении TTL
         'retry_on_failure' => 2,                                        // Количество попыток при ошибке API
         'log_api_errors' => true,                                       // Логировать ошибки API
