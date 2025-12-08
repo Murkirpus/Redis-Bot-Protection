@@ -1317,8 +1317,8 @@ if ($section === 'logs') {
             <h1>🛡️ Redis MurKir Security - Admin Panel</h1>
             <div class="user-info">
 			<a href="redis_test-gemini.php" target="_blank" rel="noopener noreferrer" class="btn btn-primary">📊 Test Page</a>
-			<a href="https://blog.dj-x.info/redis-bot_protection/API/iptables.php?api_key=Asd12345" target="_blank" rel="noopener noreferrer" class="btn btn-primary">📊 IP</a>
-			<a href="/counter-xyz/index.php" target="_blank" rel="noopener noreferrer" class="btn btn-primary">📊 Counter</a>
+			<a href="/redis-bot_protection/API/iptables.php?api_key=12345" target="_blank" rel="noopener noreferrer" class="btn btn-primary">📊 IP</a>
+			<a href="/counter/index.php" target="_blank" rel="noopener noreferrer" class="btn btn-primary">📊 Counter</a>
                 <span>👤 <?php echo htmlspecialchars($_SESSION['admin_username'] ?? 'Admin'); ?></span>
                 <form method="POST" style="display: inline;">
                     <input type="hidden" name="action" value="logout">
