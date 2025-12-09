@@ -9,6 +9,35 @@
  * ВАЖНО: Этот файл оптимизирован для МАКСИМАЛЬНОЙ СКОРОСТИ!
  * 
  * ============================================================================
+ * ВЕРСИЯ 2.5.5 - СОВРЕМЕННЫЙ МИНИМАЛИСТИЧНЫЙ ДИЗАЙН (2025-12-09)
+ * ============================================================================
+ * 
+ * 🎨 ОБНОВЛЕНИЕ ДИЗАЙНА v2.5.5:
+ * ✓ Полностью обновлён дизайн JS Challenge страницы
+ * ✓ Минималистичный тёмный дизайн вместо старого градиентного
+ * ✓ Адаптивные размеры (clamp, svh/dvh)
+ * ✓ Анимированный SVG спиннер вместо эмодзи
+ * ✓ Сердечко (❤) в тексте с анимацией heartbeat
+ * ✓ Текст на русском языке: "Проверяем браузер перед переходом на сайт…"
+ * ✓ Скрытая панель проверок (показывается при выполнении)
+ * ✓ Минималистичные иконки проверок (⏳ → ✓)
+ * ✓ Улучшенная читаемость на мобильных устройствах
+ * 
+ * ДИЗАЙН:
+ * - Цветовая схема: Тёмный фон (#0d0d0d), белый текст, розовый акцент (#fa357a)
+ * - Анимации: Вращение спиннера, heartbeat для сердечка
+ * - Адаптивность: От 320px до 4K дисплеев
+ * - Доступность: Поддержка noscript, понятные сообщения
+ * 
+ * ВСЯ ФУНКЦИОНАЛЬНОСТЬ СОХРАНЕНА:
+ * - JS Challenge с Proof-of-Work
+ * - Canvas fingerprinting
+ * - WebGL detection
+ * - Timing validation
+ * - Behavior analysis
+ * - Все проверки безопасности работают как прежде
+ *
+ * ============================================================================
  * ВЕРСИЯ 2.5.4 - КРИТИЧНОЕ ИСПРАВЛЕНИЕ EXCLUDED_URLS (2025-12-07)
  * ============================================================================
  * 
@@ -47,7 +76,7 @@
  * 
  * НОВОЕ v2.5.3:
  * ✓ Расширена поддержка excluded_urls: теперь пропускают Rate Limit и Burst Detection
- * ✓ Поддержка wildcard паттернов (например: /api/ *, /TEMP/* /file.php?*)
+ * ✓ Поддержка wildcard паттернов (например: /api/*, /TEMP/* /file.php?*)
  * ✓ Новые методы управления исключениями:
  *   - addExcludedUrl($pattern) - добавить URL в исключения
  *   - removeExcludedUrl($pattern) - удалить URL из исключений
@@ -218,7 +247,7 @@
 class RedisBotProtectionNoSessions {
     private $redis;
     private $cookieName = 'visitor_verified';
-    private $secretKey = 'your_secret_key_here_change_this';
+    private $secretKey = 'your_secret_key_here_change_this12345!@#$';
     private $cookieLifetime = 86400 * 30; // 30 дней
     
     // Префиксы для Redis ключей
@@ -421,10 +450,7 @@ class RedisBotProtectionNoSessions {
         'excluded_urls' => [
             // Примеры паттернов (раскомментируйте нужные):
             // '/api/*',                           // Все API endpoints
-            '/TEMP/IPv6-IPv4/IPv6-IPv4.php',  // Конкретный файл с любыми параметрами
-			'/TEMP/IPv6-IPv4/IPv6-IPv4-PTR.php',  // Конкретный файл с любыми параметрами
-			'/redis-bot_protection/API/iptables.php*',  // Конкретный файл с любыми параметрами
-			//'/bot_protection/redis_test-gemini.php',  // Конкретный файл с любыми параметрами
+            // '/TEMP/IPv6-IPv4/IPv6-IPv4.php?*',  // Конкретный файл с любыми параметрами
             // '/admin/ajax/*',                     // Все AJAX запросы админки
             // '/webhook/*',                        // Все webhook endpoints
             // '/public/images/*',                  // Статичные ресурсы
@@ -2561,7 +2587,7 @@ if ($recentApiCall) {
         $legitimateBots = [
             'uptimerobot', 'pingdom', 'statuscake', 'site24x7',
             'cloudflare', 'fastly', 'keycdn', 'meta-externalagent',
-            'oai-searchbot', 'gptbot', 'claude-user', 'claudeBot', 'telegram', 'hosttracker', 'perplexity-user'
+            'oai-searchbot', 'chatgpt-user', 'gptbot', 'claude-user', 'claudeBot', 'telegram', 'hosttracker', 'perplexity-user'
         ];
         
         $userAgent = strtolower($userAgent);
@@ -4275,134 +4301,183 @@ public function syncBlockedIPsToAPI() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Security Check</title>
+    <title>Проверяем браузер перед переходом на сайт…</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
+        :root {
+            --bg: #0d0d0d;
+            --fg: #fff;
+            --muted: #bbb;
+            --accent: #fa357a;
+            --spinner: #667eea;
+        }
+        
+        html, body {
+            margin: 0;
+            height: 100%;
+            background: var(--bg);
+            color: var(--fg);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+        }
+        
+        .box {
+            min-height: 100svh;
+            min-height: 100dvh;
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 20px;
+            padding: clamp(12px, 3vw, 24px);
+            box-sizing: border-box;
         }
-        .container {
-            background: white;
-            border-radius: 20px;
-            padding: 40px;
-            max-width: 500px;
-            width: 100%;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        
+        .inner {
+            max-width: min(640px, 92vw);
             text-align: center;
         }
-        .icon {
-            font-size: 64px;
-            margin-bottom: 20px;
-            animation: pulse 2s infinite;
+        
+        .spinner {
+            width: clamp(36px, 8vmin, 64px);
+            height: clamp(36px, 8vmin, 64px);
+            margin: 0 auto 16px;
         }
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.1); }
-        }
-        h1 {
-            color: #333;
-            margin-bottom: 10px;
-            font-size: 28px;
-        }
-        .subtitle {
-            color: #666;
-            margin-bottom: 30px;
-            font-size: 14px;
-        }
-        .progress-container {
-            background: #f0f0f0;
-            height: 8px;
-            border-radius: 10px;
-            overflow: hidden;
-            margin: 20px 0;
-        }
-        .progress-bar {
+        
+        .spinner svg {
+            width: 100%;
             height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-            width: 0%;
-            transition: width 0.3s ease;
+            animation: rot 1s linear infinite;
         }
-        .status {
-            color: #666;
-            font-size: 14px;
-            margin-top: 15px;
+        
+        @keyframes rot {
+            to { transform: rotate(360deg); }
         }
+        
+        .title {
+            font-size: clamp(18px, 4.5vw, 24px);
+            font-weight: 700;
+            margin: 12px 0 6px;
+            line-height: 1.35;
+        }
+        
+        .desc {
+            color: var(--muted);
+            font-size: clamp(14px, 3.8vw, 18px);
+            line-height: 1.55;
+        }
+        
+        .heart {
+            color: var(--accent);
+            margin-left: 4px;
+            display: inline-block;
+            animation: heartbeat 1.5s ease-in-out infinite;
+        }
+        
+        @keyframes heartbeat {
+            0%, 100% { transform: scale(1); }
+            25% { transform: scale(1.1); }
+            50% { transform: scale(1); }
+        }
+        
         .checks {
-            text-align: left;
-            margin: 30px 0;
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            display: none; /* Скрыто по умолчанию */
         }
+        
         .check-item {
-            padding: 10px;
-            margin: 5px 0;
-            background: #f8f9fa;
-            border-radius: 8px;
             display: flex;
             align-items: center;
-            font-size: 14px;
+            justify-content: space-between;
+            padding: 8px 0;
+            font-size: clamp(13px, 3.2vw, 15px);
+            color: var(--muted);
+            opacity: 0.6;
+            transition: opacity 0.3s ease;
         }
-        .check-item .icon-small {
-            margin-right: 10px;
-            font-size: 20px;
+        
+        .check-item.done {
+            opacity: 1;
+            color: var(--fg);
         }
-        .check-item.pending { color: #999; }
-        .check-item.checking { color: #667eea; background: #e8eaf6; }
-        .check-item.done { color: #4caf50; background: #e8f5e9; }
+        
+        .check-icon {
+            font-size: 16px;
+            margin-left: 8px;
+        }
+        
         .error {
-            color: #f44336;
-            padding: 15px;
-            background: #ffebee;
+            background: rgba(250, 53, 122, 0.1);
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            padding: 12px 16px;
             border-radius: 8px;
-            margin-top: 20px;
+            margin-top: 16px;
+            font-size: clamp(13px, 3.2vw, 14px);
             display: none;
+        }
+        
+        noscript {
+            display: block;
+            color: var(--accent);
+            font-size: clamp(13px, 3.2vw, 15px);
+            margin-top: 16px;
+            padding: 12px;
+            background: rgba(250, 53, 122, 0.1);
+            border-radius: 8px;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="icon">🛡️</div>
-        <h1>Security Verification</h1>
-        <div class="subtitle">Verifying your browser security features...</div>
-        
-        <div class="progress-container">
-            <div class="progress-bar" id="progressBar"></div>
+    <div class="box">
+        <div class="inner">
+            <div class="spinner">
+                <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" 
+                            stroke-width="4" stroke-linecap="round" 
+                            stroke-dasharray="31.4 31.4" 
+                            style="color: var(--spinner); opacity: 0.3;"/>
+                    <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" 
+                            stroke-width="4" stroke-linecap="round" 
+                            stroke-dasharray="15.7 94.2"
+                            style="color: var(--spinner);"/>
+                </svg>
+            </div>
+            
+            <div class="title">Проверяем браузер перед переходом на сайт…</div>
+            <div class="desc" id="status">Это не занимает много времени, пожалуйста, подождите<span class="heart">❤</span></div>
+            
+            <div class="checks" id="checks">
+                <div class="check-item" id="check-js">
+                    <span>JavaScript</span>
+                    <span class="check-icon">⏳</span>
+                </div>
+                <div class="check-item" id="check-canvas">
+                    <span>Canvas</span>
+                    <span class="check-icon">⏳</span>
+                </div>
+                <div class="check-item" id="check-webgl">
+                    <span>WebGL</span>
+                    <span class="check-icon">⏳</span>
+                </div>
+                <div class="check-item" id="check-timing">
+                    <span>Timing</span>
+                    <span class="check-icon">⏳</span>
+                </div>
+                <div class="check-item" id="check-pow">
+                    <span>Security</span>
+                    <span class="check-icon">⏳</span>
+                </div>
+                <div class="check-item" id="check-behavior">
+                    <span>Behavior</span>
+                    <span class="check-icon">⏳</span>
+                </div>
+            </div>
+            
+            <div class="error" id="error"></div>
+            
+            <noscript>
+                ⚠️ Пожалуйста, включите JavaScript для продолжения
+            </noscript>
         </div>
-        
-        <div class="status" id="status">Initializing checks...</div>
-        
-        <div class="checks">
-            <div class="check-item pending" id="check-js">
-                <span class="icon-small">⏳</span>
-                <span>JavaScript execution</span>
-            </div>
-            <div class="check-item pending" id="check-canvas">
-                <span class="icon-small">⏳</span>
-                <span>Canvas fingerprint</span>
-            </div>
-            <div class="check-item pending" id="check-webgl">
-                <span class="icon-small">⏳</span>
-                <span>WebGL rendering</span>
-            </div>
-            <div class="check-item pending" id="check-timing">
-                <span class="icon-small">⏳</span>
-                <span>Timing validation</span>
-            </div>
-            <div class="check-item pending" id="check-pow">
-                <span class="icon-small">⏳</span>
-                <span>Proof of work</span>
-            </div>
-            <div class="check-item pending" id="check-behavior">
-                <span class="icon-small">⏳</span>
-                <span>Behavior analysis</span>
-            </div>
-        </div>
-        
-        <div class="error" id="error"></div>
     </div>
 
     <script>
@@ -4429,20 +4504,30 @@ HTML;
         function updateProgress() {
             const total = Object.keys(checks).length;
             const completed = Object.values(checks).filter(v => v).length;
-            const percent = (completed / total) * 100;
             
-            document.getElementById('progressBar').style.width = percent + '%';
-            document.getElementById('status').textContent = `Completed: ${completed}/${total} checks...`;
+            // Показываем панель с чекбоксами после первой проверки
+            if (completed > 0) {
+                document.getElementById('checks').style.display = 'block';
+            }
             
+            // Обновляем статус
             if (completed === total) {
+                document.getElementById('status').innerHTML = 'Завершаем проверку<span class="heart">❤</span>';
                 submitChallenge();
+            } else {
+                document.getElementById('status').innerHTML = `Проверяем безопасность (${completed}/${total})<span class="heart">❤</span>`;
+            }
+        }
+        
+        function markCheckDone(checkId) {
+            const el = document.getElementById('check-' + checkId);
+            if (el) {
+                el.classList.add('done');
+                el.querySelector('.check-icon').textContent = '✓';
             }
         }
         
         function checkJS() {
-            document.getElementById('check-js').classList.remove('pending');
-            document.getElementById('check-js').classList.add('checking');
-            
             setTimeout(() => {
                 checksData.js = {
                     hasLocalStorage: typeof(Storage) !== "undefined",
@@ -4452,18 +4537,13 @@ HTML;
                 };
                 
                 checks.js = true;
-                document.getElementById('check-js').classList.remove('checking');
-                document.getElementById('check-js').classList.add('done');
-                document.getElementById('check-js').querySelector('.icon-small').textContent = '✓';
+                markCheckDone('js');
                 updateProgress();
                 checkCanvas();
             }, 100);
         }
         
         function checkCanvas() {
-            document.getElementById('check-canvas').classList.remove('pending');
-            document.getElementById('check-canvas').classList.add('checking');
-            
             setTimeout(() => {
                 try {
                     const canvas = document.createElement('canvas');
@@ -4482,14 +4562,13 @@ HTML;
                     checksData.canvas = simpleHash(dataURL);
                     
                     checks.canvas = true;
-                    document.getElementById('check-canvas').classList.remove('checking');
-                    document.getElementById('check-canvas').classList.add('done');
-                    document.getElementById('check-canvas').querySelector('.icon-small').textContent = '✓';
+                    markCheckDone('canvas');
                     updateProgress();
                     checkWebGL();
                 } catch(e) {
                     checksData.canvas = 'error';
                     checks.canvas = true;
+                    markCheckDone('canvas');
                     updateProgress();
                     checkWebGL();
                 }
@@ -4497,9 +4576,6 @@ HTML;
         }
         
         function checkWebGL() {
-            document.getElementById('check-webgl').classList.remove('pending');
-            document.getElementById('check-webgl').classList.add('checking');
-            
             setTimeout(() => {
                 try {
                     const canvas = document.createElement('canvas');
@@ -4516,14 +4592,13 @@ HTML;
                     }
                     
                     checks.webgl = true;
-                    document.getElementById('check-webgl').classList.remove('checking');
-                    document.getElementById('check-webgl').classList.add('done');
-                    document.getElementById('check-webgl').querySelector('.icon-small').textContent = '✓';
+                    markCheckDone('webgl');
                     updateProgress();
                     checkTiming();
                 } catch(e) {
                     checksData.webgl = 'error';
                     checks.webgl = true;
+                    markCheckDone('webgl');
                     updateProgress();
                     checkTiming();
                 }
@@ -4531,9 +4606,6 @@ HTML;
         }
         
         function checkTiming() {
-            document.getElementById('check-timing').classList.remove('pending');
-            document.getElementById('check-timing').classList.add('checking');
-            
             setTimeout(() => {
                 const elapsed = Date.now() - startTime;
                 checksData.timing = {
@@ -4542,18 +4614,13 @@ HTML;
                 };
                 
                 checks.timing = true;
-                document.getElementById('check-timing').classList.remove('checking');
-                document.getElementById('check-timing').classList.add('done');
-                document.getElementById('check-timing').querySelector('.icon-small').textContent = '✓';
+                markCheckDone('timing');
                 updateProgress();
                 checkPoW();
             }, 100);
         }
         
         function checkPoW() {
-            document.getElementById('check-pow').classList.remove('pending');
-            document.getElementById('check-pow').classList.add('checking');
-            
             // ПРОСТАЯ ВЕРСИЯ: устанавливаем fallback сразу
             // Это гарантирует что checksData.pow будет объектом, а не undefined
             checksData.pow = {
@@ -4565,9 +4632,7 @@ HTML;
             };
             
             checks.pow = true;
-            document.getElementById('check-pow').classList.remove('checking');
-            document.getElementById('check-pow').classList.add('done');
-            document.getElementById('check-pow').querySelector('.icon-small').textContent = '✓';
+            markCheckDone('pow');
             
             console.log('PoW: Using simplified fallback mode');
             
@@ -4576,9 +4641,6 @@ HTML;
         }
         
         function checkBehavior() {
-            document.getElementById('check-behavior').classList.remove('pending');
-            document.getElementById('check-behavior').classList.add('checking');
-            
             setTimeout(() => {
                 checksData.behavior = {
                     screen: {
@@ -4593,9 +4655,7 @@ HTML;
                 };
                 
                 checks.behavior = true;
-                document.getElementById('check-behavior').classList.remove('checking');
-                document.getElementById('check-behavior').classList.add('done');
-                document.getElementById('check-behavior').querySelector('.icon-small').textContent = '✓';
+                markCheckDone('behavior');
                 updateProgress();
             }, 100);
         }
@@ -4614,7 +4674,7 @@ HTML;
             
             if (totalTime < minTime) {
                 const waitTime = minTime - totalTime;
-                document.getElementById('status').textContent = 'Finalizing... please wait';
+                document.getElementById('status').innerHTML = 'Завершаем проверку<span class="heart">❤</span>';
                 
                 setTimeout(() => {
                     actualSubmit();
@@ -4625,7 +4685,7 @@ HTML;
         }
         
         function actualSubmit() {
-            document.getElementById('status').textContent = 'Verification complete! Redirecting...';
+            document.getElementById('status').innerHTML = 'Перенаправление...<span class="heart">❤</span>';
             
             const data = {
                 checks: checks,
@@ -4663,7 +4723,7 @@ HTML;
         function showError(message) {
             document.getElementById('error').textContent = message;
             document.getElementById('error').style.display = 'block';
-            document.getElementById('status').textContent = 'Verification failed';
+            document.getElementById('status').innerHTML = 'Ошибка проверки<span class="heart">❤</span>';
         }
         
         setTimeout(() => {
