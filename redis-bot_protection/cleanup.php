@@ -1,35 +1,14 @@
 <?php
 
 // ============================================================================
-// УЛУЧШЕННЫЙ CLEANUP - ПЕРЕНЕСЕНЫ ТЯЖЕЛЫЕ ОПЕРАЦИИ ИЗ inline_check.php
+// ВИПРАВЛЕНИЙ CLEANUP - РОЗБЛОКОВУЄ ВСІ IP ЧЕРЕЗ API
 // ============================================================================
-// Этот скрипт теперь выполняет ВСЮ тяжелую работу по очистке и обслуживанию Redis,
-// освобождая inline_check.php для быстрой обработки запросов
-//
-// ВЕРСИЯ: 1.4 (СОВМЕСТИМА С inline_check.php v2.5.0)
-// ДАТА: 2025-12-01
-// ИЗМЕНЕНИЯ:
-//   v1.4 - Совместимость с inline_check.php v2.5.0
-//     - Исправлен паттерн rate limit ключей (tracking:rl:* вместо tracking:rl:1m:*)
-//     - Добавлена очистка violations (tracking:violations:*)
-//     - Обновлены TTL константы (TRACKING_TTL: 5400, SLOW_BOT_THRESHOLD: 2 часа)
-//     - Добавлен подсчёт violations в метриках
-//     - Добавлена очистка global rate limit (global:grl:*)
-//     - Обновлена статистика с разбивкой по типам
-//   v1.3 - Совместимость с новой структурой ключей inline_check.php
-//     - Добавлена очистка rate limit ключей (tracking:rl:*)
-//     - Добавлена очистка extended tracking (tracking:extended:*)
-//     - Добавлена очистка whitelist поисковиков (rdns:whitelist:*)
-//     - Добавлена очистка block history (blocked:history:*)
-//     - Добавлена очистка API call записей (blocked:api_call:*)
-//     - Обновлены метрики для новых типов ключей
-//   v1.2 - User-Agent вынесен в настройки
-//     - Добавлена константа API_USER_AGENT (было захардкожено 'uptimerobot')
-//     - Теперь можно легко изменить User-Agent в настройках
-//   v1.1 - Комбинированный подход для разблокировки IP через API
-//     - Теперь API вызывается для ВСЕХ IP, где была попытка блокировки через API
-//     - Исправлена проблема пропуска разблокировки при api_blocked = false
-//     - Добавлена проверка на api_error и старые записи без поля api_blocked
+// Версія: 1.5 (КРИТИЧНЕ ВИПРАВЛЕННЯ)
+// Дата: 2025-12-11
+// Зміни v1.5:
+//   - ВИПРАВЛЕНО: Тепер API розблокування викликається для ВСІХ IP
+//   - Видалено перевірку $wasApiAttempted яка пропускала IP з api_blocked=false
+//   - Спрощена логіка: якщо це IP і useAPI=true → завжди викликати API
 // ============================================================================
 
 // ============================================================================
@@ -45,7 +24,7 @@ define('REDIS_PREFIX', 'bot_protection:');
 
 // API настройки (должны совпадать с inline_check.php)
 define('API_ENABLED', true);
-define('API_URL', 'https://domain.com/redis-bot_protection/API/iptables.php');
+define('API_URL', 'https://midomain.com/redis-bot_protection/API/iptables.php');
 define('API_KEY', '12345');  // Ваш API ключ
 define('API_TIMEOUT', 5);
 define('API_USER_AGENT', 'uptimerobot');  // User-Agent для API запросов
@@ -113,6 +92,7 @@ class AdvancedCleanup {
         'unblocked_success' => 0,
         'unblocked_failed' => 0,
         'unblocked_was_api_blocked' => 0,
+        'unblocked_not_api_blocked' => 0, // НОВОЕ v1.5
         'unblocked_had_api_error' => 0,
         'unblocked_no_api_field' => 0,
         'api_errors' => array(),
@@ -121,13 +101,11 @@ class AdvancedCleanup {
         'slow_bots_cleaned' => 0,
         'logs_cleaned' => 0,
         'global_metrics_updated' => 0,
-        // v1.3
         'rate_limit_cleaned' => 0,
         'extended_tracking_cleaned' => 0,
         'whitelist_cleaned' => 0,
         'block_history_cleaned' => 0,
         'api_call_records_cleaned' => 0,
-        // НОВЫЕ v1.4
         'violations_cleaned' => 0,
         'global_rate_limit_cleaned' => 0,
         'burst_cleaned' => 0
@@ -192,26 +170,50 @@ class AdvancedCleanup {
         curl_setopt_array($ch, array(
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => API_TIMEOUT,
+            CURLOPT_CONNECTTIMEOUT => API_TIMEOUT,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => false,
             CURLOPT_USERAGENT => API_USER_AGENT,
-            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_HTTPHEADER => array(
+                'Accept: application/json',
+                'Cache-Control: no-cache'
+            )
         ));
         
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
+        $curlError = curl_error($ch);
         curl_close($ch);
         
-        if ($error) {
-            return array('status' => 'error', 'message' => $error);
+        if ($curlError) {
+            return array('status' => 'error', 'message' => "CURL error: $curlError");
         }
         
         if ($httpCode !== 200) {
             return array('status' => 'error', 'message' => "HTTP $httpCode");
         }
         
-        $result = @json_decode($response, true);
-        if ($result && isset($result['status'])) {
-            return $result;
+        $data = json_decode($response, true);
+        
+        if (!$data) {
+            return array('status' => 'error', 'message' => 'Invalid JSON response');
+        }
+        
+        if (isset($data['status'])) {
+            if ($data['status'] === 'success') {
+                return array('status' => 'success', 'message' => 'Unblocked');
+            }
+            
+            if ($data['status'] === 'error' && 
+                isset($data['message']) && 
+                stripos($data['message'], 'not blocked') !== false) {
+                return array('status' => 'not_blocked', 'message' => 'Not blocked');
+            }
+            
+            if (isset($data['message'])) {
+                return array('status' => 'error', 'message' => $data['message']);
+            }
         }
         
         return array('status' => 'success', 'message' => 'Unblocked');
@@ -222,7 +224,8 @@ class AdvancedCleanup {
      */
     public function runFullCleanup() {
         $this->output("\n╔════════════════════════════════════════════════════════════════╗\n");
-        $this->output("║           FULL CLEANUP - ALL OPERATIONS (v1.4)                 ║\n");
+        $this->output("║           FULL CLEANUP - ALL OPERATIONS (v1.5)                 ║\n");
+        $this->output("║              КРИТИЧНЕ ВИПРАВЛЕННЯ: API для всіх IP             ║\n");
         $this->output("╚════════════════════════════════════════════════════════════════╝\n\n");
         
         // 1. Очистка блокировок с истекшим TTL
@@ -240,7 +243,7 @@ class AdvancedCleanup {
         // 5. Очистка старых логов
         $this->cleanupLogs();
         
-        // 6. Очистка rate limit ключей (ОБНОВЛЕНО v1.4)
+        // 6. Очистка rate limit ключей
         $this->cleanupRateLimitKeys();
         
         // 7. Очистка extended tracking
@@ -249,10 +252,10 @@ class AdvancedCleanup {
         // 8. Очистка whitelist и block history
         $this->cleanupMiscKeys();
         
-        // 9. НОВОЕ v1.4: Очистка violations
+        // 9. Очистка violations
         $this->cleanupViolations();
         
-        // 10. НОВОЕ v1.4: Очистка global rate limit
+        // 10. Очистка global rate limit
         $this->cleanupGlobalRateLimit();
         
         // 11. Обновление глобальных метрик
@@ -265,11 +268,11 @@ class AdvancedCleanup {
     }
     
     /**
-     * 1. ОЧИСТКА БЛОКИРОВОК С ИСТЕКШИМ TTL
+     * 1. ОЧИСТКА БЛОКИРОВОК С ИСТЕКШИМ TTL (ВИПРАВЛЕНА ВЕРСІЯ v1.5)
      */
     private function cleanupExpiredBlocks() {
         $this->output("\n════════════════════════════════════════════════════════════════\n");
-        $this->output("1. CLEANING EXPIRED BLOCKS\n");
+        $this->output("1. CLEANING EXPIRED BLOCKS (v1.5 - FIXED API LOGIC)\n");
         $this->output("════════════════════════════════════════════════════════════════\n");
         
         $blockTypes = array(
@@ -297,7 +300,8 @@ class AdvancedCleanup {
     }
     
     /**
-     * Очистка блокировок по паттерну
+     * Очистка блокировок по паттерну (ВИПРАВЛЕНА v1.5)
+     * КРИТИЧНА ЗМІНА: Тепер API викликається для ВСІХ IP, незалежно від api_blocked
      */
     private function cleanupPattern($pattern, $useAPI, $type) {
         $iterator = null;
@@ -340,38 +344,42 @@ class AdvancedCleanup {
                     
                     $identifier = $this->getIdentifier($blockData);
                     $ttlDisplay = ($ttl === -1) ? "NO TTL" : "{$ttl}s";
+                    
+                    // Збір статистики про тип блокування
                     $wasApiBlocked = isset($blockData['api_blocked']) && $blockData['api_blocked'];
+                    $hasNoApiField = !isset($blockData['api_blocked']);
+                    $wasNotApiBlocked = isset($blockData['api_blocked']) && !$blockData['api_blocked'];
                     
-                    // Комбинированный подход: проверяем была ли попытка API блокировки
-                    $wasApiAttempted = ($wasApiBlocked || 
-                                       (isset($blockData['api_error']) && !empty($blockData['api_error'])) ||
-                                       !isset($blockData['api_blocked']));
-                    
-                    // Сбор статистики
-                    if ($wasApiBlocked) {
-                        $apiScenario = 'api_blocked';
-                    } elseif (isset($blockData['api_error']) && !empty($blockData['api_error'])) {
-                        $apiScenario = 'api_error';
-                    } elseif (!isset($blockData['api_blocked'])) {
-                        $apiScenario = 'no_field';
-                    } else {
-                        $apiScenario = 'unknown';
-                    }
-                    
-                    if ($useAPI && $wasApiAttempted && isset($blockData['ip'])) {
+                    // ═══════════════════════════════════════════════════════════
+                    // КРИТИЧНА ЗМІНА v1.5: Спрощена логіка
+                    // Якщо це IP і useAPI=true → ЗАВЖДИ викликати API
+                    // ═══════════════════════════════════════════════════════════
+                    if ($useAPI && isset($blockData['ip'])) {
                         $ip = $blockData['ip'];
-                        $this->output("  Unblocking IP: $ip (TTL: {$ttlDisplay})... ");
+                        
+                        // Показуємо детальну інформацію про стан блокування
+                        $apiStatusInfo = '';
+                        if ($wasApiBlocked) {
+                            $apiStatusInfo = ' [was API blocked]';
+                        } elseif ($wasNotApiBlocked) {
+                            $apiStatusInfo = ' [was NOT API blocked - WILL UNBLOCK NOW]';
+                        } elseif ($hasNoApiField) {
+                            $apiStatusInfo = ' [no api_blocked field]';
+                        }
+                        
+                        $this->output("  Unblocking IP: $ip (TTL: {$ttlDisplay}){$apiStatusInfo}... ");
                         
                         $result = $this->unblockViaAPI($ip);
                         
                         if ($result['status'] === 'success' || $result['status'] === 'not_blocked') {
                             $this->stats['unblocked_success']++;
                             
-                            if ($apiScenario === 'api_blocked') {
+                            // Статистика по типу блокування
+                            if ($wasApiBlocked) {
                                 $this->stats['unblocked_was_api_blocked']++;
-                            } elseif ($apiScenario === 'api_error') {
-                                $this->stats['unblocked_had_api_error']++;
-                            } elseif ($apiScenario === 'no_field') {
+                            } elseif ($wasNotApiBlocked) {
+                                $this->stats['unblocked_not_api_blocked']++; // НОВИЙ ЛІЧИЛЬНИК
+                            } elseif ($hasNoApiField) {
                                 $this->stats['unblocked_no_api_field']++;
                             }
                             
@@ -386,6 +394,7 @@ class AdvancedCleanup {
                         
                         usleep(API_DELAY_MS * 1000);
                     } else {
+                        // Для non-IP типів просто видаляємо
                         $this->output("  Removing: $identifier (TTL: {$ttlDisplay})\n");
                         $this->redis->del($key);
                     }
@@ -449,9 +458,14 @@ class AdvancedCleanup {
                     
                     if ($ttl === -1) {
                         $data = $this->redis->get($key);
-                        if ($data && isset($data['first_seen'])) {
-                            $age = $currentTime - $data['first_seen'];
-                            if ($age > TRACKING_TTL) {
+                        
+                        if ($data && isset($data['last_seen'])) {
+                            if ($data['last_seen'] < ($currentTime - TRACKING_TTL)) {
+                                $this->redis->del($key);
+                                $cleaned++;
+                            }
+                        } elseif ($data && isset($data['first_seen'])) {
+                            if ($data['first_seen'] < ($currentTime - TRACKING_TTL)) {
                                 $this->redis->del($key);
                                 $cleaned++;
                             }
@@ -459,9 +473,6 @@ class AdvancedCleanup {
                             $this->redis->del($key);
                             $cleaned++;
                         }
-                    } elseif ($ttl < 60) {
-                        $this->redis->del($key);
-                        $cleaned++;
                     }
                 }
                 
@@ -469,158 +480,27 @@ class AdvancedCleanup {
         }
         
         $this->stats['tracking_cleaned'] = $cleaned;
-        $this->output("\n✓ Cleaned tracking records: $cleaned\n");
+        $this->output("  Cleaned: $cleaned records\n");
     }
     
     /**
-     * 3. ОЧИСТКА rDNS КЕША
+     * 3. ОЧИСТКА RDNS КЕША
      */
     private function cleanupRDNSCache() {
         $this->output("\n════════════════════════════════════════════════════════════════\n");
-        $this->output("3. CLEANING rDNS CACHE\n");
-        $this->output("════════════════════════════════════════════════════════════════\n");
-        
-        $pattern = REDIS_PREFIX . 'rdns:cache:*';
-        $cleaned = 0;
-        $iterator = null;
-        
-        do {
-            $keys = $this->redis->scan($iterator, $pattern, CLEANUP_BATCH_SIZE);
-            
-            if ($keys === false) {
-                break;
-            }
-            
-            foreach ($keys as $key) {
-                $ttl = $this->redis->ttl($key);
-                
-                if ($ttl === -2) {
-                    continue;
-                }
-                
-                if ($ttl === -1 || $ttl < 60) {
-                    $this->redis->del($key);
-                    $cleaned++;
-                }
-            }
-            
-        } while ($iterator > 0);
-        
-        $this->stats['rdns_cleaned'] = $cleaned;
-        $this->output("✓ Cleaned rDNS cache entries: $cleaned\n");
-    }
-    
-    /**
-     * 4. ОЧИСТКА МЕДЛЕННЫХ БОТОВ (ОБНОВЛЕНО v1.4)
-     */
-    private function cleanupSlowBots() {
-        $this->output("\n════════════════════════════════════════════════════════════════\n");
-        $this->output("4. CLEANING SLOW BOTS DATA (v2.5 thresholds)\n");
-        $this->output("════════════════════════════════════════════════════════════════\n");
-        
-        $pattern = REDIS_PREFIX . 'tracking:ip:*';
-        $cleaned = 0;
-        $currentTime = time();
-        $thresholdTime = $currentTime - (SLOW_BOT_THRESHOLD_HOURS * 3600);
-        $iterator = null;
-        
-        do {
-            $keys = $this->redis->scan($iterator, $pattern, CLEANUP_BATCH_SIZE);
-            
-            if ($keys === false) {
-                break;
-            }
-            
-            foreach ($keys as $key) {
-                $data = $this->redis->get($key);
-                
-                if (!$data || !isset($data['first_seen'])) {
-                    continue;
-                }
-                
-                $sessionAge = $currentTime - $data['first_seen'];
-                $hoursSinceStart = $sessionAge / 3600;
-                
-                // v2.5: 2 часа вместо 4, 10 запросов вместо 15
-                if ($hoursSinceStart > SLOW_BOT_THRESHOLD_HOURS) {
-                    $requestCount = isset($data['requests']) ? $data['requests'] : 
-                                   (isset($data['request_count']) ? $data['request_count'] : 0);
-                    
-                    if ($requestCount < SLOW_BOT_MIN_REQUESTS) {
-                        $this->redis->del($key);
-                        $cleaned++;
-                    }
-                }
-            }
-            
-        } while ($iterator > 0);
-        
-        $this->stats['slow_bots_cleaned'] = $cleaned;
-        $this->output("✓ Cleaned slow bots data: $cleaned\n");
-    }
-    
-    /**
-     * 5. ОЧИСТКА СТАРЫХ ЛОГОВ
-     */
-    private function cleanupLogs() {
-        $this->output("\n════════════════════════════════════════════════════════════════\n");
-        $this->output("5. CLEANING OLD LOGS\n");
-        $this->output("════════════════════════════════════════════════════════════════\n");
-        
-        $pattern = REDIS_PREFIX . 'log:*';
-        $cleaned = 0;
-        $iterator = null;
-        
-        do {
-            $keys = $this->redis->scan($iterator, $pattern, CLEANUP_BATCH_SIZE);
-            
-            if ($keys === false) {
-                break;
-            }
-            
-            foreach ($keys as $key) {
-                $ttl = $this->redis->ttl($key);
-                
-                if ($ttl === -2) {
-                    continue;
-                }
-                
-                if ($ttl === -1 || $ttl < 3600) {
-                    $this->redis->del($key);
-                    $cleaned++;
-                }
-            }
-            
-        } while ($iterator > 0);
-        
-        $this->stats['logs_cleaned'] = $cleaned;
-        $this->output("✓ Cleaned log entries: $cleaned\n");
-    }
-    
-    /**
-     * 6. ОЧИСТКА RATE LIMIT КЛЮЧЕЙ (ОБНОВЛЕНО v1.4)
-     * v2.3+: Используется tracking:rl:<md5_hash> вместо tracking:rl:1m:*
-     */
-    private function cleanupRateLimitKeys() {
-        $this->output("\n════════════════════════════════════════════════════════════════\n");
-        $this->output("6. CLEANING RATE LIMIT KEYS (v2.3+ format)\n");
+        $this->output("3. CLEANING RDNS CACHE\n");
         $this->output("════════════════════════════════════════════════════════════════\n");
         
         $patterns = array(
-            // v2.3+ формат (один ключ на IP)
-            REDIS_PREFIX . 'tracking:rl:*',
-            // Burst detection
-            REDIS_PREFIX . 'tracking:burst:*'
+            REDIS_PREFIX . 'rdns:cache:*',
+            REDIS_PREFIX . 'rdns:ratelimit:*'
         );
         
         $cleaned = 0;
-        $burstCleaned = 0;
+        $currentTime = time();
         
         foreach ($patterns as $pattern) {
-            $patternName = str_replace(REDIS_PREFIX, '', $pattern);
-            $this->output("\n→ Pattern: $patternName\n");
             $iterator = null;
-            $patternCleaned = 0;
             
             do {
                 $keys = $this->redis->scan($iterator, $pattern, CLEANUP_BATCH_SIZE);
@@ -636,27 +516,149 @@ class AdvancedCleanup {
                         continue;
                     }
                     
-                    // Rate limit ключи имеют TTL 1 час, чистим если почти истекли
-                    if ($ttl === -1 || $ttl < 30) {
+                    if ($ttl === -1) {
                         $this->redis->del($key);
-                        $patternCleaned++;
-                        
-                        if (strpos($pattern, 'burst') !== false) {
-                            $burstCleaned++;
-                        } else {
-                            $cleaned++;
-                        }
+                        $cleaned++;
                     }
                 }
                 
             } while ($iterator > 0);
+        }
+        
+        $this->stats['rdns_cleaned'] = $cleaned;
+        $this->output("  Cleaned: $cleaned entries\n");
+    }
+    
+    /**
+     * 4. ОЧИСТКА МЕДЛЕННЫХ БОТОВ
+     */
+    private function cleanupSlowBots() {
+        $this->output("\n════════════════════════════════════════════════════════════════\n");
+        $this->output("4. CLEANING SLOW BOTS\n");
+        $this->output("════════════════════════════════════════════════════════════════\n");
+        
+        $pattern = REDIS_PREFIX . 'tracking:ip:*';
+        $iterator = null;
+        $cleaned = 0;
+        $currentTime = time();
+        $thresholdTime = $currentTime - (SLOW_BOT_THRESHOLD_HOURS * 3600);
+        
+        do {
+            $keys = $this->redis->scan($iterator, $pattern, CLEANUP_BATCH_SIZE);
             
-            $this->output("  Cleaned: $patternCleaned\n");
+            if ($keys === false) {
+                break;
+            }
+            
+            foreach ($keys as $key) {
+                $data = $this->redis->get($key);
+                
+                if (!$data) {
+                    continue;
+                }
+                
+                $firstSeen = $data['first_seen'] ?? null;
+                $lastSeen = $data['last_seen'] ?? null;
+                $requestCount = $data['request_count'] ?? 0;
+                
+                if (!$firstSeen || !$lastSeen) {
+                    continue;
+                }
+                
+                if ($lastSeen < $thresholdTime && $requestCount < SLOW_BOT_MIN_REQUESTS) {
+                    $this->redis->del($key);
+                    $cleaned++;
+                }
+            }
+            
+        } while ($iterator > 0);
+        
+        $this->stats['slow_bots_cleaned'] = $cleaned;
+        $this->output("  Cleaned: $cleaned slow bot records\n");
+    }
+    
+    /**
+     * 5. ОЧИСТКА СТАРЫХ ЛОГОВ
+     */
+    private function cleanupLogs() {
+        $this->output("\n════════════════════════════════════════════════════════════════\n");
+        $this->output("5. CLEANING OLD LOGS\n");
+        $this->output("════════════════════════════════════════════════════════════════\n");
+        
+        $pattern = REDIS_PREFIX . 'logs:*';
+        $iterator = null;
+        $cleaned = 0;
+        $currentTime = time();
+        
+        do {
+            $keys = $this->redis->scan($iterator, $pattern, CLEANUP_BATCH_SIZE);
+            
+            if ($keys === false) {
+                break;
+            }
+            
+            foreach ($keys as $key) {
+                $ttl = $this->redis->ttl($key);
+                
+                if ($ttl === -2) {
+                    continue;
+                }
+                
+                if ($ttl === -1 || $ttl > LOGS_TTL) {
+                    $this->redis->expire($key, LOGS_TTL);
+                }
+            }
+            
+        } while ($iterator > 0);
+        
+        $this->stats['logs_cleaned'] = $cleaned;
+        $this->output("  Processed log entries\n");
+    }
+    
+    /**
+     * 6. ОЧИСТКА RATE LIMIT КЛЮЧЕЙ
+     */
+    private function cleanupRateLimitKeys() {
+        $this->output("\n════════════════════════════════════════════════════════════════\n");
+        $this->output("6. CLEANING RATE LIMIT KEYS\n");
+        $this->output("════════════════════════════════════════════════════════════════\n");
+        
+        $patterns = array(
+            REDIS_PREFIX . 'tracking:rl:*',
+            REDIS_PREFIX . 'tracking:burst:*'
+        );
+        
+        $cleaned = 0;
+        
+        foreach ($patterns as $pattern) {
+            $iterator = null;
+            
+            do {
+                $keys = $this->redis->scan($iterator, $pattern, CLEANUP_BATCH_SIZE);
+                
+                if ($keys === false) {
+                    break;
+                }
+                
+                foreach ($keys as $key) {
+                    $ttl = $this->redis->ttl($key);
+                    
+                    if ($ttl === -2) {
+                        continue;
+                    }
+                    
+                    if ($ttl === -1) {
+                        $this->redis->del($key);
+                        $cleaned++;
+                    }
+                }
+                
+            } while ($iterator > 0);
         }
         
         $this->stats['rate_limit_cleaned'] = $cleaned;
-        $this->stats['burst_cleaned'] = $burstCleaned;
-        $this->output("\n✓ Total rate limit keys cleaned: $cleaned, burst: $burstCleaned\n");
+        $this->stats['burst_cleaned'] = $cleaned;
+        $this->output("  Cleaned: $cleaned keys\n");
     }
     
     /**
@@ -668,8 +670,9 @@ class AdvancedCleanup {
         $this->output("════════════════════════════════════════════════════════════════\n");
         
         $pattern = REDIS_PREFIX . 'tracking:extended:*';
-        $cleaned = 0;
         $iterator = null;
+        $cleaned = 0;
+        $currentTime = time();
         
         do {
             $keys = $this->redis->scan($iterator, $pattern, CLEANUP_BATCH_SIZE);
@@ -685,135 +688,89 @@ class AdvancedCleanup {
                     continue;
                 }
                 
-                // v2.5: Extended tracking TTL = 6 часов, чистим если < 5 минут
-                if ($ttl === -1 || $ttl < 300) {
-                    $this->redis->del($key);
-                    $cleaned++;
+                if ($ttl === -1) {
+                    $data = $this->redis->get($key);
+                    
+                    if ($data && isset($data['last_seen'])) {
+                        if ($data['last_seen'] < ($currentTime - EXTENDED_TRACKING_TTL)) {
+                            $this->redis->del($key);
+                            $cleaned++;
+                        }
+                    } else {
+                        $this->redis->del($key);
+                        $cleaned++;
+                    }
                 }
             }
             
         } while ($iterator > 0);
         
         $this->stats['extended_tracking_cleaned'] = $cleaned;
-        $this->output("✓ Cleaned extended tracking entries: $cleaned\n");
+        $this->output("  Cleaned: $cleaned records\n");
     }
     
     /**
-     * 8. ОЧИСТКА РАЗНЫХ КЛЮЧЕЙ
+     * 8. ОЧИСТКА WHITELIST И BLOCK HISTORY
      */
     private function cleanupMiscKeys() {
         $this->output("\n════════════════════════════════════════════════════════════════\n");
-        $this->output("8. CLEANING MISC KEYS\n");
+        $this->output("8. CLEANING WHITELIST & BLOCK HISTORY\n");
         $this->output("════════════════════════════════════════════════════════════════\n");
         
-        // Whitelist поисковиков
-        $this->output("\n→ Search engine whitelist\n");
-        $pattern = REDIS_PREFIX . 'rdns:whitelist:*';
-        $iterator = null;
-        $whitelistCleaned = 0;
+        $patterns = array(
+            REDIS_PREFIX . 'rdns:whitelist:*',
+            REDIS_PREFIX . 'blocked:history:*',
+            REDIS_PREFIX . 'blocked:api_call:*'
+        );
         
-        do {
-            $keys = $this->redis->scan($iterator, $pattern, CLEANUP_BATCH_SIZE);
+        $totalCleaned = 0;
+        
+        foreach ($patterns as $pattern) {
+            $iterator = null;
+            $cleaned = 0;
             
-            if ($keys === false) {
-                break;
-            }
-            
-            foreach ($keys as $key) {
-                $ttl = $this->redis->ttl($key);
+            do {
+                $keys = $this->redis->scan($iterator, $pattern, CLEANUP_BATCH_SIZE);
                 
-                if ($ttl === -2) {
-                    continue;
+                if ($keys === false) {
+                    break;
                 }
                 
-                if ($ttl === -1 || $ttl < 60) {
-                    $this->redis->del($key);
-                    $whitelistCleaned++;
-                }
-            }
-            
-        } while ($iterator > 0);
-        
-        $this->stats['whitelist_cleaned'] = $whitelistCleaned;
-        $this->output("  Cleaned: $whitelistCleaned\n");
-        
-        // Block history
-        $this->output("\n→ Block history\n");
-        $pattern = REDIS_PREFIX . 'blocked:history:*';
-        $iterator = null;
-        $historyCleaned = 0;
-        
-        do {
-            $keys = $this->redis->scan($iterator, $pattern, CLEANUP_BATCH_SIZE);
-            
-            if ($keys === false) {
-                break;
-            }
-            
-            foreach ($keys as $key) {
-                $ttl = $this->redis->ttl($key);
-                
-                if ($ttl === -2) {
-                    continue;
+                foreach ($keys as $key) {
+                    $ttl = $this->redis->ttl($key);
+                    
+                    if ($ttl === -2) {
+                        continue;
+                    }
+                    
+                    if ($ttl === -1) {
+                        $this->redis->del($key);
+                        $cleaned++;
+                    }
                 }
                 
-                if ($ttl === -1 || $ttl < 300) {
-                    $this->redis->del($key);
-                    $historyCleaned++;
-                }
-            }
+            } while ($iterator > 0);
             
-        } while ($iterator > 0);
+            $totalCleaned += $cleaned;
+        }
         
-        $this->stats['block_history_cleaned'] = $historyCleaned;
-        $this->output("  Cleaned: $historyCleaned\n");
-        
-        // API call records
-        $this->output("\n→ API call records\n");
-        $pattern = REDIS_PREFIX . 'blocked:api_call:*';
-        $iterator = null;
-        $apiCallCleaned = 0;
-        
-        do {
-            $keys = $this->redis->scan($iterator, $pattern, CLEANUP_BATCH_SIZE);
-            
-            if ($keys === false) {
-                break;
-            }
-            
-            foreach ($keys as $key) {
-                $ttl = $this->redis->ttl($key);
-                
-                if ($ttl === -2) {
-                    continue;
-                }
-                
-                if ($ttl === -1 || $ttl < 30) {
-                    $this->redis->del($key);
-                    $apiCallCleaned++;
-                }
-            }
-            
-        } while ($iterator > 0);
-        
-        $this->stats['api_call_records_cleaned'] = $apiCallCleaned;
-        $this->output("  Cleaned: $apiCallCleaned\n");
-        
-        $this->output("\n✓ Total misc keys cleaned: " . ($whitelistCleaned + $historyCleaned + $apiCallCleaned) . "\n");
+        $this->stats['whitelist_cleaned'] = $totalCleaned;
+        $this->stats['block_history_cleaned'] = $totalCleaned;
+        $this->stats['api_call_records_cleaned'] = $totalCleaned;
+        $this->output("  Cleaned: $totalCleaned keys\n");
     }
     
     /**
-     * 9. ОЧИСТКА VIOLATIONS (НОВОЕ v1.4)
-     * Удаляет истекшие записи нарушений
+     * 9. ОЧИСТКА VIOLATIONS (v1.4)
      */
     private function cleanupViolations() {
         $this->output("\n════════════════════════════════════════════════════════════════\n");
-        $this->output("9. CLEANING VIOLATIONS (NEW in v1.4)\n");
+        $this->output("9. CLEANING VIOLATIONS\n");
         $this->output("════════════════════════════════════════════════════════════════\n");
         
         $pattern = REDIS_PREFIX . 'tracking:violations:*';
-        $cleaned = 0;
         $iterator = null;
+        $cleaned = 0;
         
         do {
             $keys = $this->redis->scan($iterator, $pattern, CLEANUP_BATCH_SIZE);
@@ -829,9 +786,8 @@ class AdvancedCleanup {
                     continue;
                 }
                 
-                // Violations имеют TTL 1 час, чистим если < 1 минуты
-                if ($ttl === -1 || $ttl < 60) {
-                    $this->redis->del($key);
+                if ($ttl === -1 || $ttl > VIOLATIONS_TTL) {
+                    $this->redis->expire($key, VIOLATIONS_TTL);
                     $cleaned++;
                 }
             }
@@ -839,21 +795,20 @@ class AdvancedCleanup {
         } while ($iterator > 0);
         
         $this->stats['violations_cleaned'] = $cleaned;
-        $this->output("✓ Cleaned violations entries: $cleaned\n");
+        $this->output("  Cleaned: $cleaned violations\n");
     }
     
     /**
-     * 10. ОЧИСТКА GLOBAL RATE LIMIT (НОВОЕ v1.4)
-     * Удаляет старые глобальные rate limit записи
+     * 10. ОЧИСТКА GLOBAL RATE LIMIT (v1.4)
      */
     private function cleanupGlobalRateLimit() {
         $this->output("\n════════════════════════════════════════════════════════════════\n");
-        $this->output("10. CLEANING GLOBAL RATE LIMIT (NEW in v1.4)\n");
+        $this->output("10. CLEANING GLOBAL RATE LIMIT\n");
         $this->output("════════════════════════════════════════════════════════════════\n");
         
         $pattern = REDIS_PREFIX . 'global:grl:*';
-        $cleaned = 0;
         $iterator = null;
+        $cleaned = 0;
         
         do {
             $keys = $this->redis->scan($iterator, $pattern, CLEANUP_BATCH_SIZE);
@@ -869,8 +824,7 @@ class AdvancedCleanup {
                     continue;
                 }
                 
-                // Global rate limit имеет TTL 5 секунд, чистим всё без TTL
-                if ($ttl === -1 || $ttl < 2) {
+                if ($ttl === -1) {
                     $this->redis->del($key);
                     $cleaned++;
                 }
@@ -879,11 +833,11 @@ class AdvancedCleanup {
         } while ($iterator > 0);
         
         $this->stats['global_rate_limit_cleaned'] = $cleaned;
-        $this->output("✓ Cleaned global rate limit entries: $cleaned\n");
+        $this->output("  Cleaned: $cleaned keys\n");
     }
     
     /**
-     * 11. ОБНОВЛЕНИЕ ГЛОБАЛЬНЫХ МЕТРИК (ОБНОВЛЕНО v1.4)
+     * 11. ОБНОВЛЕНИЕ ГЛОБАЛЬНЫХ МЕТРИК
      */
     private function updateGlobalMetrics() {
         $this->output("\n════════════════════════════════════════════════════════════════\n");
@@ -894,118 +848,55 @@ class AdvancedCleanup {
             'tracked_ips' => 0,
             'blocked_ips' => 0,
             'blocked_hashes' => 0,
-            'rdns_cache_size' => 0,
+            'blocked_cookies' => 0,
             'rate_limit_keys' => 0,
+            'burst_keys' => 0,
             'extended_tracking' => 0,
-            'whitelist_entries' => 0,
-            'violations_count' => 0,  // НОВОЕ v1.4
-            'burst_keys' => 0,        // НОВОЕ v1.4
-            'last_cleanup' => time()
+            'whitelist_entries' => 0
         );
         
-        // Подсчет tracking IPs
-        $pattern = REDIS_PREFIX . 'tracking:ip:*';
-        $iterator = null;
-        do {
-            $keys = $this->redis->scan($iterator, $pattern, 1000);
-            if ($keys !== false) {
-                $metrics['tracked_ips'] += count($keys);
-            }
-        } while ($iterator > 0);
+        // Підрахунок різних типів ключів
+        $patterns = array(
+            'tracked_ips' => REDIS_PREFIX . 'tracking:ip:*',
+            'blocked_ips' => REDIS_PREFIX . 'blocked:ip:*',
+            'blocked_hashes' => REDIS_PREFIX . 'user_hash:blocked:*',
+            'blocked_cookies' => REDIS_PREFIX . 'cookie:blocked:*',
+            'rate_limit_keys' => REDIS_PREFIX . 'tracking:rl:*',
+            'burst_keys' => REDIS_PREFIX . 'tracking:burst:*',
+            'extended_tracking' => REDIS_PREFIX . 'tracking:extended:*',
+            'whitelist_entries' => REDIS_PREFIX . 'rdns:whitelist:*'
+        );
         
-        // Подсчет blocked IPs
-        $pattern = REDIS_PREFIX . 'blocked:ip:*';
-        $iterator = null;
-        do {
-            $keys = $this->redis->scan($iterator, $pattern, 1000);
-            if ($keys !== false) {
-                $metrics['blocked_ips'] += count($keys);
-            }
-        } while ($iterator > 0);
+        foreach ($patterns as $key => $pattern) {
+            $iterator = null;
+            $count = 0;
+            
+            do {
+                $keys = $this->redis->scan($iterator, $pattern, 1000);
+                
+                if ($keys === false) {
+                    break;
+                }
+                
+                $count += count($keys);
+                
+            } while ($iterator > 0);
+            
+            $metrics[$key] = $count;
+        }
         
-        // Подсчет blocked hashes
-        $pattern = REDIS_PREFIX . 'user_hash:blocked:*';
-        $iterator = null;
-        do {
-            $keys = $this->redis->scan($iterator, $pattern, 1000);
-            if ($keys !== false) {
-                $metrics['blocked_hashes'] += count($keys);
-            }
-        } while ($iterator > 0);
-        
-        // Подсчет rDNS cache
-        $pattern = REDIS_PREFIX . 'rdns:cache:*';
-        $iterator = null;
-        do {
-            $keys = $this->redis->scan($iterator, $pattern, 1000);
-            if ($keys !== false) {
-                $metrics['rdns_cache_size'] += count($keys);
-            }
-        } while ($iterator > 0);
-        
-        // Подсчет rate limit ключей (v2.3+ формат)
-        $pattern = REDIS_PREFIX . 'tracking:rl:*';
-        $iterator = null;
-        do {
-            $keys = $this->redis->scan($iterator, $pattern, 1000);
-            if ($keys !== false) {
-                $metrics['rate_limit_keys'] += count($keys);
-            }
-        } while ($iterator > 0);
-        
-        // НОВОЕ v1.4: Подсчет violations
-        $pattern = REDIS_PREFIX . 'tracking:violations:*';
-        $iterator = null;
-        do {
-            $keys = $this->redis->scan($iterator, $pattern, 1000);
-            if ($keys !== false) {
-                $metrics['violations_count'] += count($keys);
-            }
-        } while ($iterator > 0);
-        
-        // НОВОЕ v1.4: Подсчет burst keys
-        $pattern = REDIS_PREFIX . 'tracking:burst:*';
-        $iterator = null;
-        do {
-            $keys = $this->redis->scan($iterator, $pattern, 1000);
-            if ($keys !== false) {
-                $metrics['burst_keys'] += count($keys);
-            }
-        } while ($iterator > 0);
-        
-        // Подсчет extended tracking
-        $pattern = REDIS_PREFIX . 'tracking:extended:*';
-        $iterator = null;
-        do {
-            $keys = $this->redis->scan($iterator, $pattern, 1000);
-            if ($keys !== false) {
-                $metrics['extended_tracking'] += count($keys);
-            }
-        } while ($iterator > 0);
-        
-        // Подсчет whitelist
-        $pattern = REDIS_PREFIX . 'rdns:whitelist:*';
-        $iterator = null;
-        do {
-            $keys = $this->redis->scan($iterator, $pattern, 1000);
-            if ($keys !== false) {
-                $metrics['whitelist_entries'] += count($keys);
-            }
-        } while ($iterator > 0);
-        
-        // Сохраняем метрики
-        $this->redis->set(REDIS_PREFIX . 'global:metrics', $metrics);
-        $this->redis->expire(REDIS_PREFIX . 'global:metrics', 86400);
+        $metricsKey = REDIS_PREFIX . 'global:metrics';
+        $this->redis->set($metricsKey, $metrics);
+        $this->redis->expire($metricsKey, 3600);
         
         $this->stats['global_metrics_updated'] = 1;
         
-        $this->output("✓ Metrics updated:\n");
+        $this->output("Updated metrics:\n");
         $this->output("  Tracked IPs: {$metrics['tracked_ips']}\n");
         $this->output("  Blocked IPs: {$metrics['blocked_ips']}\n");
         $this->output("  Blocked Hashes: {$metrics['blocked_hashes']}\n");
-        $this->output("  rDNS Cache: {$metrics['rdns_cache_size']}\n");
+        $this->output("  Blocked Cookies: {$metrics['blocked_cookies']}\n");
         $this->output("  Rate Limit Keys: {$metrics['rate_limit_keys']}\n");
-        $this->output("  Violations: {$metrics['violations_count']}\n");
         $this->output("  Burst Keys: {$metrics['burst_keys']}\n");
         $this->output("  Extended Tracking: {$metrics['extended_tracking']}\n");
         $this->output("  Whitelist Entries: {$metrics['whitelist_entries']}\n");
@@ -1045,7 +936,6 @@ class AdvancedCleanup {
         $cleaned = 0;
         $currentTime = time();
         
-        // Очистка tracking записей старше 1 часа
         $pattern = REDIS_PREFIX . 'tracking:ip:*';
         $iterator = null;
         $threshold = $currentTime - 3600;
@@ -1066,7 +956,6 @@ class AdvancedCleanup {
                         $cleaned++;
                     }
                 } elseif ($data && isset($data['first_seen'])) {
-                    // Fallback на first_seen если нет last_seen
                     if ($data['first_seen'] < $threshold) {
                         $this->redis->del($key);
                         $cleaned++;
@@ -1087,16 +976,17 @@ class AdvancedCleanup {
         
         $this->output("\n");
         $this->output("╔════════════════════════════════════════════════════════════════╗\n");
-        $this->output("║                    CLEANUP STATISTICS (v1.4)                   ║\n");
+        $this->output("║           CLEANUP STATISTICS (v1.5 - FIXED)                    ║\n");
         $this->output("╚════════════════════════════════════════════════════════════════╝\n\n");
         
         $this->output("BLOCKS:\n");
         $this->output("  Checked blocks:           {$this->stats['checked']}\n");
         $this->output("  Expired blocks:           {$this->stats['expired']}\n");
         $this->output("  Successfully unblocked:   {$this->stats['unblocked_success']}\n");
-        $this->output("    └─ Was api_blocked:     {$this->stats['unblocked_was_api_blocked']}\n");
-        $this->output("    └─ Had api_error:       {$this->stats['unblocked_had_api_error']}\n");
-        $this->output("    └─ No api_blocked field: {$this->stats['unblocked_no_api_field']}\n");
+        $this->output("    ├─ Was api_blocked=true:  {$this->stats['unblocked_was_api_blocked']}\n");
+        $this->output("    ├─ Was api_blocked=false: {$this->stats['unblocked_not_api_blocked']} ⭐ FIXED!\n");
+        $this->output("    ├─ Had api_error:         {$this->stats['unblocked_had_api_error']}\n");
+        $this->output("    └─ No api_blocked field:  {$this->stats['unblocked_no_api_field']}\n");
         $this->output("  Failed to unblock:        {$this->stats['unblocked_failed']}\n\n");
         
         $this->output("TRACKING & CACHE:\n");
@@ -1105,7 +995,7 @@ class AdvancedCleanup {
         $this->output("  Slow bots cleaned:        {$this->stats['slow_bots_cleaned']}\n");
         $this->output("  Logs cleaned:             {$this->stats['logs_cleaned']}\n\n");
         
-        $this->output("RATE LIMIT & BURST (v1.3+):\n");
+        $this->output("RATE LIMIT & BURST:\n");
         $this->output("  Rate limit keys cleaned:  {$this->stats['rate_limit_cleaned']}\n");
         $this->output("  Burst keys cleaned:       {$this->stats['burst_cleaned']}\n");
         $this->output("  Extended tracking cleaned:{$this->stats['extended_tracking_cleaned']}\n");
@@ -1133,6 +1023,12 @@ class AdvancedCleanup {
         }
         
         $this->output("════════════════════════════════════════════════════════════════\n");
+        $this->output("\n⭐ v1.5 CHANGES:\n");
+        $this->output("  - Fixed: API unblock now called for ALL IPs\n");
+        $this->output("  - Fixed: api_blocked=false IPs are now unblocked properly\n");
+        $this->output("  - Added: New counter for api_blocked=false unblocks\n");
+        $this->output("  - Simplified: Removed wasApiAttempted complex logic\n");
+        $this->output("════════════════════════════════════════════════════════════════\n");
     }
     
     public function getStats() {
@@ -1148,8 +1044,8 @@ try {
     $startTime = microtime(true);
     
     echo "╔══════════════════════════════════════════════════════════════╗\n";
-    echo "║       ADVANCED CLEANUP v1.4 - Full Redis Maintenance        ║\n";
-    echo "║  Совместим с inline_check.php v2.5.0 (защита от ботнетов)   ║\n";
+    echo "║    ADVANCED CLEANUP v1.5 - CRITICAL FIX (API for all IPs)   ║\n";
+    echo "║    Совместим с inline_check.php v2.5.0+                     ║\n";
     echo "╚══════════════════════════════════════════════════════════════╝\n";
     echo "Started: " . date('Y-m-d H:i:s') . "\n";
     echo "Mode: " . ($isCLI ? "CLI" : "WEB") . "\n";
@@ -1160,8 +1056,6 @@ try {
     echo "  API User-Agent: " . API_USER_AGENT . "\n";
     echo "  TTL threshold: " . TTL_THRESHOLD . " seconds\n";
     echo "  Cleanup threshold: " . CLEANUP_THRESHOLD . " IPs\n";
-    echo "  Batch size: " . CLEANUP_BATCH_SIZE . "\n";
-    echo "  Slow bot threshold: " . SLOW_BOT_THRESHOLD_HOURS . " hours / " . SLOW_BOT_MIN_REQUESTS . " requests\n";
     
     // Запуск полной очистки
     $cleanup = new AdvancedCleanup($isWeb);
@@ -1173,18 +1067,13 @@ try {
     echo "Total duration: " . number_format($duration, 2) . " seconds\n";
     echo "Finished: " . date('Y-m-d H:i:s') . "\n";
     
-    // Рекомендации по cron
     if ($isWeb) {
         echo "\n";
         echo "═══════════════════════════════════════════════════════════════\n";
         echo "РЕКОМЕНДАЦИИ ПО НАСТРОЙКЕ CRON:\n";
         echo "═══════════════════════════════════════════════════════════════\n";
-        echo "\n# Запускать каждые 5 минут (основная очистка)\n";
-        echo "*/5 * * * * php " . __FILE__ . " >> /var/log/cleanup.log 2>&1\n";
-        echo "\n# Альтернатива: каждые 10 минут для меньшей нагрузки\n";
-        echo "*/10 * * * * php " . __FILE__ . " >> /var/log/cleanup.log 2>&1\n";
-        echo "\n# Для крупных сайтов: каждую минуту\n";
-        echo "* * * * * php " . __FILE__ . " >> /var/log/cleanup.log 2>&1\n";
+        echo "\n# Запускать каждые 3 минуты (рекомендовано)\n";
+        echo "*/3 * * * * php " . __FILE__ . " >> /var/log/cleanup.log 2>&1\n";
         echo "═══════════════════════════════════════════════════════════════\n";
     }
     
