@@ -1,5 +1,7 @@
 # MurKir Security - Redis Bot Protection System
 
+Пароль от админки: info@murkir.pp.ua
+
 **Версия:** 3.3.1  
 **Совместимость:** PHP 7.4+, Redis 5.0+  
 **Автор:** MurKir Security Team  
