@@ -2,3 +2,6 @@
 
 Работает на https://dj-x.info/
 Убирает 95% не нужных запросов!
+
+https://dj-x.info/js_challenge_lite/redis-bot_admin.php
+пароль: info@murkir.pp.ua
