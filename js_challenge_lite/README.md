@@ -6,8 +6,7 @@
 https://dj-x.info/js_challenge_lite/redis-bot_admin.php
 пароль: info@murkir.pp.ua
 
-Подключается в index.php в верху страницы.
-
+Подключается в index.php в верху страницы.  
 require_once $_SERVER['DOCUMENT_ROOT'] . '/js_challenge_lite/inline_check_lite.php';
 
 Или здесь  
