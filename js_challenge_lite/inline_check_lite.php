@@ -1,38 +1,56 @@
 <?php
 /**
  * ============================================================================
- * Redis Bot Protection - SEO ОПТИМІЗОВАНА ВЕРСІЯ v3.6.4
+ * Redis Bot Protection - SEO ОПТИМІЗОВАНА ВЕРСІЯ v3.6.7 (PATCHED)
  * ============================================================================
  * 
- * ВЕРСІЯ 3.6.4 - SMF STYLE (2026-01-14)
+ * ВЕРСІЯ 3.6.5 - NO COOKIE ATTACK PROTECTION (2026-01-15)
  * 
- * НОВЕ v3.6.4:
- * 🎨 Дизайн в стилі SMF 2.0.15 (Simple Machines Forum)
- * 🎨 Класична тема форуму: синій заголовок, білий фон
- * 🎨 JS Challenge виглядає як сторінка форуму
- * 🎨 502 помилка з червоним заголовком (помилка)
- * 🎨 Градієнти та стилі як в SMF
- * 🎨 Футер з копірайтом SMF
+ * ВЕРСІЯ 3.6.6 - COUNTER RESET ON SUCCESSFUL LOGIN (2026-01-15)
  * 
- * НОВЕ v3.6.3:
- * 🎨 Збалансований дизайн JS Challenge (видніше, особливо по центру)
- * 🎨 Радіальне світіння по центру екрану
- * 🎨 502 помилка в такому ж темному стилі
- * 🎨 Автоматичне оновлення 502 через 10 секунд
- * 🎨 Краща видимість але все ще непомітно
+ * НОВЕ v3.6.6:
+ * 🔥 Скидання лічильника no_cookie_attempts при отриманні cookie
+ * 🔥 Дозволяє кільком користувачам з одного IP заходити на сайт
+ * 🔥 Автоматичне очищення лічильника після успішної авторизації
  * 
- * НОВЕ v3.6.2:
- * 🎨 Темний дизайн JS Challenge (майже непомітний на чорному фоні)
- * 🎨 Мінімалістичний інтерфейс
- * 🎨 Знижена яскравість всіх елементів
- * 🎨 Коротший текст повідомлень
+ * ЯК ПРАЦЮЄ:
+ * - Користувач 1: Заходить → JS Challenge → отримує cookie → лічильник скидається
+ * - Користувач 2: Заходить → JS Challenge → отримує cookie → лічильник скидається
+ * - Користувач 3: Заходить → JS Challenge → отримує cookie → лічильник скидається
+ * - Всі 3+ користувачі можуть зайти з одного IP без блокування!
  * 
- * ВИПРАВЛЕННЯ v3.6.1:
- * 🔧 Розширений список Google ботів в _is_seo_bot()
- * 🔧 Додано Google-InspectionTool (для GSC)
- * 🔧 Додано всі варіанти Google ботів (AdsBot, APIs-Google, тощо)
- * 🔧 Синхронізовано з searchEngines в класі SimpleBotProtection
- * 🔧 Виправлено 503 помилку в Google Search Console
+ * ПРОБЛЕМА ЯКУ ВИРІШЕНО:
+ * - Раніше: З одного IP могли зайти тільки 3 користувачі (поріг $noCookieThreshold)
+ * - Тепер: Необмежена кількість користувачів з одного IP ✅
+ * 
+ * 
+ * ВЕРСІЯ 3.6.7 - ADMIN PANEL FIX (2026-01-15)
+ * 
+ * НОВЕ v3.6.7:
+ * 🔧 Виправлено відображення IP в адмінці для blocked:no_cookie
+ * 🔧 Додано поле 'ip' в дані blocked:no_cookie для сумісності з адмінкою
+ * 
+ * ============================================================================
+ * 
+ * 
+ * НОВЕ v3.6.5:
+ * 🔥 Швидке блокування ботів БЕЗ cookies (3 запити замість 100)
+ * 🔥 Жорсткі rate limits для користувачів без bot_protection_uid
+ * 🔥 Виявлення ботів які НЕ зберігають cookies
+ * 🔥 API блокування в 30 разів швидше
+ * 
+ * ЯК ПРАЦЮЄ:
+ * - Бот проходить JS Challenge → отримує mk_verified cookie
+ * - Бот робить запити, але НЕ зберігає bot_protection_uid cookie
+ * - Система виявляє 3 запити без bot_protection_uid за 30 секунд
+ * - БЛОКУВАННЯ: Redis + API (замість очікування 100 запитів)
+ * 
+ * НАЛАШТУВАННЯ (рядок ~607):
+ * - $noCookieThreshold = 3;        // Кількість запитів без cookie
+ * - $noCookieTimeWindow = 30;      // За скільки секунд
+ * - $noCookieRateLimits = array(); // Жорсткі ліміти
+ * 
+ * ============================================================================
  * 
  * ВЕРСІЯ 3.6.0 - SEO OPTIMIZATION + CUSTOM USER AGENTS (2026-01-14)
  * 
@@ -45,7 +63,6 @@
  * ✅ Окремі ліміти для верифікованих ботів
  * ✅ Автоматичне логування SEO ботів
  * ✅ Швидка перевірка без Redis overhead для ботів
- * 
  * SEO БОТИ (автоматично пропускаються):
  * - Google (Googlebot, Google-InspectionTool, AdsBot, APIs-Google)
  * - Yandex (YandexBot, YandexImages, YandexMetrika)
@@ -156,7 +173,6 @@ function _is_custom_ua($userAgent) {
 
 /**
  * Швидка перевірка SEO ботів для раннього пропуску
- * ВАЖЛИВО! Цей список має співпадати з searchEngines в класі SimpleBotProtection
  */
 function _is_seo_bot($userAgent) {
     if (empty($userAgent)) {
@@ -165,78 +181,11 @@ function _is_seo_bot($userAgent) {
     
     $userAgentLower = strtolower($userAgent);
     
-    // ========================================================================
-    // РОЗШИРЕНИЙ СПИСОК ПОШУКОВИХ СИСТЕМ (v3.6.1)
-    // ========================================================================
-    
+    // Базовий список для швидкої перевірки
     $seoBots = array(
-        // GOOGLE (всі варіанти)
-        'googlebot',                    // Основний краулер
-        'google-inspectiontool',        // ⭐ Google Search Console!
-        'adsbot-google',                // Реклама
-        'apis-google',                  // API Google
-        'mediapartners-google',         // AdSense
-        'googleother',                  // Інші сервіси
-        'google-site-verification',     // Верифікація сайту
-        'googlebot-image',              // Зображення
-        'googlebot-news',               // Новини
-        'googlebot-video',              // Відео
-        'google-structured-data',       // Structured data
-        
-        // YANDEX (всі варіанти)
-        'yandexbot',
-        'yandex',
-        'yandexmetrika',
-        'yandexwebmaster',
-        'yandexdirect',
-        'yandexmobilebot',
-        'yandeximages',
-        
-        // BING/MICROSOFT
-        'bingbot',
-        'bingpreview',
-        'msnbot',
-        'adidxbot',
-        
-        // ІНШІ ПОШУКОВІ СИСТЕМИ
-        'duckduckbot',          // DuckDuckGo
-        'baiduspider',          // Baidu
-        'slurp',                // Yahoo
-        'seznambot',            // Seznam
-        'sogou',                // Sogou
-        'exabot',               // Exalead
-        'applebot',             // Apple
-        
-        // SEO TOOLS
-        'screaming frog',       // Screaming Frog SEO Spider
-        'semrushbot',           // Semrush
-        'ahrefsbot',            // Ahrefs
-        'mj12bot',              // Majestic
-        'sitebulb',             // Sitebulb
-        
-        // СОЦІАЛЬНІ МЕРЕЖІ
-        'facebookexternalhit',  // Facebook
-        'facebookcatalog',      // Facebook Catalog
-        'twitterbot',           // Twitter/X
-        'pinterest',            // Pinterest
-        'linkedinbot',          // LinkedIn
-        'instagram',            // Instagram
-        'tiktok',               // TikTok
-        'bytespider',           // ByteDance/TikTok
-        'whatsapp',             // WhatsApp
-        'telegram',             // Telegram
-        'viber',                // Viber
-        'discordbot',           // Discord
-        'slackbot',             // Slack
-        
-        // МОНІТОРИНГ
-        'pingdom',              // Pingdom
-        'uptimerobot',          // UptimeRobot
-        'statuscake',           // StatusCake
-        'gtmetrix',             // GTmetrix
-        'webpagetest',          // WebPageTest
-        'lighthouse',           // Google Lighthouse
-        'chrome-lighthouse',    // Chrome Lighthouse
+        'googlebot', 'yandex', 'bingbot', 'duckduckbot',
+        'facebookexternalhit', 'twitterbot', 'pinterest',
+        'linkedinbot', 'whatsapp', 'telegram', 'viber'
     );
     
     foreach ($seoBots as $bot) {
@@ -544,51 +493,6 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
 }
 
 // ============================================================================
-// ФУНКЦІЯ ЛОГУВАННЯ JS CHALLENGE СТАТИСТИКИ
-// ============================================================================
-function _jsc_logStats($event, $ip = null) {
-    try {
-        $redis = new Redis();
-        $redis->connect('127.0.0.1', 6379, 1);
-        $redis->select(1);
-        $redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_PHP);
-        
-        $prefix = 'bot_protection:jsc_stats:';
-        $today = date('Y-m-d');
-        $hour = date('Y-m-d:H');
-        
-        // Загальна статистика
-        $redis->incr($prefix . 'total:' . $event);
-        $redis->incr($prefix . 'daily:' . $today . ':' . $event);
-        $redis->expire($prefix . 'daily:' . $today . ':' . $event, 86400 * 7); // Зберігаємо 7 днів
-        
-        // Погодинна статистика
-        $redis->incr($prefix . 'hourly:' . $hour . ':' . $event);
-        $redis->expire($prefix . 'hourly:' . $hour . ':' . $event, 86400 * 2); // Зберігаємо 2 дні
-        
-        // Логування IP (для показу в адмінці)
-        if ($ip && in_array($event, array('shown', 'passed', 'failed'))) {
-            $logKey = $prefix . 'log:' . $event;
-            $logEntry = array(
-                'ip' => $ip,
-                'time' => time(),
-                'date' => date('Y-m-d H:i:s'),
-                'ua' => isset($_SERVER['HTTP_USER_AGENT']) ? substr($_SERVER['HTTP_USER_AGENT'], 0, 200) : '-'
-            );
-            
-            // Зберігаємо останні 100 записів
-            $redis->lPush($logKey, $logEntry);
-            $redis->lTrim($logKey, 0, 99);
-            $redis->expire($logKey, 86400 * 7);
-        }
-        
-        $redis->close();
-    } catch (Exception $e) {
-        error_log("JSC Stats logging error: " . $e->getMessage());
-    }
-}
-
-// ============================================================================
 // ОБРОБКА POST ЗАПИТУ JS CHALLENGE
 // ============================================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_JSC_RESPONSE'])) {
@@ -596,10 +500,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_JSC_RESPONS
     header('Cache-Control: no-cache, no-store');
     
     $input = json_decode(file_get_contents('php://input'), true);
-    $ip = _jsc_getClientIP();
     
     if (!$input || !isset($input['challenge_id']) || !isset($input['answer']) || !isset($input['timestamp'])) {
-        _jsc_logStats('failed', $ip);
         echo json_encode(array('success' => false, 'error' => 'Invalid request'));
         exit;
     }
@@ -607,11 +509,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_JSC_RESPONS
     $timestamp = (int)$input['timestamp'];
     
     if (time() - $timestamp > 300) {
-        _jsc_logStats('expired', $ip);
         echo json_encode(array('success' => false, 'error' => 'Challenge expired'));
         exit;
     }
     
+    $ip = _jsc_getClientIP();
     $token = hash('sha256', $ip . date('Y-m-d') . $_JSC_CONFIG['secret_key']);
     
     $secure = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
@@ -629,9 +531,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_JSC_RESPONS
     } else {
         setcookie($cookie_name, $token, time() + $lifetime, '/', '', $secure, true);
     }
-    
-    // Логуємо успішне проходження
-    _jsc_logStats('passed', $ip);
     
     echo json_encode(array('success' => true, 'token' => $token));
     exit;
@@ -933,10 +832,6 @@ if ($_JSC_CONFIG['enabled']) {
         $challenge = _jsc_generateChallenge($_JSC_CONFIG['secret_key']);
         $currentUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http') . 
                       '://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
-        
-        // Логуємо показ challenge
-        _jsc_logStats('shown', _jsc_getClientIP());
-        
         _jsc_showChallengePage($challenge, $currentUrl);
     }
 }
@@ -978,8 +873,8 @@ class SimpleBotProtection {
     // Налаштування API
     private $apiSettings = array(
         'enabled' => false,
-        'url' => 'https://murkir.pp.ua/bot_blocker_api.php',
-        'api_key' => 'your_api_key_here',
+        'url' => 'https://mysite/redis-bot_protection/API/iptables.php',
+        'api_key' => '123456',
         'timeout' => 5,
         'retry_on_failure' => 2,
         'verify_ssl' => true,
@@ -987,6 +882,151 @@ class SimpleBotProtection {
         'block_on_api' => true,
         'block_on_redis' => true,
     );
+    
+    // ============================================================================
+    // ЗАХИСТ ВІД БОТІВ БЕЗ COOKIES v1.0 (2026-01-15)
+    // ============================================================================
+    
+    /**
+     * Налаштування захисту від ботів без cookies
+     * 
+     * Боти часто НЕ зберігають cookies (bot_protection_uid), навіть якщо
+     * пройшли JS Challenge (mk_verified). Це дозволяє виявити їх швидше.
+     * 
+     * РЕКОМЕНДОВАНІ ЗНАЧЕННЯ:
+     * - Малий сайт (легкий трафік): threshold=5, window=60
+     * - Середній сайт (рекомендовано): threshold=3, window=30
+     * - Під атакою (жорстко): threshold=2, window=20
+     */
+    
+    // Скільки запитів без bot_protection_uid перед блокуванням
+    private $noCookieThreshold = 3;
+    
+    // За який період часу рахувати (секунди)
+    private $noCookieTimeWindow = 30;
+    
+    /**
+     * Жорсткі rate limits для користувачів БЕЗ bot_protection_uid cookie
+     * 
+     * Ці ліміти застосовуються ТІЛЬКИ до користувачів без cookie.
+     * Звичайні користувачі з cookie використовують rateLimitSettings.
+     */
+    private $noCookieRateLimits = array(
+        'minute' => 10,      // Замість 20 (звичайний)
+        '5min' => 30,        // Замість 100
+        'hour' => 200,       // Замість 1000
+        'day' => 1000,       // Замість 5000
+        'burst' => 5,        // Замість 20 (10 секунд)
+    );
+    
+    /**
+     * Перевірка кількості запитів без bot_protection_uid cookie
+     * 
+     * Виявляє боти які пройшли JS Challenge (мають mk_verified),
+     * але НЕ зберігають bot_protection_uid cookie.
+     * 
+     * @param string $ip IP адреса
+     * @return bool true якщо треба блокувати
+     */
+    private function checkNoCookieAttempts($ip) {
+        $key = $this->redisPrefix . 'no_cookie_attempts:' . $ip;
+        
+        // Отримуємо історію спроб
+        $attempts = $this->redis->get($key);
+        if (!$attempts || !is_array($attempts)) {
+            $attempts = array();
+        }
+        
+        $now = time();
+        
+        // Фільтруємо старі записи (за межами time window)
+        $filtered = array();
+        foreach ($attempts as $timestamp) {
+            if (($now - $timestamp) < $this->noCookieTimeWindow) {
+                $filtered[] = $timestamp;
+            }
+        }
+        
+        // Додаємо поточну спробу
+        $filtered[] = $now;
+        
+        // Зберігаємо в Redis з подвійним TTL (щоб не втратити дані)
+        $this->redis->setex($key, $this->noCookieTimeWindow * 2, $filtered);
+        
+        // Перевірка порогу
+        $attemptCount = count($filtered);
+        
+        if ($attemptCount >= $this->noCookieThreshold) {
+            error_log(sprintf(
+                "NO COOKIE ATTACK DETECTED: IP=%s, attempts=%d in %dsec (threshold=%d)",
+                $ip, 
+                $attemptCount, 
+                $this->noCookieTimeWindow,
+                $this->noCookieThreshold
+            ));
+            
+            // Блокуємо в Redis
+            $blockKey = $this->redisPrefix . 'blocked:no_cookie:' . $ip;
+            $this->redis->setex($blockKey, 3600, array(
+                'ip' => $ip,  // Додано для адмінки
+                'time' => $now,
+                'reason' => 'no_cookie_attack',
+                'attempts' => $attemptCount,
+                'threshold' => $this->noCookieThreshold,
+                'window' => $this->noCookieTimeWindow
+            ));
+            
+            // Блокуємо через API
+            if ($this->apiSettings['enabled'] && $this->apiSettings['block_on_api']) {
+                $apiResult = $this->callBlockingAPI($ip, 'block');
+                
+                if ($apiResult['status'] === 'success') {
+                    error_log("API BLOCK SUCCESS: IP=$ip (no cookie attack, $attemptCount attempts in {$this->noCookieTimeWindow}sec)");
+                } elseif ($apiResult['status'] !== 'already_blocked') {
+                    $msg = isset($apiResult['message']) ? $apiResult['message'] : 'unknown';
+                    error_log("API BLOCK FAILED: IP=$ip, reason=" . $msg);
+                }
+            }
+            
+            return true;
+        }
+        
+        // Логування якщо включено debug режим
+        if ($this->debugMode && $attemptCount > 1) {
+            error_log(sprintf(
+                "NO COOKIE CHECK: IP=%s, attempts=%d/%d in %dsec",
+                $ip, 
+                $attemptCount, 
+                $this->noCookieThreshold,
+                $this->noCookieTimeWindow
+            ));
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Оновити налаштування захисту від ботів без cookies
+     * 
+     * @param array $settings Нові налаштування
+     *                        - threshold: int - кількість спроб
+     *                        - time_window: int - період часу в секундах
+     *                        - rate_limits: array - власні ліміти
+     */
+    public function updateNoCookieSettings($settings) {
+        if (isset($settings['threshold'])) {
+            $this->noCookieThreshold = max(1, (int)$settings['threshold']);
+        }
+        if (isset($settings['time_window'])) {
+            $this->noCookieTimeWindow = max(10, (int)$settings['time_window']);
+        }
+        if (isset($settings['rate_limits']) && is_array($settings['rate_limits'])) {
+            $this->noCookieRateLimits = array_merge(
+                $this->noCookieRateLimits, 
+                $settings['rate_limits']
+            );
+        }
+    }
     
     // Налаштування rDNS
     private $rdnsSettings = array(
@@ -1001,7 +1041,7 @@ class SimpleBotProtection {
     // Налаштування логування SEO ботів
     private $searchLogSettings = array(
         'enabled' => true,
-        'file' => '/tmp/search_bots.log',  // ⚠️ Повинен співпадати з redis-bot_admin.php!
+        'file' => '/var/log/search_engines.log',
         'max_size' => 1048576,
         'keep_backups' => 3,
         'log_host' => true,
@@ -1907,6 +1947,45 @@ class SimpleBotProtection {
         $userId = $this->generateUserIdentifier();
         $hasCookie = $this->hasValidCookie();
         
+        // Ініціалізація змінної для уникнення помилок
+        $useStrictLimits = false;
+        
+        // ========================================================================
+        // ЗАХИСТ ВІД БОТІВ БЕЗ COOKIES - Перевірка та жорсткі ліміти
+        // ========================================================================
+        if (!$hasCookie) {
+            // Перевірка чи це атака без cookies
+            if ($this->checkNoCookieAttempts($ip)) {
+                // Вже заблоковано і залоговано в checkNoCookieAttempts()
+                return true;
+            }
+            
+            // Використовуємо жорсткі ліміти для користувачів без cookies
+            $useStrictLimits = true;
+            
+            if ($this->debugMode) {
+                error_log(sprintf(
+                    "RATE LIMIT: Using STRICT limits for no-cookie user, IP=%s, limits: burst=%d, 5min=%d, hour=%d",
+                    $ip,
+                    $this->noCookieRateLimits['burst'],
+                    $this->noCookieRateLimits['5min'],
+                    $this->noCookieRateLimits['hour']
+                ));
+            }
+        } else {
+            // =====================================================================
+            // Cookie є - скидаємо лічильник спроб без cookie для цього IP
+            // Це дозволяє кільком користувачам з одного IP заходити на сайт
+            // =====================================================================
+            $attemptsKey = $this->redisPrefix . 'no_cookie_attempts:' . $ip;
+            if ($this->redis->exists($attemptsKey)) {
+                $this->redis->del($attemptsKey);
+                if ($this->debugMode) {
+                    error_log("NO COOKIE ATTEMPTS RESET: IP=$ip (cookie obtained successfully)");
+                }
+            }
+        }
+        
         $key = $this->redisPrefix . 'rate:' . hash('md5', $userId);
         $blockKey = $this->redisPrefix . 'blocked:' . hash('md5', $userId);
         
@@ -1971,20 +2050,35 @@ class SimpleBotProtection {
         $requests['hour'][] = $now;
         $requests['last_10sec'][] = $now;
         
-        $multiplier = 1.0;
-        if ($hasCookie) {
-            $multiplier = $this->rateLimitSettings['cookie_multiplier'];
+        // ========================================================================
+        // Встановлення лімітів залежно від наявності cookie
+        // ========================================================================
+        if ($useStrictLimits) {
+            // Жорсткі ліміти для користувачів БЕЗ bot_protection_uid cookie
+            $limits = array(
+                'minute' => $this->noCookieRateLimits['minute'],
+                '5min' => $this->noCookieRateLimits['5min'],
+                'hour' => $this->noCookieRateLimits['hour'],
+                'burst' => $this->noCookieRateLimits['burst']
+            );
+        } else {
+            // Звичайні ліміти з multiplier для користувачів З cookie
+            $multiplier = 1.0;
+            if ($hasCookie) {
+                $multiplier = $this->rateLimitSettings['cookie_multiplier'];
+            }
+            if ($this->isJSVerified()) {
+                $multiplier = $this->rateLimitSettings['js_verified_multiplier'];
+            }
+            
+            $limits = array(
+                'minute' => (int)($this->rateLimitSettings['max_requests_per_minute'] * $multiplier),
+                '5min' => (int)($this->rateLimitSettings['max_requests_per_5min'] * $multiplier),
+                'hour' => (int)($this->rateLimitSettings['max_requests_per_hour'] * $multiplier),
+                'burst' => (int)($this->rateLimitSettings['burst_threshold'] * $multiplier)
+            );
         }
-        if ($this->isJSVerified()) {
-            $multiplier = $this->rateLimitSettings['js_verified_multiplier'];
-        }
-        
-        $limits = array(
-            'minute' => (int)($this->rateLimitSettings['max_requests_per_minute'] * $multiplier),
-            '5min' => (int)($this->rateLimitSettings['max_requests_per_5min'] * $multiplier),
-            'hour' => (int)($this->rateLimitSettings['max_requests_per_hour'] * $multiplier),
-            'burst' => (int)($this->rateLimitSettings['burst_threshold'] * $multiplier)
-        );
+        // ========================================================================
         
         $violations = array();
         
@@ -2334,5 +2428,3 @@ echo "Custom User Agents: " . print_r($protection->getCustomUserAgents(), true);
 
 // Запуск захисту
 $protection->protect();
-
-?>
