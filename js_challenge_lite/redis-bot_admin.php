@@ -1,12 +1,18 @@
 <?php
 /**
  * ============================================================================
- * MurKir Security - Admin Panel v1.1
+ * MurKir Security - Admin Panel v1.2
  * ============================================================================
  * 
  * Полноценная админ-панель для управления Redis Bot Protection
  * 
- * НОВОЕ v1.1:
+ * 
+ * НОВОЕ v1.2:
+ * ✅ Виправлено відображення IP для blocked:no_cookie (v3.6.6+)
+ * ✅ Підтримка нового формату blocked:no_cookie:{IP}
+ * ✅ Функція extractIP() тепер розпізнає всі формати блокувань
+ * 
+ * НОВОЕ v1.2:
  * ✅ Раздел "Пошуковики" - просмотр лога поисковых ботов
  * ✅ Статистика по каждому боту (Google, Yandex, Bing и др.)
  * ✅ Просмотр URL, IP, метод верификации
@@ -284,9 +290,15 @@ function getBlockedIPs($redis, $prefix, $type = 'all', $page = 1, $perPage = 20)
 }
 
 function extractIP($key) {
+    // Формат 1: blocked:no_cookie:{IP} (v3.6.6+)
+    if (preg_match('/blocked:no_cookie:([0-9a-f:\.]+)$/i', $key, $matches)) {
+        return $matches[1];
+    }
+    // Формат 2: blocked:{IP} (старий формат з прямим IP)
     if (preg_match('/blocked:([0-9a-f:\.]+)$/i', $key, $matches)) {
         return $matches[1];
     }
+    // Формат 3: blocked:{hash} (MD5 хеш) - повертаємо unknown
     return 'unknown';
 }
 
