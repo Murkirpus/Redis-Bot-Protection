@@ -1,10 +1,31 @@
 <?php
 /**
  * ============================================================================
- * Redis Bot Protection - SEO ОПТИМІЗОВАНА ВЕРСІЯ v3.6.1
+ * Redis Bot Protection - SEO ОПТИМІЗОВАНА ВЕРСІЯ v3.6.4
  * ============================================================================
  * 
- * ВЕРСІЯ 3.6.1 - FIX: Google Search Console (2026-01-14)
+ * ВЕРСІЯ 3.6.4 - SMF STYLE (2026-01-14)
+ * 
+ * НОВЕ v3.6.4:
+ * 🎨 Дизайн в стилі SMF 2.0.15 (Simple Machines Forum)
+ * 🎨 Класична тема форуму: синій заголовок, білий фон
+ * 🎨 JS Challenge виглядає як сторінка форуму
+ * 🎨 502 помилка з червоним заголовком (помилка)
+ * 🎨 Градієнти та стилі як в SMF
+ * 🎨 Футер з копірайтом SMF
+ * 
+ * НОВЕ v3.6.3:
+ * 🎨 Збалансований дизайн JS Challenge (видніше, особливо по центру)
+ * 🎨 Радіальне світіння по центру екрану
+ * 🎨 502 помилка в такому ж темному стилі
+ * 🎨 Автоматичне оновлення 502 через 10 секунд
+ * 🎨 Краща видимість але все ще непомітно
+ * 
+ * НОВЕ v3.6.2:
+ * 🎨 Темний дизайн JS Challenge (майже непомітний на чорному фоні)
+ * 🎨 Мінімалістичний інтерфейс
+ * 🎨 Знижена яскравість всіх елементів
+ * 🎨 Коротший текст повідомлень
  * 
  * ВИПРАВЛЕННЯ v3.6.1:
  * 🔧 Розширений список Google ботів в _is_seo_bot()
@@ -293,28 +314,54 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            font-family: Verdana, Arial, sans-serif;
+            font-size: 13px;
+            background: #e5e5e8;
+            color: #000;
             padding: 20px;
         }
-        .challenge-container {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            max-width: 500px;
-            width: 100%;
-            padding: 40px;
-            text-align: center;
+        #wrapper {
+            max-width: 900px;
+            margin: 0 auto;
+            background: #fff;
+            border: 1px solid #bbb;
+        }
+        #header {
+            background: linear-gradient(to bottom, #315d7d 0%, #1e5380 100%);
+            padding: 20px;
+            border-bottom: 1px solid #144063;
+        }
+        #header h1 {
+            color: #fff;
+            font-size: 22px;
+            font-weight: normal;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+            margin: 0;
+        }
+        #content {
+            padding: 30px;
+            background: #fff;
+        }
+        .catbg {
+            background: linear-gradient(to bottom, #ffffff 0%, #e0e0e0 100%);
+            border: 1px solid #ccc;
+            border-bottom: 1px solid #aaa;
+            padding: 10px;
+            font-weight: bold;
+            color: #444;
+            margin-bottom: 15px;
+        }
+        .windowbg {
+            background: #f0f0f0;
+            border: 1px solid #ccc;
+            padding: 25px;
+            margin-bottom: 15px;
         }
         .spinner {
-            width: 50px;
-            height: 50px;
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #667eea;
+            width: 40px;
+            height: 40px;
+            border: 4px solid #e5e5e8;
+            border-top: 4px solid #1e5380;
             border-radius: 50%;
             animation: spin 1s linear infinite;
             margin: 0 auto 20px;
@@ -323,55 +370,92 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-        h1 { color: #333; margin-bottom: 10px; font-size: 24px; }
-        .message { color: #666; margin-bottom: 30px; line-height: 1.6; }
+        .info-text {
+            text-align: center;
+            color: #444;
+            line-height: 1.6;
+            margin: 15px 0;
+        }
         .progress-bar {
             width: 100%;
-            height: 6px;
-            background: #f0f0f0;
+            height: 24px;
+            background: #fff;
+            border: 1px solid #bbb;
             border-radius: 3px;
             overflow: hidden;
-            margin-bottom: 20px;
+            margin: 20px 0;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
         }
         .progress-fill {
             height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(to bottom, #7db8e5 0%, #4e9bd6 100%);
             width: 0%;
             transition: width 0.3s ease;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);
         }
-        .status { color: #999; font-size: 14px; margin-top: 20px; }
+        .status {
+            text-align: center;
+            color: #666;
+            font-size: 12px;
+            margin-top: 15px;
+            font-style: italic;
+        }
         .error {
-            color: #e74c3c;
-            background: #fee;
+            background: #fff0f0;
+            border: 1px solid #cc3300;
+            color: #cc3300;
             padding: 15px;
-            border-radius: 6px;
-            margin-top: 20px;
+            border-radius: 3px;
+            margin-top: 15px;
             display: none;
         }
-        .success { color: #27ae60; }
-        .challenge-info {
-            background: #f8f9fa;
+        .success { color: #080; }
+        .smalltext {
+            font-size: 11px;
+            color: #777;
+            text-align: center;
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 1px solid #ddd;
+        }
+        #footer {
+            background: #e5e5e8;
             padding: 15px;
-            border-radius: 6px;
-            margin: 20px 0;
-            font-size: 12px;
+            text-align: center;
+            font-size: 11px;
             color: #666;
+            border-top: 1px solid #bbb;
         }
     </style>
 </head>
 <body>
-    <div class="challenge-container">
-        <div class="spinner"></div>
-        <h1>Проверка безопасности</h1>
-        <p class="message">Выполняется проверка вашего браузера. Это займет несколько секунд.</p>
-        <div class="progress-bar">
-            <div class="progress-fill" id="progress"></div>
+    <div id="wrapper">
+        <div id="header">
+            <h1>🛡️ Система безопасности</h1>
         </div>
-        <div class="status" id="status">Инициализация...</div>
-        <div class="error" id="error"></div>
-        <div class="challenge-info">
-            Эта проверка необходима для защиты сайта от автоматических запросов.
-            Она не собирает ваши персональные данные.
+        <div id="content">
+            <div class="catbg">
+                Проверка безопасности
+            </div>
+            <div class="windowbg">
+                <div class="spinner"></div>
+                <div class="info-text">
+                    <strong>Пожалуйста, подождите...</strong><br>
+                    Выполняется автоматическая проверка вашего браузера для защиты от автоматизированных запросов.
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress"></div>
+                </div>
+                <div class="status" id="status">Инициализация проверки...</div>
+                <div class="error" id="error"></div>
+                <div class="smalltext">
+                    Эта проверка обычно занимает несколько секунд.<br>
+                    Не закрывайте это окно до завершения проверки.
+                </div>
+            </div>
+        </div>
+        <div id="footer">
+            Powered by MurKir Security | SMF-Style Interface
         </div>
     </div>
     <script>
@@ -599,11 +683,201 @@ function _show_502_error() {
     http_response_code(502);
     header('Content-Type: text/html; charset=UTF-8');
     header('Cache-Control: no-cache, no-store');
-    echo '<!DOCTYPE html><html><head><title>502 Bad Gateway</title></head>
-<body style="font-family:Arial;text-align:center;padding:50px;">
-<h1>502 Bad Gateway</h1>
-<p>The server encountered a temporary error.</p>
-</body></html>';
+    
+    echo '<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>502 Bad Gateway</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Verdana, Arial, sans-serif;
+            font-size: 13px;
+            background: #e5e5e8;
+            color: #000;
+            padding: 20px;
+        }
+        #wrapper {
+            max-width: 900px;
+            margin: 0 auto;
+            background: #fff;
+            border: 1px solid #bbb;
+        }
+        #header {
+            background: linear-gradient(to bottom, #7d3131 0%, #803e1e 100%);
+            padding: 20px;
+            border-bottom: 1px solid #631414;
+        }
+        #header h1 {
+            color: #fff;
+            font-size: 22px;
+            font-weight: normal;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+            margin: 0;
+        }
+        #content {
+            padding: 30px;
+            background: #fff;
+        }
+        .catbg {
+            background: linear-gradient(to bottom, #ffffff 0%, #ffe0e0 100%);
+            border: 1px solid #cc9999;
+            border-bottom: 1px solid #aa7777;
+            padding: 10px;
+            font-weight: bold;
+            color: #880000;
+            margin-bottom: 15px;
+        }
+        .windowbg {
+            background: #fff5f5;
+            border: 1px solid #cc9999;
+            padding: 25px;
+            margin-bottom: 15px;
+        }
+        .error-icon {
+            text-align: center;
+            font-size: 48px;
+            margin-bottom: 20px;
+            color: #cc3300;
+        }
+        .error-code {
+            text-align: center;
+            font-size: 18px;
+            font-weight: bold;
+            color: #cc3300;
+            margin-bottom: 15px;
+        }
+        .info-text {
+            color: #444;
+            line-height: 1.8;
+            margin: 15px 0;
+        }
+        .info-box {
+            background: #f0f0f0;
+            border: 1px solid #ccc;
+            padding: 15px;
+            margin: 20px 0;
+            border-left: 4px solid #cc3300;
+        }
+        .info-box strong {
+            display: block;
+            margin-bottom: 10px;
+            color: #880000;
+        }
+        .info-box ul {
+            margin-left: 20px;
+            color: #666;
+        }
+        .info-box li {
+            margin: 5px 0;
+        }
+        .button {
+            display: inline-block;
+            background: linear-gradient(to bottom, #7db8e5 0%, #4e9bd6 100%);
+            border: 1px solid #3a7ba8;
+            color: #fff;
+            padding: 8px 20px;
+            text-decoration: none;
+            border-radius: 3px;
+            font-weight: bold;
+            text-shadow: 1px 1px 1px rgba(0,0,0,0.2);
+            cursor: pointer;
+            margin-top: 15px;
+        }
+        .button:hover {
+            background: linear-gradient(to bottom, #8dc5f0 0%, #5ea8e0 100%);
+        }
+        .center {
+            text-align: center;
+        }
+        .smalltext {
+            font-size: 11px;
+            color: #777;
+            text-align: center;
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 1px solid #ddd;
+        }
+        #footer {
+            background: #e5e5e8;
+            padding: 15px;
+            text-align: center;
+            font-size: 11px;
+            color: #666;
+            border-top: 1px solid #bbb;
+        }
+        #countdown {
+            font-weight: bold;
+            color: #1e5380;
+        }
+    </style>
+</head>
+<body>
+    <div id="wrapper">
+        <div id="header">
+            <h1>⚠️ Ошибка сервера</h1>
+        </div>
+        <div id="content">
+            <div class="catbg">
+                Ошибка 502 - Bad Gateway
+            </div>
+            <div class="windowbg">
+                <div class="error-icon">⚠</div>
+                <div class="error-code">HTTP 502 Bad Gateway</div>
+                
+                <div class="info-text center">
+                    <strong>Сервер временно недоступен</strong><br>
+                    К сожалению, в данный момент невозможно обработать ваш запрос.<br>
+                    Пожалуйста, попробуйте позже.
+                </div>
+                
+                <div class="info-box">
+                    <strong>Возможные причины:</strong>
+                    <ul>
+                        <li>Сервер перегружен большим количеством запросов</li>
+                        <li>Проводятся технические работы</li>
+                        <li>Временные проблемы с соединением</li>
+                        <li>Перезапуск серверных служб</li>
+                    </ul>
+                </div>
+                
+                <div class="center">
+                    <a href="javascript:location.reload()" class="button">
+                        🔄 Обновить страницу
+                    </a>
+                </div>
+                
+                <div class="smalltext">
+                    Автоматическое обновление через <span id="countdown">10</span> секунд...<br>
+                    Если проблема сохраняется, обратитесь к администратору сайта.
+                </div>
+            </div>
+        </div>
+        <div id="footer">
+            SMF 2.0.15 | SMF © 2017, Simple Machines | Powered by MurKir Security
+        </div>
+    </div>
+    
+    <script>
+        var counter = 10;
+        var countdownEl = document.getElementById("countdown");
+        
+        var interval = setInterval(function() {
+            counter--;
+            if (countdownEl) {
+                countdownEl.textContent = counter;
+            }
+            if (counter <= 0) {
+                clearInterval(interval);
+                location.reload();
+            }
+        }, 1000);
+    </script>
+</body>
+</html>';
     exit;
 }
 
@@ -704,8 +978,8 @@ class SimpleBotProtection {
     // Налаштування API
     private $apiSettings = array(
         'enabled' => false,
-        'url' => 'https://mysite.com/redis-bot_protection/API/iptables.php',
-        'api_key' => '12345',
+        'url' => 'https://murkir.pp.ua/bot_blocker_api.php',
+        'api_key' => 'your_api_key_here',
         'timeout' => 5,
         'retry_on_failure' => 2,
         'verify_ssl' => true,
