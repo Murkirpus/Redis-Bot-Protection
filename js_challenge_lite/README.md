@@ -10,8 +10,7 @@ https://dj-x.info/js_challenge_lite/redis-bot_admin.php
 require_once $_SERVER['DOCUMENT_ROOT'] . '/js_challenge_lite/inline_check_lite.php';
 
 Или здесь  
-/etc/php/8.3/fpm/pool.d/php8.conf
-
+/etc/php/8.3/fpm/pool.d/php8.conf  
 php_admin_value[auto_prepend_file] = "/home/myuser/dj-x.info/js_challenge_lite/inline_check_lite.php"
 
 
