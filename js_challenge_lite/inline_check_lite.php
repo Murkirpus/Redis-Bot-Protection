@@ -1,10 +1,27 @@
 <?php
 /**
  * ============================================================================
- * Redis Bot Protection - SEO ОПТИМІЗОВАНА ВЕРСІЯ v3.6.7 (PATCHED)
+ * Redis Bot Protection - SEO ОПТИМІЗОВАНА ВЕРСІЯ v3.7.0 (IP WHITELIST)
  * ============================================================================
  * 
  * ВЕРСІЯ 3.6.5 - NO COOKIE ATTACK PROTECTION (2026-01-15)
+ * 
+ * ВЕРСІЯ 3.7.0 - IP WHITELIST FOR ALL USER AGENTS (2026-01-18)
+ * 
+ * НОВЕ v3.7.0:
+ * 🔥 Перевірка IP по білому списку для ВСІХ User-Agent (не тільки ботів)
+ * 🔥 Якщо IP належить Google/Bing/Yandex - пропускаємо БЕЗ challenge
+ * 🔥 Кешування результатів IP перевірки в Redis (24 години)
+ * 🔥 Підтримка IPv4 та IPv6 CIDR
+ * 🔥 Миттєва перевірка - без затримок rDNS
+ * 🔥 Код challenge сторінки змінено з 503 на 200 для SEO
+ * 
+ * ЯК ПРАЦЮЄ:
+ * - Будь-який запит → перевірка IP по білому списку
+ * - IP в списку Google/Bing/Yandex → пропускаємо (будь-який User-Agent!)
+ * - IP НЕ в списку → звичайна перевірка (UA, rDNS, rate limit)
+ * 
+ * ============================================================================
  * 
  * ВЕРСІЯ 3.6.6 - COUNTER RESET ON SUCCESSFUL LOGIN (2026-01-15)
  * 
@@ -130,6 +147,126 @@ $CUSTOM_USER_AGENTS = array(
 );
 
 // ============================================================================
+// БІЛИЙ СПИСОК IP ПОШУКОВИХ СИСТЕМ (v3.7.0)
+// ============================================================================
+/**
+ * Об'єднаний список CIDR діапазонів пошукових систем
+ * Перевіряється для ВСІХ User-Agent!
+ * 
+ * Джерела:
+ * - Google: https://developers.google.com/static/search/apis/ipranges/googlebot.json
+ * - Bing: https://www.bing.com/toolbox/bingbot.json
+ * - Yandex: https://yandex.com/support/webmaster/robot-workings/check-yandex-robots.html
+ */
+$SEARCH_ENGINE_IP_RANGES = array(
+    // GOOGLE IPv4
+    '66.249.64.0/19',
+    '64.233.160.0/19',
+    '72.14.192.0/18',
+    '203.208.32.0/19',
+    '74.125.0.0/16',
+    '216.239.32.0/19',
+    '209.85.128.0/17',
+    '108.177.0.0/17',
+    '142.250.0.0/15',
+    '172.217.0.0/16',
+    '172.253.0.0/16',
+    '173.194.0.0/16',
+    '192.178.0.0/15',
+    '34.64.0.0/10',
+    '35.190.0.0/17',
+    // GOOGLE IPv6
+    '2001:4860::/32',
+    '2404:6800::/32',
+    '2607:f8b0::/32',
+    '2800:3f0::/32',
+    '2a00:1450::/32',
+    '2c0f:fb50::/32',
+    // YANDEX IPv4
+    '5.45.192.0/18',
+    '5.255.192.0/18',
+    '37.9.64.0/18',
+    '37.140.128.0/18',
+    '77.88.0.0/18',
+    '84.201.128.0/18',
+    '87.250.224.0/19',
+    '90.156.176.0/22',
+    '93.158.128.0/18',
+    '95.108.128.0/17',
+    '100.43.64.0/19',
+    '130.193.32.0/19',
+    '141.8.128.0/18',
+    '178.154.128.0/17',
+    '185.32.187.0/24',
+    '199.21.96.0/22',
+    '199.36.240.0/22',
+    '213.180.192.0/19',
+    // YANDEX IPv6
+    '2a02:6b8::/32',
+    // BING/MICROSOFT IPv4
+    '13.66.0.0/16',
+    '13.67.0.0/16',
+    '13.68.0.0/15',
+    '13.104.0.0/14',
+    '20.33.0.0/16',
+    '20.40.0.0/13',
+    '40.74.0.0/15',
+    '40.76.0.0/14',
+    '40.80.0.0/12',
+    '52.96.0.0/12',
+    '52.160.0.0/11',
+    '52.224.0.0/11',
+    '65.52.0.0/14',
+    '65.55.0.0/16',
+    '104.40.0.0/13',
+    '104.208.0.0/13',
+    '131.253.0.0/16',
+    '157.55.0.0/16',
+    '157.56.0.0/14',
+    '168.61.0.0/16',
+    '191.232.0.0/13',
+    '199.30.16.0/20',
+    '207.46.0.0/16',
+    // BING IPv6
+    '2620:1ec:c::0/40',
+    '2620:1ec:8f8::/46',
+    '2a01:111::/32',
+    // BAIDU IPv4
+    '119.63.192.0/21',
+    '123.125.71.0/24',
+    '180.76.0.0/16',
+    '220.181.0.0/16',
+    // DUCKDUCKGO IPv4
+    '20.191.45.212/32',
+    '40.88.21.235/32',
+    '52.142.24.149/32',
+    '52.142.26.175/32',
+    '72.94.249.34/32',
+    '72.94.249.35/32',
+    // YAHOO IPv4
+    '67.195.0.0/16',
+    '72.30.0.0/16',
+    '74.6.0.0/16',
+    '98.136.0.0/14',
+    // FACEBOOK IPv4
+    '31.13.24.0/21',
+    '31.13.64.0/18',
+    '66.220.144.0/20',
+    '69.63.176.0/20',
+    '69.171.224.0/19',
+    '157.240.0.0/16',
+    '173.252.64.0/18',
+    '185.60.216.0/22',
+    // FACEBOOK IPv6
+    '2a03:2880::/32',
+    // APPLE IPv4
+    '17.0.0.0/8',
+    // APPLE IPv6
+    '2620:149::/32',
+    '2a01:b740::/32',
+);
+
+// ============================================================================
 // КОНФІГУРАЦІЯ JS CHALLENGE
 // ============================================================================
 
@@ -198,6 +335,306 @@ function _is_seo_bot($userAgent) {
 }
 
 // ============================================================================
+// ПЕРЕВІРКА IP ПО БІЛОМУ СПИСКУ (v3.7.0)
+// ============================================================================
+
+/**
+ * Перевірка IP по білому списку пошукових систем
+ * Працює для БУДЬ-ЯКОГО User-Agent!
+ * Кешується в Redis для швидкості
+ * 
+ * @param string $ip IP адреса
+ * @return bool true якщо IP в білому списку
+ */
+function _is_search_engine_ip($ip) {
+    global $SEARCH_ENGINE_IP_RANGES;
+    
+    static $redis = null;
+    static $connected = false;
+    
+    // Підключення до Redis (один раз)
+    if ($redis === null) {
+        try {
+            $redis = new Redis();
+            $connected = $redis->connect('127.0.0.1', 6379, 0.5);
+            if ($connected) {
+                $redis->select(1);
+                $redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_PHP);
+            }
+        } catch (Exception $e) {
+            $connected = false;
+        }
+    }
+    
+    // Перевірка кешу Redis
+    if ($connected) {
+        $cacheKey = 'bot_protection:ip_whitelist:' . $ip;
+        try {
+            $cached = $redis->get($cacheKey);
+            if ($cached !== false) {
+                // Якщо IP вже в кеші і він whitelisted - логуємо візит
+                if ($cached === '1' || $cached === 1 || $cached === true) {
+                    _log_search_engine_visit($redis, $ip, 'IP-cached');
+                    return true;
+                }
+                return false;
+            }
+        } catch (Exception $e) {
+            // Ігноруємо помилки кешу
+        }
+    }
+    
+    // Перевірка IP в діапазонах
+    $result = false;
+    $matchedEngine = 'unknown';
+    $isIPv6 = (strpos($ip, ':') !== false);
+    
+    foreach ($SEARCH_ENGINE_IP_RANGES as $cidr) {
+        $cidrIsIPv6 = (strpos($cidr, ':') !== false);
+        if ($isIPv6 !== $cidrIsIPv6) {
+            continue;
+        }
+        
+        if (_ip_in_cidr_fast($ip, $cidr)) {
+            $result = true;
+            // Визначаємо пошукову систему по CIDR
+            $matchedEngine = _detect_engine_by_cidr($cidr);
+            break;
+        }
+    }
+    
+    // Зберігаємо в кеш Redis (24 години)
+    if ($connected) {
+        try {
+            $redis->setex($cacheKey, 86400, $result ? '1' : '0');
+        } catch (Exception $e) {
+            // Ігноруємо помилки кешу
+        }
+    }
+    
+    if ($result) {
+        error_log("SEARCH ENGINE IP WHITELIST: Allowing IP=$ip (engine=$matchedEngine)");
+        // Логуємо візит в Redis
+        if ($connected) {
+            _log_search_engine_visit($redis, $ip, 'IP', $matchedEngine);
+        }
+    }
+    
+    return $result;
+}
+
+/**
+ * v3.7.0: Визначення пошукової системи по CIDR
+ */
+function _detect_engine_by_cidr($cidr) {
+    // Google ranges start with 66.249, 64.233, 72.14, 74.125, etc.
+    if (preg_match('/^(66\.249|64\.233|72\.14|74\.125|216\.239|209\.85|108\.177|142\.250|172\.217|172\.253|173\.194|192\.178|34\.64|35\.190|203\.208)/', $cidr)) {
+        return 'Google';
+    }
+    if (strpos($cidr, '2001:4860') === 0 || strpos($cidr, '2404:6800') === 0 || strpos($cidr, '2607:f8b0') === 0) {
+        return 'Google';
+    }
+    
+    // Yandex
+    if (preg_match('/^(5\.45|5\.255|37\.9|37\.140|77\.88|84\.201|87\.250|93\.158|95\.108|141\.8|178\.154|213\.180)/', $cidr)) {
+        return 'Yandex';
+    }
+    if (strpos($cidr, '2a02:6b8') === 0) {
+        return 'Yandex';
+    }
+    
+    // Bing/Microsoft
+    if (preg_match('/^(13\.|20\.|40\.|52\.|65\.|104\.|131\.253|157\.55|157\.56|168\.6|191\.232|199\.30|207\.46)/', $cidr)) {
+        return 'Bing';
+    }
+    if (strpos($cidr, '2620:1ec') === 0 || strpos($cidr, '2a01:111') === 0) {
+        return 'Bing';
+    }
+    
+    // Baidu
+    if (preg_match('/^(119\.63|123\.125|180\.76|220\.181)/', $cidr)) {
+        return 'Baidu';
+    }
+    
+    // Facebook
+    if (preg_match('/^(31\.13|66\.220|69\.63|69\.171|157\.240|173\.252|185\.60)/', $cidr)) {
+        return 'Facebook';
+    }
+    
+    // Apple
+    if (strpos($cidr, '17.') === 0) {
+        return 'Apple';
+    }
+    
+    // DuckDuckGo
+    if (preg_match('/^(20\.191|40\.88|52\.142|72\.94)/', $cidr)) {
+        return 'DuckDuckGo';
+    }
+    
+    // Yahoo
+    if (preg_match('/^(67\.195|72\.30|74\.6|98\.136)/', $cidr)) {
+        return 'Yahoo';
+    }
+    
+    return 'Other';
+}
+
+/**
+ * v3.7.0: Логування візиту пошукового бота в Redis
+ */
+function _log_search_engine_visit($redis, $ip, $method, $engine = null) {
+    if (!$redis) {
+        return;
+    }
+    
+    try {
+        // Визначаємо engine з User-Agent якщо не передано
+        if (!$engine) {
+            $ua = isset($_SERVER['HTTP_USER_AGENT']) ? strtolower($_SERVER['HTTP_USER_AGENT']) : '';
+            if (strpos($ua, 'googlebot') !== false || strpos($ua, 'google') !== false) {
+                $engine = 'Google';
+            } elseif (strpos($ua, 'yandex') !== false) {
+                $engine = 'Yandex';
+            } elseif (strpos($ua, 'bingbot') !== false || strpos($ua, 'msnbot') !== false) {
+                $engine = 'Bing';
+            } elseif (strpos($ua, 'baidu') !== false) {
+                $engine = 'Baidu';
+            } elseif (strpos($ua, 'duckduck') !== false) {
+                $engine = 'DuckDuckGo';
+            } elseif (strpos($ua, 'facebook') !== false) {
+                $engine = 'Facebook';
+            } elseif (strpos($ua, 'apple') !== false) {
+                $engine = 'Apple';
+            } else {
+                $engine = 'Other';
+            }
+        }
+        
+        $today = date('Y-m-d');
+        $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'unknown';
+        $url = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/';
+        $ua = isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '-';
+        
+        // Скорочуємо UA
+        if (strlen($ua) > 100) {
+            $ua = substr($ua, 0, 100) . '...';
+        }
+        
+        $prefix = 'bot_protection:';
+        
+        // 1. Інкрементуємо загальний лічильник бота
+        $totalKey = $prefix . 'search_stats:total:' . strtolower($engine);
+        $redis->incr($totalKey);
+        
+        // 2. Інкрементуємо денний лічильник бота
+        $todayKey = $prefix . 'search_stats:today:' . $today . ':' . strtolower($engine);
+        $redis->incr($todayKey);
+        $redis->expire($todayKey, 86400 * 7);
+        
+        // 3. Інкрементуємо лічильник по хосту
+        $hostKey = $prefix . 'search_stats:hosts:' . $host;
+        $redis->incr($hostKey);
+        $redis->expire($hostKey, 86400 * 30);
+        
+        // 4. Інкрементуємо лічильник по методу
+        $methodKey = $prefix . 'search_stats:methods:' . strtolower($method);
+        $redis->incr($methodKey);
+        
+        // 5. Додаємо запис в лог
+        $logEntry = array(
+            'time' => date('Y-m-d H:i:s'),
+            'engine' => $engine,
+            'ip' => $ip,
+            'method' => $method,
+            'host' => $host,
+            'url' => $url,
+            'ua' => $ua,
+        );
+        
+        $logKey = $prefix . 'search_log';
+        $redis->lpush($logKey, $logEntry);
+        $redis->ltrim($logKey, 0, 499);
+        
+    } catch (Exception $e) {
+        // Ігноруємо помилки
+    }
+}
+
+/**
+ * Швидка перевірка IP в CIDR діапазоні (IPv4 та IPv6)
+ */
+function _ip_in_cidr_fast($ip, $cidr) {
+    if (strpos($cidr, '/') === false) {
+        return $ip === $cidr;
+    }
+    
+    list($subnet, $bits) = explode('/', $cidr, 2);
+    $bits = (int)$bits;
+    
+    // IPv6
+    if (strpos($ip, ':') !== false) {
+        return _ipv6_in_cidr_fast($ip, $subnet, $bits);
+    }
+    
+    // IPv4
+    if ($bits < 0 || $bits > 32) {
+        return false;
+    }
+    
+    $ip_long = ip2long($ip);
+    $subnet_long = ip2long($subnet);
+    
+    if ($ip_long === false || $subnet_long === false) {
+        return false;
+    }
+    
+    if ($bits === 0) {
+        return true;
+    }
+    
+    $mask = -1 << (32 - $bits);
+    return ($ip_long & $mask) === ($subnet_long & $mask);
+}
+
+/**
+ * Перевірка IPv6 в CIDR діапазоні
+ */
+function _ipv6_in_cidr_fast($ip, $subnet, $bits) {
+    if ($bits < 0 || $bits > 128) {
+        return false;
+    }
+    
+    $ip_bin = @inet_pton($ip);
+    $subnet_bin = @inet_pton($subnet);
+    
+    if ($ip_bin === false || $subnet_bin === false) {
+        return false;
+    }
+    
+    if ($bits === 0) {
+        return true;
+    }
+    
+    $full_bytes = (int)floor($bits / 8);
+    $remaining_bits = $bits % 8;
+    
+    for ($i = 0; $i < $full_bytes; $i++) {
+        if ($ip_bin[$i] !== $subnet_bin[$i]) {
+            return false;
+        }
+    }
+    
+    if ($remaining_bits > 0 && $full_bytes < 16) {
+        $mask = 0xFF << (8 - $remaining_bits);
+        if ((ord($ip_bin[$full_bytes]) & $mask) !== (ord($subnet_bin[$full_bytes]) & $mask)) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+// ============================================================================
 // JS CHALLENGE ФУНКЦІЇ
 // ============================================================================
 
@@ -219,11 +656,96 @@ function _jsc_isVerified($secret_key, $cookie_name) {
     }
     $cookie = $_COOKIE[$cookie_name];
     if (strlen($cookie) !== 64) {
+        // v3.7.0: Логуємо невалідну cookie (failed)
+        _jsc_logStats('failed', _jsc_getClientIP());
         return false;
     }
     $ip = _jsc_getClientIP();
     $expected = hash('sha256', $ip . date('Y-m-d') . $secret_key);
-    return hash_equals($expected, $cookie);
+    $verified = hash_equals($expected, $cookie);
+    
+    // v3.7.0: Логуємо результат верифікації
+    if ($verified) {
+        _jsc_logStats('passed', $ip);
+    } else {
+        // Cookie є, але невірна (можливо протермінована або підроблена)
+        _jsc_logStats('expired', $ip);
+    }
+    
+    return $verified;
+}
+
+/**
+ * v3.7.0: Логування статистики JS Challenge в Redis
+ * @param string $type - 'shown', 'passed', 'failed', 'expired'
+ * @param string $ip - IP адреса клієнта
+ */
+function _jsc_logStats($type, $ip = null) {
+    static $redis = null;
+    static $connected = false;
+    static $logged = array(); // Запобігаємо дублюванню в одному запиті
+    
+    // Логуємо кожен тип тільки один раз за запит
+    if (isset($logged[$type])) {
+        return;
+    }
+    $logged[$type] = true;
+    
+    if ($ip === null) {
+        $ip = _jsc_getClientIP();
+    }
+    
+    // Підключення до Redis
+    if ($redis === null) {
+        try {
+            $redis = new Redis();
+            $connected = $redis->connect('127.0.0.1', 6379, 0.5);
+            if ($connected) {
+                $redis->select(1);
+                $redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_PHP);
+            }
+        } catch (Exception $e) {
+            $connected = false;
+            return;
+        }
+    }
+    
+    if (!$connected) {
+        return;
+    }
+    
+    try {
+        $prefix = 'bot_protection:jsc_stats:';
+        $today = date('Y-m-d');
+        $hour = date('Y-m-d:H');
+        
+        // 1. Інкрементуємо загальний лічильник
+        $redis->incr($prefix . 'total:' . $type);
+        
+        // 2. Інкрементуємо денний лічильник
+        $dailyKey = $prefix . 'daily:' . $today . ':' . $type;
+        $redis->incr($dailyKey);
+        $redis->expire($dailyKey, 86400 * 7); // 7 днів
+        
+        // 3. Інкрементуємо погодинний лічильник
+        $hourlyKey = $prefix . 'hourly:' . $hour . ':' . $type;
+        $redis->incr($hourlyKey);
+        $redis->expire($hourlyKey, 86400 * 2); // 2 дні
+        
+        // 4. Додаємо запис в лог (останні 100 записів)
+        $logEntry = array(
+            'date' => date('Y-m-d H:i:s'),
+            'ip' => $ip,
+            'ua' => isset($_SERVER['HTTP_USER_AGENT']) ? substr($_SERVER['HTTP_USER_AGENT'], 0, 100) : '-',
+        );
+        
+        $logKey = $prefix . 'log:' . $type;
+        $redis->lPush($logKey, $logEntry);
+        $redis->lTrim($logKey, 0, 99); // Зберігаємо останні 100
+        
+    } catch (Exception $e) {
+        // Ігноруємо помилки
+    }
 }
 
 function _jsc_generateChallenge($secret_key) {
@@ -245,13 +767,16 @@ function _jsc_generateChallenge($secret_key) {
 }
 
 function _jsc_showChallengePage($challenge, $redirect_url) {
+    // v3.7.0: Логуємо показ challenge
+    _jsc_logStats('shown');
+    
     $challengeJson = json_encode($challenge);
     $redirectJson = json_encode($redirect_url);
     
-    http_response_code(503);
+    http_response_code(200);  // Змінено з 503 на 200 для SEO v3.7.0
     header('Content-Type: text/html; charset=UTF-8');
     header('Cache-Control: no-cache, no-store, must-revalidate');
-    header('Retry-After: 5');
+    header('X-Robots-Tag: noindex, nofollow');  // Додано v3.7.0
     
     echo '<!DOCTYPE html>
 <html lang="ru">
@@ -413,6 +938,7 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
         var progressBar = document.getElementById("progress");
         var statusEl = document.getElementById("status");
         var errorEl = document.getElementById("error");
+        var loopProtection = 0; // Захист від циклу
         
         function updateProgress(percent, message) {
             progressBar.style.width = percent + "%";
@@ -420,22 +946,92 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
         }
         
         function showError(message) {
-            errorEl.textContent = message;
+            errorEl.innerHTML = message;
             errorEl.style.display = "block";
             statusEl.textContent = "Ошибка проверки";
+            document.querySelector(".spinner").style.display = "none";
         }
         
         function sleep(ms) {
             return new Promise(function(resolve) { setTimeout(resolve, ms); });
         }
         
+        // Перевірка доступності cookies
+        function areCookiesEnabled() {
+            try {
+                document.cookie = "cookietest=1; SameSite=Lax";
+                var result = document.cookie.indexOf("cookietest=") !== -1;
+                document.cookie = "cookietest=1; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax";
+                return result;
+            } catch (e) {
+                return false;
+            }
+        }
+        
+        // Перевірка захисту від циклу через sessionStorage
+        function checkLoopProtection() {
+            try {
+                var key = "jsc_attempts_" + challengeData.id.substr(0, 8);
+                var attempts = parseInt(sessionStorage.getItem(key) || "0", 10);
+                if (attempts >= 3) {
+                    return false; // Занадто багато спроб
+                }
+                sessionStorage.setItem(key, (attempts + 1).toString());
+                return true;
+            } catch (e) {
+                // sessionStorage недоступний, використовуємо URL
+                var url = new URL(window.location.href);
+                var attempts = parseInt(url.searchParams.get("_jsc_retry") || "0", 10);
+                return attempts < 3;
+            }
+        }
+        
+        // Додаємо лічильник спроб до URL
+        function addRetryToUrl(url) {
+            try {
+                var urlObj = new URL(url, window.location.origin);
+                var attempts = parseInt(urlObj.searchParams.get("_jsc_retry") || "0", 10);
+                urlObj.searchParams.set("_jsc_retry", (attempts + 1).toString());
+                return urlObj.toString();
+            } catch (e) {
+                return url + (url.indexOf("?") > -1 ? "&" : "?") + "_jsc_retry=1";
+            }
+        }
+        
         async function performChallenge() {
             try {
-                updateProgress(20, "Проверка JavaScript...");
-                await sleep(500);
+                updateProgress(10, "Проверка браузера...");
+                await sleep(300);
                 
+                // Перевіряємо захист від циклу
+                if (!checkLoopProtection()) {
+                    showError("<strong>🔄 Обнаружен цикл проверки</strong><br><br>" +
+                        "Похоже, проверка повторяется бесконечно.<br><br>" +
+                        "<strong>Возможные причины:</strong><br>" +
+                        "• Cookies отключены в браузере<br>" +
+                        "• Блокировщик рекламы блокирует cookies<br>" +
+                        "• Режим инкогнито с жёсткими настройками<br><br>" +
+                        "<strong>Решение:</strong> Включите cookies для этого сайта и обновите страницу (F5)");
+                    return;
+                }
+                
+                updateProgress(20, "Проверка JavaScript...");
+                await sleep(300);
+                
+                // Перевіряємо cookies
                 updateProgress(40, "Проверка cookies...");
                 await sleep(300);
+                
+                if (!areCookiesEnabled()) {
+                    showError("<strong>⚠️ Cookies отключены</strong><br><br>" +
+                        "Для прохождения проверки безопасности необходимо включить cookies в вашем браузере.<br><br>" +
+                        "<strong>Как включить:</strong><br>" +
+                        "• Chrome: Настройки → Конфиденциальность → Файлы cookie<br>" +
+                        "• Firefox: Настройки → Приватность → Cookies<br>" +
+                        "• Safari: Настройки → Конфиденциальность → Cookies<br><br>" +
+                        "После включения cookies обновите страницу (F5)");
+                    return;
+                }
                 
                 updateProgress(60, "Вычисление задачи...");
                 var answer = challengeData.numbers.reduce(function(sum, num) { return sum + num; }, 0);
@@ -454,8 +1050,23 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
                             if (result.success) {
                                 updateProgress(100, "Проверка завершена!");
                                 statusEl.className = "status success";
+                                
+                                // Очищаємо лічильник спроб
+                                try {
+                                    var key = "jsc_attempts_" + challengeData.id.substr(0, 8);
+                                    sessionStorage.removeItem(key);
+                                } catch (e) {}
+                                
+                                // Видаляємо параметр _jsc_retry з URL
+                                var cleanUrl = redirectUrl;
+                                try {
+                                    var urlObj = new URL(redirectUrl, window.location.origin);
+                                    urlObj.searchParams.delete("_jsc_retry");
+                                    cleanUrl = urlObj.toString();
+                                } catch (e) {}
+                                
                                 setTimeout(function() {
-                                    window.location.href = redirectUrl;
+                                    window.location.href = cleanUrl;
                                 }, 500);
                             } else {
                                 showError(result.error || "Verification failed");
@@ -785,16 +1396,25 @@ if (_quick_block_check()) {
 }
 
 // ============================================================================
-// ПЕРЕВІРКА JS CHALLENGE (З ПРІОРИТЕТОМ WHITELIST)
+// ПЕРЕВІРКА JS CHALLENGE (З ПРІОРИТЕТОМ IP WHITELIST v3.7.0)
 // ============================================================================
 if ($_JSC_CONFIG['enabled']) {
+    $clientIP = _jsc_getClientIP();  // Додано v3.7.0
     $userAgent = isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '';
     $_jsc_skip = false;
     
     // ========================================================================
+    // ПРІОРИТЕТ 0: IP БІЛИЙ СПИСОК (НАЙВИЩИЙ ПРІОРИТЕТ!) - v3.7.0
+    // ========================================================================
+    // Перевірка IP для БУДЬ-ЯКОГО User-Agent!
+    if (_is_search_engine_ip($clientIP)) {
+        $_jsc_skip = true;
+    }
+    
+    // ========================================================================
     // ПРІОРИТЕТ 1: ВЛАСНІ USER AGENTS (найвищий пріоритет!)
     // ========================================================================
-    if (_is_custom_ua($userAgent)) {
+    if (!$_jsc_skip && _is_custom_ua($userAgent)) {
         $_jsc_skip = true;
         // error_log вже зроблено в _is_custom_ua()
     }
@@ -873,8 +1493,8 @@ class SimpleBotProtection {
     // Налаштування API
     private $apiSettings = array(
         'enabled' => false,
-        'url' => 'https://mysite/redis-bot_protection/API/iptables.php',
-        'api_key' => '123456',
+        'url' => 'https://my/redis-bot_protection/API/iptables.php',
+        'api_key' => '12345',
         'timeout' => 5,
         'retry_on_failure' => 2,
         'verify_ssl' => true,
@@ -1048,6 +1668,10 @@ class SimpleBotProtection {
         'log_url' => true,
         'log_ua' => true,
         'ua_max_length' => 100,
+        // v3.7.0: Redis статистика
+        'redis_stats' => true,           // Зберігати статистику в Redis
+        'redis_log_max' => 500,          // Максимум записів в логу Redis
+        'redis_stats_ttl' => 86400 * 30, // TTL для статистики (30 днів)
     );
     
     // ========================================================================
@@ -1378,13 +2002,23 @@ class SimpleBotProtection {
     
     /**
      * ========================================================================
-     * ГОЛОВНИЙ МЕТОД ЗАХИСТУ (з пріоритетом SEO)
+     * ГОЛОВНИЙ МЕТОД ЗАХИСТУ (з пріоритетом IP WHITELIST v3.7.0)
      * ========================================================================
      */
     public function protect() {
         try {
             $ip = $this->getClientIP();
             $userAgent = isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '';
+            
+            // ================================================================
+            // КРОК 0: ПЕРЕВІРКА IP ПО БІЛОМУ СПИСКУ (НАЙВИЩИЙ ПРІОРИТЕТ!) v3.7.0
+            // ================================================================
+            if (_is_search_engine_ip($ip)) {
+                if ($this->debugMode) {
+                    error_log("BOT PROTECTION: IP in whitelist, allowing: $ip (any UA)");
+                }
+                return; // IP в білому списку - пропускаємо
+            }
             
             // ================================================================
             // КРОК 1: ШВИДКА ПЕРЕВІРКА ВЛАСНИХ USER AGENTS (найвищий пріоритет)
@@ -2256,6 +2890,11 @@ class SimpleBotProtection {
             return;
         }
         
+        // v3.7.0: Збереження статистики в Redis
+        if ($this->searchLogSettings['redis_stats']) {
+            $this->logSearchEngineToRedis($engine, $ip, $method);
+        }
+        
         $logFile = $this->searchLogSettings['file'];
         
         if (file_exists($logFile) && filesize($logFile) >= $this->searchLogSettings['max_size']) {
@@ -2287,6 +2926,67 @@ class SimpleBotProtection {
         $logLine = implode(' | ', $logParts) . "\n";
         
         @file_put_contents($logFile, $logLine, FILE_APPEND | LOCK_EX);
+    }
+    
+    /**
+     * v3.7.0: Збереження статистики пошукових ботів в Redis
+     */
+    private function logSearchEngineToRedis($engine, $ip, $method) {
+        if (!$this->redis) {
+            return;
+        }
+        
+        try {
+            $today = date('Y-m-d');
+            $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'unknown';
+            $url = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/';
+            $ua = isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '-';
+            
+            // Скорочуємо UA
+            $maxLen = $this->searchLogSettings['ua_max_length'];
+            if (strlen($ua) > $maxLen) {
+                $ua = substr($ua, 0, $maxLen) . '...';
+            }
+            
+            // 1. Інкрементуємо загальний лічильник бота
+            $totalKey = $this->redisPrefix . 'search_stats:total:' . strtolower($engine);
+            $this->redis->incr($totalKey);
+            
+            // 2. Інкрементуємо денний лічильник бота
+            $todayKey = $this->redisPrefix . 'search_stats:today:' . $today . ':' . strtolower($engine);
+            $this->redis->incr($todayKey);
+            $this->redis->expire($todayKey, 86400 * 7); // Зберігаємо 7 днів
+            
+            // 3. Інкрементуємо лічильник по хосту
+            $hostKey = $this->redisPrefix . 'search_stats:hosts:' . $host;
+            $this->redis->incr($hostKey);
+            $this->redis->expire($hostKey, $this->searchLogSettings['redis_stats_ttl']);
+            
+            // 4. Інкрементуємо лічильник по методу верифікації
+            $methodKey = $this->redisPrefix . 'search_stats:methods:' . strtolower($method);
+            $this->redis->incr($methodKey);
+            
+            // 5. Додаємо запис в лог (Redis List)
+            $logEntry = array(
+                'time' => date('Y-m-d H:i:s'),
+                'engine' => $engine,
+                'ip' => $ip,
+                'method' => $method,
+                'host' => $host,
+                'url' => $url,
+                'ua' => $ua,
+            );
+            
+            $logKey = $this->redisPrefix . 'search_log';
+            $this->redis->lpush($logKey, $logEntry);
+            $this->redis->ltrim($logKey, 0, $this->searchLogSettings['redis_log_max'] - 1);
+            
+        } catch (Exception $e) {
+            // Ігноруємо помилки Redis для статистики
+            if ($this->debugMode) {
+                error_log("Search stats Redis error: " . $e->getMessage());
+            }
+        }
     }
     
     /**
