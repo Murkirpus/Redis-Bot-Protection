@@ -1,11 +1,16 @@
 <?php
 /**
  * ============================================================================
- * MurKir Security - Admin Panel v1.2
+ * MurKir Security - Admin Panel v1.3
  * ============================================================================
  * 
  * Полноценная админ-панель для управления Redis Bot Protection
  * 
+ * НОВОЕ v1.3 (для inline_check_lite v3.7.0):
+ * ✅ Статистика IP Whitelist кешу пошукових систем
+ * ✅ API endpoint для перегляду/очистки ip_whitelist кешу
+ * ✅ Розблокування blocked:no_cookie:{IP} в unblockIP()
+ * ✅ Відображення кількості закешованих IP в Dashboard
  * 
  * НОВОЕ v1.2:
  * ✅ Виправлено відображення IP для blocked:no_cookie (v3.6.6+)
@@ -159,29 +164,35 @@ function getStats($redis, $prefix) {
         'total_tracked' => 0,
         'blocked_rate_limit' => 0,
         'blocked_ua_rotation' => 0,
+        'blocked_no_cookie' => 0,      // v1.3: blocked:no_cookie
         'rate_limit_keys' => 0,
         'ua_rotation_tracked' => 0,
         'rdns_cache' => 0,
+        'ip_whitelist_cache' => 0,     // v1.3: ip_whitelist кеш
         'active_users' => 0,
     ];
     
     foreach ($keys as $key) {
-        if (strpos($key, ':ua_rotation_blocked:') !== false) {
+        if (strpos($key, ':ua_rotation_blocked:') !== false || strpos($key, ':ua_blocked:') !== false) {
             $stats['blocked_ua_rotation']++;
+        } elseif (strpos($key, ':blocked:no_cookie:') !== false) {
+            $stats['blocked_no_cookie']++;  // v1.3
         } elseif (strpos($key, ':blocked:') !== false) {
             $stats['blocked_rate_limit']++;
         } elseif (strpos($key, ':rate:') !== false) {
             $stats['rate_limit_keys']++;
             $stats['total_tracked']++;
-        } elseif (strpos($key, ':ua_rotation_5min:') !== false || strpos($key, ':ua_rotation_hour:') !== false) {
+        } elseif (strpos($key, ':ua_rotation_5min:') !== false || strpos($key, ':ua_rotation_hour:') !== false || strpos($key, ':ua:') !== false) {
             $stats['ua_rotation_tracked']++;
         } elseif (strpos($key, 'rdns:cache:') !== false) {
             $stats['rdns_cache']++;
+        } elseif (strpos($key, ':ip_whitelist:') !== false) {
+            $stats['ip_whitelist_cache']++;  // v1.3
         }
     }
     
     $stats['active_users'] = $stats['rate_limit_keys'];
-    $stats['total_blocked'] = $stats['blocked_rate_limit'] + $stats['blocked_ua_rotation'];
+    $stats['total_blocked'] = $stats['blocked_rate_limit'] + $stats['blocked_ua_rotation'] + $stats['blocked_no_cookie'];
     
     return $stats;
 }
@@ -191,8 +202,8 @@ function getBlockedIPs($redis, $prefix, $type = 'all', $page = 1, $perPage = 20)
     
     $blocked = [];
     
-    // Rate limit blocks
-    if ($type === 'all' || $type === 'rate_limit') {
+    // Rate limit blocks (включая no_cookie)
+    if ($type === 'all' || $type === 'rate_limit' || $type === 'no_cookie') {
         $keys = $redis->keys($prefix . 'blocked:*');
         if (is_array($keys)) {
             foreach ($keys as $key) {
@@ -200,14 +211,27 @@ function getBlockedIPs($redis, $prefix, $type = 'all', $page = 1, $perPage = 20)
                 $ttl = $redis->ttl($key);
                 $ip = extractIP($key);
                 
+                // v1.3: Визначаємо тип блокування
+                $blockType = 'rate_limit';
+                if (strpos($key, ':blocked:no_cookie:') !== false) {
+                    $blockType = 'no_cookie';
+                }
+                
+                // Фільтр по типу
+                if ($type !== 'all' && $type !== $blockType) {
+                    continue;
+                }
+                
                 // Handle both array data and simple values
                 if (is_array($data)) {
                     $blocked[] = [
                         'key' => $key,
-                        'type' => 'rate_limit',
+                        'type' => $blockType,
                         'ip' => $data['ip'] ?? $ip,
                         'user_id' => $data['user_id'] ?? null,
                         'violations' => $data['violations'] ?? [],
+                        'reason' => $data['reason'] ?? null,  // v1.3: причина блокування
+                        'attempts' => $data['attempts'] ?? null,  // v1.3: кількість спроб
                         'time' => $data['time'] ?? null,
                         'has_cookie' => $data['has_cookie'] ?? false,
                         'ttl' => $ttl,
@@ -217,10 +241,12 @@ function getBlockedIPs($redis, $prefix, $type = 'all', $page = 1, $perPage = 20)
                     // Simple value (true, 1, timestamp, etc)
                     $blocked[] = [
                         'key' => $key,
-                        'type' => 'rate_limit',
+                        'type' => $blockType,
                         'ip' => $ip,
                         'user_id' => null,
                         'violations' => [],
+                        'reason' => null,
+                        'attempts' => null,
                         'time' => is_numeric($data) ? (int)$data : null,
                         'has_cookie' => false,
                         'ttl' => $ttl,
@@ -231,14 +257,33 @@ function getBlockedIPs($redis, $prefix, $type = 'all', $page = 1, $perPage = 20)
         }
     }
     
-    // UA Rotation blocks
+    // UA Rotation blocks (обидва формати ключів)
     if ($type === 'all' || $type === 'ua_rotation') {
-        $keys = $redis->keys($prefix . 'ua_rotation_blocked:*');
-        if (is_array($keys)) {
-            foreach ($keys as $key) {
+        // v1.3: Перевіряємо обидва формати ключів
+        $uaKeys1 = $redis->keys($prefix . 'ua_rotation_blocked:*');
+        $uaKeys2 = $redis->keys($prefix . 'ua_blocked:*');
+        $keys = array_merge(
+            is_array($uaKeys1) ? $uaKeys1 : [],
+            is_array($uaKeys2) ? $uaKeys2 : []
+        );
+        $keys = array_unique($keys);
+        
+        foreach ($keys as $key) {
                 $data = $redis->get($key);
                 $ttl = $redis->ttl($key);
-                $ip = str_replace($prefix . 'ua_rotation_blocked:', '', $key);
+                
+                // v1.3: Витягуємо IP з обох форматів ключів
+                $ip = $key;
+                $ip = str_replace($prefix . 'ua_rotation_blocked:', '', $ip);
+                $ip = str_replace($prefix . 'ua_blocked:', '', $ip);
+                
+                // v1.3: Додаємо count_5min та count_hour з нового формату
+                $count5min = 0;
+                $countHour = 0;
+                if (is_array($data)) {
+                    $count5min = $data['unique_ua_5min'] ?? $data['count_5min'] ?? 0;
+                    $countHour = $data['unique_ua_hour'] ?? $data['count_hour'] ?? 0;
+                }
                 
                 // Handle both array data and simple values
                 if (is_array($data)) {
@@ -246,8 +291,8 @@ function getBlockedIPs($redis, $prefix, $type = 'all', $page = 1, $perPage = 20)
                         'key' => $key,
                         'type' => 'ua_rotation',
                         'ip' => $data['ip'] ?? $ip,
-                        'unique_ua_5min' => $data['unique_ua_5min'] ?? 0,
-                        'unique_ua_hour' => $data['unique_ua_hour'] ?? 0,
+                        'unique_ua_5min' => $count5min,
+                        'unique_ua_hour' => $countHour,
                         'violations' => $data['violations'] ?? [],
                         'time' => $data['time'] ?? null,
                         'ttl' => $ttl,
@@ -267,7 +312,6 @@ function getBlockedIPs($redis, $prefix, $type = 'all', $page = 1, $perPage = 20)
                         'expires' => $ttl > 0 ? date('Y-m-d H:i:s', time() + $ttl) : 'N/A',
                     ];
                 }
-            }
         }
     }
     
@@ -508,6 +552,80 @@ function getRDNSStats($redis, $prefix, $rdnsPrefix) {
     ];
 }
 
+// ============================================================================
+// IP WHITELIST ФУНКЦІЇ (v1.3)
+// ============================================================================
+
+/**
+ * Статистика IP Whitelist кешу
+ */
+function getIPWhitelistStats($redis, $prefix) {
+    if (!$redis) return null;
+    
+    $keys = $redis->keys($prefix . 'ip_whitelist:*');
+    
+    $stats = [
+        'total_cached' => 0,
+        'whitelisted' => 0,
+        'not_whitelisted' => 0,
+        'items' => [],
+    ];
+    
+    if (is_array($keys)) {
+        $stats['total_cached'] = count($keys);
+        
+        // Отримуємо останні 50 записів
+        $sampleKeys = array_slice($keys, 0, 50);
+        
+        foreach ($sampleKeys as $key) {
+            $value = $redis->get($key);
+            $ttl = $redis->ttl($key);
+            $ip = str_replace($prefix . 'ip_whitelist:', '', $key);
+            
+            $isWhitelisted = ($value === '1' || $value === 1 || $value === true);
+            
+            if ($isWhitelisted) {
+                $stats['whitelisted']++;
+            } else {
+                $stats['not_whitelisted']++;
+            }
+            
+            $stats['items'][] = [
+                'ip' => $ip,
+                'whitelisted' => $isWhitelisted,
+                'ttl' => $ttl,
+                'expires' => $ttl > 0 ? date('Y-m-d H:i:s', time() + $ttl) : 'N/A',
+            ];
+        }
+    }
+    
+    return $stats;
+}
+
+/**
+ * Очистка IP Whitelist кешу
+ */
+function clearIPWhitelistCache($redis, $prefix) {
+    if (!$redis) return ['success' => false, 'message' => 'Redis недоступний'];
+    
+    $keys = $redis->keys($prefix . 'ip_whitelist:*');
+    $deleted = 0;
+    
+    if (is_array($keys)) {
+        foreach ($keys as $key) {
+            if ($redis->del($key)) {
+                $deleted++;
+            }
+        }
+    }
+    
+    return [
+        'success' => true,
+        'message' => "Видалено $deleted записів IP Whitelist кешу",
+        'deleted' => $deleted
+    ];
+}
+
 function unblockIP($redis, $prefix, $ip) {
     if (!$redis) return ['success' => false, 'message' => 'Redis недоступний'];
     
@@ -517,11 +635,16 @@ function unblockIP($redis, $prefix, $ip) {
     $directKeys = [
         $prefix . 'blocked:' . $ip,
         $prefix . 'blocked:' . hash('md5', 'ip:' . $ip),
+        $prefix . 'blocked:no_cookie:' . $ip,          // v1.3: no_cookie блокування
         $prefix . 'ua_rotation_blocked:' . $ip,
+        $prefix . 'ua_blocked:' . $ip,                 // v1.3: альтернативний ключ
         $prefix . 'rate:' . $ip,
         $prefix . 'rate:' . hash('md5', 'ip:' . $ip),
         $prefix . 'ua_rotation_5min:' . $ip,
         $prefix . 'ua_rotation_hour:' . $ip,
+        $prefix . 'ua:' . $ip,                         // v1.3: альтернативний ключ
+        $prefix . 'no_cookie_attempts:' . $ip,         // v1.3: лічильник спроб без cookie
+        $prefix . 'ip_whitelist:' . $ip,               // v1.3: кеш IP whitelist
     ];
     
     // Удаляем прямые ключи
@@ -611,6 +734,130 @@ function getUARotationInfo($redis, $prefix, $ip) {
 /**
  * Отримання логу пошукових систем
  */
+/**
+ * v1.3: Отримання статистики пошукових ботів з Redis
+ */
+function getSearchBotStatsFromRedis($redis, $prefix) {
+    if (!$redis) return null;
+    
+    $result = [
+        'stats' => [],           // Загальна статистика по ботах
+        'today_stats' => [],     // Статистика за сьогодні
+        'hosts' => [],           // Статистика по хостах
+        'methods' => [],         // Статистика по методах верифікації
+        'lines' => [],           // Останні візити
+        'total_visits' => 0,
+        'today_visits' => 0,
+    ];
+    
+    try {
+        // 1. Загальна статистика по ботах
+        $totalKeys = $redis->keys($prefix . 'search_stats:total:*');
+        if (is_array($totalKeys)) {
+            foreach ($totalKeys as $key) {
+                $engine = str_replace($prefix . 'search_stats:total:', '', $key);
+                $count = (int)$redis->get($key);
+                $result['stats'][ucfirst($engine)] = $count;
+                $result['total_visits'] += $count;
+            }
+            arsort($result['stats']);
+        }
+        
+        // 2. Статистика за сьогодні
+        $today = date('Y-m-d');
+        $todayKeys = $redis->keys($prefix . 'search_stats:today:' . $today . ':*');
+        if (is_array($todayKeys)) {
+            foreach ($todayKeys as $key) {
+                $engine = preg_replace('/.*:today:' . $today . ':/', '', $key);
+                $count = (int)$redis->get($key);
+                $result['today_stats'][ucfirst($engine)] = $count;
+                $result['today_visits'] += $count;
+            }
+            arsort($result['today_stats']);
+        }
+        
+        // 3. Статистика по хостах
+        $hostKeys = $redis->keys($prefix . 'search_stats:hosts:*');
+        if (is_array($hostKeys)) {
+            foreach ($hostKeys as $key) {
+                $host = str_replace($prefix . 'search_stats:hosts:', '', $key);
+                $count = (int)$redis->get($key);
+                $result['hosts'][$host] = $count;
+            }
+            arsort($result['hosts']);
+        }
+        
+        // 4. Статистика по методах
+        $methodKeys = $redis->keys($prefix . 'search_stats:methods:*');
+        if (is_array($methodKeys)) {
+            foreach ($methodKeys as $key) {
+                $method = str_replace($prefix . 'search_stats:methods:', '', $key);
+                $count = (int)$redis->get($key);
+                $result['methods'][strtoupper($method)] = $count;
+            }
+            arsort($result['methods']);
+        }
+        
+        // 5. Останні візити з логу
+        $logKey = $prefix . 'search_log';
+        $logs = $redis->lrange($logKey, 0, 99);
+        if (is_array($logs)) {
+            $result['lines'] = $logs;
+        }
+        
+    } catch (Exception $e) {
+        error_log("getSearchBotStatsFromRedis error: " . $e->getMessage());
+    }
+    
+    return $result;
+}
+
+/**
+ * v1.3: Очищення статистики пошукових ботів в Redis
+ */
+function clearSearchBotStatsRedis($redis, $prefix) {
+    if (!$redis) return ['success' => false, 'message' => 'Redis недоступний'];
+    
+    $deleted = 0;
+    
+    try {
+        // Видаляємо всі ключі статистики
+        $patterns = [
+            $prefix . 'search_stats:total:*',
+            $prefix . 'search_stats:today:*',
+            $prefix . 'search_stats:hosts:*',
+            $prefix . 'search_stats:methods:*',
+            $prefix . 'search_log',
+        ];
+        
+        foreach ($patterns as $pattern) {
+            if (strpos($pattern, '*') !== false) {
+                $keys = $redis->keys($pattern);
+                if (is_array($keys)) {
+                    foreach ($keys as $key) {
+                        if ($redis->del($key)) {
+                            $deleted++;
+                        }
+                    }
+                }
+            } else {
+                if ($redis->del($pattern)) {
+                    $deleted++;
+                }
+            }
+        }
+        
+    } catch (Exception $e) {
+        return ['success' => false, 'message' => 'Помилка: ' . $e->getMessage()];
+    }
+    
+    return [
+        'success' => true,
+        'message' => "Видалено $deleted записів статистики пошукових ботів",
+        'deleted' => $deleted
+    ];
+}
+
 function getSearchBotLog($logFile, $lines = 100) {
     $result = [
         'file' => $logFile,
@@ -893,10 +1140,31 @@ if (isset($_GET['api'])) {
             
         case 'clear_search_log':
             echo json_encode(clearSearchBotLog($config['search_log_file']));
+            break;
+        
+        // v1.3: Статистика пошукових ботів з Redis
+        case 'search_stats':
+            echo json_encode(getSearchBotStatsFromRedis($redis, $prefix));
+            break;
+        
+        // v1.3: Очищення статистики пошукових ботів в Redis
+        case 'clear_search_stats':
+            echo json_encode(clearSearchBotStatsRedis($redis, $prefix));
+            break;
             
         case 'jsc_stats':
             echo json_encode(getJSChallengeStats($redis, $prefix));
             break;
+            break;
+        
+        // v1.3: IP Whitelist кеш статистика
+        case 'ip_whitelist':
+            echo json_encode(getIPWhitelistStats($redis, $prefix));
+            break;
+        
+        // v1.3: Очистка IP Whitelist кешу
+        case 'clear_ip_whitelist':
+            echo json_encode(clearIPWhitelistCache($redis, $prefix));
             break;
             
         default:
@@ -3456,32 +3724,100 @@ if (isLoggedIn() && $redis) {
         
         async function loadSearchBotLog() {
             const lines = document.getElementById('searchLogLines')?.value || 100;
-            const result = await apiCall('search_log', { lines });
             
-            if (!result) {
-                showToast('Помилка завантаження логу', 'error');
-                return;
-            }
+            // v1.3: Завантажуємо статистику з Redis
+            const redisStats = await apiCall('search_stats');
+            // Також завантажуємо з файлу (fallback)
+            const fileResult = await apiCall('search_log', { lines });
             
             const tbody = document.getElementById('searchBotBody');
             const statsDiv = document.getElementById('searchBotStats');
             const infoDiv = document.getElementById('searchLogInfo');
             
-            // Статистика по ботах та доменах
-            let statsHtml = '';
+            // Кольори для ботів
             const botColors = {
-                'googlebot': '#4285F4',
-                'yandexbot': '#FF0000',
-                'bingbot': '#00809D',
-                'duckduckbot': '#DE5833',
-                'baiduspider': '#2319DC',
-                'facebookbot': '#1877F2'
+                'google': '#4285F4',
+                'yandex': '#FF0000',
+                'bing': '#00809D',
+                'duckduckgo': '#DE5833',
+                'baidu': '#2319DC',
+                'facebook': '#1877F2',
+                'apple': '#555555',
+                'yahoo': '#720e9e',
+                'other': '#6c757d'
             };
             
-            // Боти
-            if (result.stats && Object.keys(result.stats).length > 0) {
-                for (const [bot, count] of Object.entries(result.stats)) {
-                    const color = botColors[bot] || '#6c757d';
+            const botIcons = {
+                'google': '🔵',
+                'yandex': '🔴',
+                'bing': '🟢',
+                'duckduckgo': '🟠',
+                'baidu': '🟣',
+                'facebook': '🔷',
+                'apple': '🍎',
+                'yahoo': '🟪',
+                'other': '🤖'
+            };
+            
+            let statsHtml = '';
+            
+            // v1.3: Статистика з Redis (пріоритет)
+            if (redisStats && redisStats.stats && Object.keys(redisStats.stats).length > 0) {
+                // Загальна статистика
+                statsHtml += `
+                    <div class="stat-card" style="border-left: 3px solid var(--accent-primary); background: linear-gradient(135deg, var(--bg-secondary), var(--bg-tertiary));">
+                        <div class="stat-value">${redisStats.total_visits || 0}</div>
+                        <div class="stat-label">📊 Всього візитів</div>
+                    </div>
+                    <div class="stat-card" style="border-left: 3px solid var(--accent-success);">
+                        <div class="stat-value">${redisStats.today_visits || 0}</div>
+                        <div class="stat-label">📅 Сьогодні</div>
+                    </div>
+                `;
+                
+                // Боти
+                for (const [bot, count] of Object.entries(redisStats.stats)) {
+                    const color = botColors[bot.toLowerCase()] || '#6c757d';
+                    const icon = botIcons[bot.toLowerCase()] || '🤖';
+                    statsHtml += `
+                        <div class="stat-card" style="border-left: 3px solid ${color};">
+                            <div class="stat-value">${count}</div>
+                            <div class="stat-label">${icon} ${escapeHtml(bot)}</div>
+                        </div>
+                    `;
+                }
+                
+                // Методи верифікації
+                if (redisStats.methods && Object.keys(redisStats.methods).length > 0) {
+                    statsHtml += '<div style="width: 100%; border-top: 1px solid var(--border-color); margin: 10px 0; padding-top: 10px;"><strong style="color: var(--text-muted); font-size: 0.8rem;">🔐 Методи верифікації:</strong></div>';
+                    for (const [method, count] of Object.entries(redisStats.methods)) {
+                        const methodColor = method === 'IP' || method === 'IP-CACHED' ? '#17a2b8' : 
+                                           method === 'RDNS' ? '#28a745' : '#6c757d';
+                        statsHtml += `
+                            <div class="stat-card" style="border-left: 3px solid ${methodColor};">
+                                <div class="stat-value">${count}</div>
+                                <div class="stat-label" style="font-size: 0.75rem;">${escapeHtml(method)}</div>
+                            </div>
+                        `;
+                    }
+                }
+                
+                // Хости
+                if (redisStats.hosts && Object.keys(redisStats.hosts).length > 0) {
+                    statsHtml += '<div style="width: 100%; border-top: 1px solid var(--border-color); margin: 10px 0; padding-top: 10px;"><strong style="color: var(--text-muted); font-size: 0.8rem;">🌐 Домени:</strong></div>';
+                    for (const [host, count] of Object.entries(redisStats.hosts)) {
+                        statsHtml += `
+                            <div class="stat-card" style="border-left: 3px solid #20c997;">
+                                <div class="stat-value">${count}</div>
+                                <div class="stat-label" style="font-size: 0.75rem;">${escapeHtml(host)}</div>
+                            </div>
+                        `;
+                    }
+                }
+            } else if (fileResult && fileResult.stats && Object.keys(fileResult.stats).length > 0) {
+                // Fallback: статистика з файлу
+                for (const [bot, count] of Object.entries(fileResult.stats)) {
+                    const color = botColors[bot.toLowerCase()] || '#6c757d';
                     statsHtml += `
                         <div class="stat-card" style="border-left: 3px solid ${color};">
                             <div class="stat-value">${count}</div>
@@ -3491,75 +3827,81 @@ if (isLoggedIn() && $redis) {
                 }
             }
             
-            // Домени
-            if (result.hosts && Object.keys(result.hosts).length > 0) {
-                statsHtml += '<div style="width: 100%; border-top: 1px solid var(--border-color); margin: 10px 0; padding-top: 10px;"></div>';
-                for (const [host, count] of Object.entries(result.hosts)) {
-                    statsHtml += `
-                        <div class="stat-card" style="border-left: 3px solid #20c997;">
-                            <div class="stat-value">${count}</div>
-                            <div class="stat-label" style="font-size: 0.75rem;">🌐 ${escapeHtml(host)}</div>
-                        </div>
-                    `;
-                }
+            statsDiv.innerHTML = statsHtml || '<div style="color: var(--text-muted);">📭 Немає статистики. Дані з\'являться після першого візиту бота.</div>';
+            
+            // Таблиця логу - спочатку з Redis, потім з файлу
+            let logEntries = [];
+            
+            if (redisStats && redisStats.lines && redisStats.lines.length > 0) {
+                logEntries = redisStats.lines;
+            } else if (fileResult && fileResult.lines && fileResult.lines.length > 0) {
+                logEntries = fileResult.lines;
             }
             
-            statsDiv.innerHTML = statsHtml || '<div style="color: var(--text-muted);">Немає статистики</div>';
-            
-            // Таблиця логу
-            if (!result.exists) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">📄 Файл логу не знайдено. Логування почнеться автоматично.</td></tr>';
-            } else if (!result.lines || result.lines.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">📭 Лог порожній</td></tr>';
+            if (logEntries.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">📭 Лог порожній. Дані з\'являться після першого візиту бота.</td></tr>';
             } else {
-                const botIcons = {
-                    'googlebot': '🔵',
-                    'yandexbot': '🔴',
-                    'bingbot': '🟢',
-                    'duckduckbot': '🟠',
-                    'baiduspider': '🟣',
-                    'facebookbot': '🔷'
-                };
-                
-                tbody.innerHTML = result.lines.map(entry => {
-                    const icon = botIcons[entry.bot] || '🤖';
-                    const methodBadge = entry.method === 'rDNS' ? 
+                tbody.innerHTML = logEntries.map(entry => {
+                    const engine = (entry.engine || entry.bot || 'unknown').toLowerCase();
+                    const icon = botIcons[engine] || '🤖';
+                    const method = entry.method || 'unknown';
+                    const methodBadge = method.toUpperCase().includes('RDNS') ? 
                         '<span style="background: #28a745; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem;">rDNS</span>' :
-                        '<span style="background: #17a2b8; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem;">' + escapeHtml(entry.method) + '</span>';
+                        method.toUpperCase().includes('IP') ?
+                        '<span style="background: #17a2b8; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem;">' + escapeHtml(method) + '</span>' :
+                        '<span style="background: #6c757d; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem;">' + escapeHtml(method) + '</span>';
                     
                     return `
                         <tr>
                             <td style="font-family: var(--font-mono); font-size: 0.85rem;">${escapeHtml(entry.time)}</td>
-                            <td>${icon} ${escapeHtml(entry.bot)}</td>
+                            <td>${icon} ${escapeHtml(entry.engine || entry.bot || '-')}</td>
                             <td style="font-family: var(--font-mono);">${escapeHtml(entry.ip)}</td>
                             <td>${methodBadge}</td>
                             <td style="font-size: 0.85rem; color: var(--accent-primary);">${escapeHtml(entry.host || '-')}</td>
-                            <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(entry.url)}">${escapeHtml(entry.url || '-')}</td>
+                            <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(entry.url || '')}">${escapeHtml(entry.url || '-')}</td>
                         </tr>
                     `;
                 }).join('');
             }
             
-            // Інформація про файл
-            const sizeKB = (result.size / 1024).toFixed(2);
-            infoDiv.innerHTML = `
-                📁 Файл: <code>${escapeHtml(result.file)}</code> | 
-                📊 Розмір: <strong>${sizeKB} KB</strong> | 
-                📝 Всього записів: <strong>${result.total_lines}</strong>
-            `;
+            // Інформація
+            let infoHtml = '';
+            if (redisStats && redisStats.total_visits > 0) {
+                infoHtml = `
+                    💾 Джерело: <strong>Redis</strong> | 
+                    📊 Всього в базі: <strong>${redisStats.total_visits}</strong> візитів | 
+                    📝 Останніх записів: <strong>${logEntries.length}</strong>
+                `;
+            } else if (fileResult && fileResult.exists) {
+                const sizeKB = (fileResult.size / 1024).toFixed(2);
+                infoHtml = `
+                    📁 Джерело: Файл <code>${escapeHtml(fileResult.file)}</code> | 
+                    📊 Розмір: <strong>${sizeKB} KB</strong> | 
+                    📝 Всього записів: <strong>${fileResult.total_lines}</strong>
+                `;
+            } else {
+                infoHtml = '📭 Статистика поки відсутня';
+            }
+            infoDiv.innerHTML = infoHtml;
         }
         
         function confirmClearSearchLog() {
             showModal(
-                'Очистити лог пошуковиків',
-                'Ви впевнені що хочете очистити лог пошукових систем? Це дія не може бути скасована.',
+                'Очистити статистику пошуковиків',
+                'Ви впевнені що хочете очистити ВСЮ статистику пошукових систем (Redis + файл)? Цю дію не можна скасувати.',
                 async () => {
-                    const result = await apiCall('clear_search_log');
-                    if (result && result.success) {
-                        showToast(result.message, 'success');
+                    // Очищаємо і Redis і файл
+                    const redisResult = await apiCall('clear_search_stats');
+                    const fileResult = await apiCall('clear_search_log');
+                    
+                    if ((redisResult && redisResult.success) || (fileResult && fileResult.success)) {
+                        const msg = [];
+                        if (redisResult?.deleted) msg.push(`Redis: ${redisResult.deleted}`);
+                        if (fileResult?.success) msg.push('Файл очищено');
+                        showToast('Очищено: ' + msg.join(', '), 'success');
                         await loadSearchBotLog();
                     } else {
-                        showToast(result?.message || 'Помилка', 'error');
+                        showToast('Помилка очищення', 'error');
                     }
                 }
             );
