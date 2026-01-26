@@ -1,8 +1,15 @@
 <?php
 /**
  * ============================================================================
- * Redis Bot Protection - SEO ОПТИМІЗОВАНА ВЕРСІЯ v3.8.0 (PROOF OF WORK)
+ * Redis Bot Protection - SEO ОПТИМІЗОВАНА ВЕРСІЯ v3.8.1 (PROOF OF WORK)
  * ============================================================================
+ * 
+ * ВЕРСІЯ 3.8.1 - STATS FIX (2026-01-26)
+ * 
+ * ВИПРАВЛЕНО v3.8.1:
+ * 🔧 Статистика 'passed' тепер логується тільки при РЕАЛЬНОМУ проходженні challenge
+ * 🔧 Прибрано хибне логування при кожній перевірці cookie
+ * 🔧 Правильна логіка: shown → passed (один раз) → cookie валідна (без логування)
  * 
  * ВЕРСІЯ 3.8.0 - PROOF OF WORK PROTECTION (2026-01-26)
  * 
@@ -727,10 +734,9 @@ function _jsc_isVerified($secret_key, $cookie_name) {
     $expected = hash('sha256', $ip . date('Y-m-d') . $secret_key);
     $verified = hash_equals($expected, $cookie);
     
-    // v3.7.0: Логуємо результат верифікації
-    if ($verified) {
-        _jsc_logStats('passed', $ip);
-    } else {
+    // v3.8.1: НЕ логуємо 'passed' тут - це просто перевірка cookie
+    // 'passed' логується тільки при успішному проходженні challenge (POST)
+    if (!$verified) {
         // Cookie є, але невірна (можливо протермінована або підроблена)
         _jsc_logStats('expired', $ip);
     }
@@ -1538,16 +1544,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_JSC_RESPONS
             echo json_encode(array('success' => false, 'error' => 'Invalid PoW solution'));
             exit;
         }
-        
-        // PoW пройдено успішно
-        _jsc_logStats('passed', _jsc_getClientIP());
     } else {
         // Legacy: перевірка суми (для зворотної сумісності)
         if (!isset($input['answer'])) {
+            _jsc_logStats('failed', _jsc_getClientIP());
             echo json_encode(array('success' => false, 'error' => 'Missing answer'));
             exit;
         }
     }
+    
+    // v3.8.1: Логуємо успішне проходження challenge (для ВСІХ типів)
+    _jsc_logStats('passed', _jsc_getClientIP());
     
     $ip = _jsc_getClientIP();
     $token = hash('sha256', $ip . date('Y-m-d') . $_JSC_CONFIG['secret_key']);
