@@ -1,7 +1,40 @@
 <?php
 /**
  * ============================================================================
- * Redis Bot Protection - SEO ОПТИМІЗОВАНА ВЕРСІЯ v3.7.0 (IP WHITELIST)
+ * Redis Bot Protection - SEO ОПТИМІЗОВАНА ВЕРСІЯ v3.8.0 (PROOF OF WORK)
+ * ============================================================================
+ * 
+ * ВЕРСІЯ 3.8.0 - PROOF OF WORK PROTECTION (2026-01-26)
+ * 
+ * НОВЕ v3.8.0:
+ * 🔥 Proof of Work (PoW) challenge замість простого сумування
+ * 🔥 SHA-256 хешування на стороні клієнта
+ * 🔥 Налаштовувана складність (кількість нулів у хеші)
+ * 🔥 Два стилі сторінки: Cloudflare та SMF
+ * 🔥 Серверна верифікація PoW рішення
+ * 🔥 Відображення статистики обчислень (хеші/сек)
+ * 🔥 Захист від CPU-легких ботів
+ * 
+ * ЯК ПРАЦЮЄ:
+ * - Користувач отримує challenge_id та difficulty (кількість нулів)
+ * - Браузер шукає nonce такий, що SHA256(id + nonce) починається з N нулів
+ * - При difficulty=4: ~65,000 хешів, 1-3 секунди
+ * - При difficulty=5: ~1,000,000 хешів, 10-30 секунд
+ * - Сервер верифікує hash(id + nonce) та встановлює cookie
+ * 
+ * НАЛАШТУВАННЯ PoW:
+ * $_JSC_CONFIG['pow_enabled'] = true;      // Увімкнути PoW
+ * $_JSC_CONFIG['pow_difficulty'] = 4;      // Кількість нулів (4-5 рекомендовано)
+ * $_JSC_CONFIG['pow_timeout'] = 60;        // Максимум секунд
+ * $_JSC_CONFIG['pow_style'] = 'cloudflare'; // 'cloudflare' або 'smf'
+ * 
+ * ПЕРЕВАГИ PoW:
+ * ✅ Боти повинні витрачати реальні CPU ресурси
+ * ✅ Не можна обійти без виконання обчислень
+ * ✅ Масштабується зі складністю
+ * ✅ Легітимні користувачі чекають 1-3 секунди
+ * ✅ Боти на слабкому залізі блокуються таймаутом
+ * 
  * ============================================================================
  * 
  * ВЕРСІЯ 3.6.5 - NO COOKIE ATTACK PROTECTION (2026-01-15)
@@ -159,6 +192,12 @@ $CUSTOM_USER_AGENTS = array(
  * - Yandex: https://yandex.com/support/webmaster/robot-workings/check-yandex-robots.html
  */
 $SEARCH_ENGINE_IP_RANGES = array(
+    // ========================================================================
+    // ТЕСТОВІ IP (для перевірки) - розкоментуй для тестування
+    // ========================================================================
+    // '185.6.186.106/32',              // Виталій IPv4
+    // '2a00:1e20:11:9108::/64',        // Виталій IPv6
+    
     // GOOGLE IPv4
     '66.249.64.0/19',
     '64.233.160.0/19',
@@ -275,6 +314,14 @@ $_JSC_CONFIG = array(
     'secret_key' => 'CHANGE_THIS_SECRET_KEY_123!',  // !!! ЗМІНИ НА СВІЙ !!!
     'cookie_name' => 'mk_verified',
     'token_lifetime' => 86400,  // 24 години
+    
+    // ========================================================================
+    // PROOF OF WORK (PoW) НАЛАШТУВАННЯ - v3.8.0
+    // ========================================================================
+    'pow_enabled' => true,             // Увімкнути PoW замість простого challenge
+    'pow_difficulty' => 4,             // Кількість нулів (4 = ~1-3 сек, 5 = ~10-30 сек)
+    'pow_timeout' => 60,               // Максимальний час виконання (секунди)
+    'pow_style' => 'cloudflare',       // 'cloudflare' або 'smf' (стиль сторінки)
 );
 
 // ============================================================================
@@ -351,6 +398,7 @@ function _is_search_engine_ip($ip) {
     
     static $redis = null;
     static $connected = false;
+    static $logged = array(); // Захист від дублювання логів
     
     // Підключення до Redis (один раз)
     if ($redis === null) {
@@ -372,9 +420,13 @@ function _is_search_engine_ip($ip) {
         try {
             $cached = $redis->get($cacheKey);
             if ($cached !== false) {
-                // Якщо IP вже в кеші і він whitelisted - логуємо візит
+                // Якщо IP вже в кеші і він whitelisted - повертаємо true
+                // Логуємо тільки один раз за запит!
                 if ($cached === '1' || $cached === 1 || $cached === true) {
-                    _log_search_engine_visit($redis, $ip, 'IP-cached');
+                    if (!isset($logged[$ip])) {
+                        $logged[$ip] = true;
+                        _log_search_engine_visit($redis, $ip, 'IP-cached');
+                    }
                     return true;
                 }
                 return false;
@@ -414,8 +466,9 @@ function _is_search_engine_ip($ip) {
     
     if ($result) {
         error_log("SEARCH ENGINE IP WHITELIST: Allowing IP=$ip (engine=$matchedEngine)");
-        // Логуємо візит в Redis
-        if ($connected) {
+        // Логуємо візит в Redis тільки один раз за запит!
+        if ($connected && !isset($logged[$ip])) {
+            $logged[$ip] = true;
             _log_search_engine_visit($redis, $ip, 'IP', $matchedEngine);
         }
     }
@@ -427,6 +480,11 @@ function _is_search_engine_ip($ip) {
  * v3.7.0: Визначення пошукової системи по CIDR
  */
 function _detect_engine_by_cidr($cidr) {
+    // Test IPs
+    if (strpos($cidr, '185.6.186.') === 0 || strpos($cidr, '2a00:1e20:11:9108') === 0) {
+        return 'Test';
+    }
+    
     // Google ranges start with 66.249, 64.233, 72.14, 74.125, etc.
     if (preg_match('/^(66\.249|64\.233|72\.14|74\.125|216\.239|209\.85|108\.177|142\.250|172\.217|172\.253|173\.194|192\.178|34\.64|35\.190|203\.208)/', $cidr)) {
         return 'Google';
@@ -490,23 +548,28 @@ function _log_search_engine_visit($redis, $ip, $method, $engine = null) {
     try {
         // Визначаємо engine з User-Agent якщо не передано
         if (!$engine) {
-            $ua = isset($_SERVER['HTTP_USER_AGENT']) ? strtolower($_SERVER['HTTP_USER_AGENT']) : '';
-            if (strpos($ua, 'googlebot') !== false || strpos($ua, 'google') !== false) {
-                $engine = 'Google';
-            } elseif (strpos($ua, 'yandex') !== false) {
-                $engine = 'Yandex';
-            } elseif (strpos($ua, 'bingbot') !== false || strpos($ua, 'msnbot') !== false) {
-                $engine = 'Bing';
-            } elseif (strpos($ua, 'baidu') !== false) {
-                $engine = 'Baidu';
-            } elseif (strpos($ua, 'duckduck') !== false) {
-                $engine = 'DuckDuckGo';
-            } elseif (strpos($ua, 'facebook') !== false) {
-                $engine = 'Facebook';
-            } elseif (strpos($ua, 'apple') !== false) {
-                $engine = 'Apple';
+            // Спочатку перевіряємо тестові IP (пріоритет!)
+            if ($ip === '185.6.186.106' || strpos($ip, '2a00:1e20:11:9108') === 0) {
+                $engine = 'Test';
             } else {
-                $engine = 'Other';
+                $ua = isset($_SERVER['HTTP_USER_AGENT']) ? strtolower($_SERVER['HTTP_USER_AGENT']) : '';
+                if (strpos($ua, 'googlebot') !== false || strpos($ua, 'google-inspectiontool') !== false) {
+                    $engine = 'Google';
+                } elseif (strpos($ua, 'yandex') !== false) {
+                    $engine = 'Yandex';
+                } elseif (strpos($ua, 'bingbot') !== false || strpos($ua, 'msnbot') !== false) {
+                    $engine = 'Bing';
+                } elseif (strpos($ua, 'baiduspider') !== false) {
+                    $engine = 'Baidu';
+                } elseif (strpos($ua, 'duckduckbot') !== false) {
+                    $engine = 'DuckDuckGo';
+                } elseif (strpos($ua, 'facebookexternalhit') !== false || strpos($ua, 'facebot') !== false) {
+                    $engine = 'Facebook';
+                } elseif (strpos($ua, 'applebot') !== false) {
+                    $engine = 'Apple';
+                } else {
+                    $engine = 'Other';
+                }
             }
         }
         
@@ -749,6 +812,27 @@ function _jsc_logStats($type, $ip = null) {
 }
 
 function _jsc_generateChallenge($secret_key) {
+    global $_JSC_CONFIG;
+    
+    // v3.8.0: Proof of Work challenge
+    if (!empty($_JSC_CONFIG['pow_enabled'])) {
+        $challenge_id = bin2hex(random_bytes(16));
+        $difficulty = isset($_JSC_CONFIG['pow_difficulty']) ? (int)$_JSC_CONFIG['pow_difficulty'] : 4;
+        $timeout = isset($_JSC_CONFIG['pow_timeout']) ? (int)$_JSC_CONFIG['pow_timeout'] : 60;
+        $style = isset($_JSC_CONFIG['pow_style']) ? $_JSC_CONFIG['pow_style'] : 'cloudflare';
+        
+        return array(
+            'type' => 'pow',
+            'id' => $challenge_id,
+            'timestamp' => time(),
+            'difficulty' => $difficulty,
+            'timeout' => $timeout,
+            'style' => $style,
+            'target' => str_repeat('0', $difficulty)
+        );
+    }
+    
+    // Fallback: стандартний challenge (сума чисел)
     $id = md5(uniqid(mt_rand(), true));
     $timestamp = time();
     $numbers = array();
@@ -758,6 +842,7 @@ function _jsc_generateChallenge($secret_key) {
     $answer = array_sum($numbers);
     $target = hash('sha256', $id . $timestamp . $answer . $secret_key);
     return array(
+        'type' => 'sum',
         'id' => $id,
         'timestamp' => $timestamp,
         'numbers' => $numbers,
@@ -767,17 +852,289 @@ function _jsc_generateChallenge($secret_key) {
 }
 
 function _jsc_showChallengePage($challenge, $redirect_url) {
-    // v3.7.0: Логуємо показ challenge
+    // v3.8.0: Логуємо показ challenge
     _jsc_logStats('shown');
     
     $challengeJson = json_encode($challenge);
     $redirectJson = json_encode($redirect_url);
+    $isPow = isset($challenge['type']) && $challenge['type'] === 'pow';
+    $style = isset($challenge['style']) ? $challenge['style'] : 'cloudflare';
     
-    http_response_code(200);  // Змінено з 503 на 200 для SEO v3.7.0
+    http_response_code(200);
     header('Content-Type: text/html; charset=UTF-8');
     header('Cache-Control: no-cache, no-store, must-revalidate');
-    header('X-Robots-Tag: noindex, nofollow');  // Додано v3.7.0
+    header('X-Robots-Tag: noindex, nofollow');
     
+    // v3.8.0: Вибір стилю сторінки
+    if ($isPow && $style === 'cloudflare') {
+        _jsc_showCloudflarePoWPage($challengeJson, $redirectJson);
+    } else {
+        _jsc_showSMFChallengePage($challengeJson, $redirectJson, $isPow);
+    }
+    exit;
+}
+
+/**
+ * v3.8.0: Cloudflare-style Proof of Work сторінка
+ */
+function _jsc_showCloudflarePoWPage($challengeJson, $redirectJson) {
+    echo '<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Проверка... Подождите</title>
+    <style>
+        html, body { width: 100%; height: 100%; margin: 0; padding: 0; background: #ffffff; color: #000; font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 17px; display: flex; align-items: center; justify-content: center; text-align: center; }
+        .container { max-width: 540px; padding: 40px 24px; }
+        .cf-logo { width: 360px; max-width: 90vw; margin-bottom: 48px; }
+        h1 { font-size: 34px; font-weight: 500; margin: 0 0 16px; color: #000; }
+        .subtitle { font-size: 20px; color: #222; margin: 0 0 40px; }
+        .cf-spinner { position: relative; width: 80px; height: 80px; margin: 0 auto 32px; }
+        .cf-spinner::before, .cf-spinner::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; border-radius: 50%; border: 6px solid transparent; }
+        .cf-spinner::before { border-top-color: #f38020; animation: spin 1.2s linear infinite; }
+        .cf-spinner::after { border-top-color: #e04e2a; animation: spin 1.5s linear infinite reverse; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .progress-container { margin: 24px 0; }
+        .progress-bar { width: 100%; height: 8px; background: #e5e5e5; border-radius: 4px; overflow: hidden; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #f38020, #e04e2a); width: 0%; transition: width 0.3s ease; }
+        .status { font-size: 18px; color: #444; margin-top: 16px; min-height: 24px; }
+        .status.success { color: #2e7d32; font-weight: 600; }
+        .stats { font-size: 14px; color: #888; margin-top: 12px; font-family: monospace; }
+        .error { margin-top: 30px; padding: 20px; background: #fff5f5; border: 1px solid #ffcccc; border-radius: 8px; color: #c00; display: none; text-align: left; font-size: 15px; line-height: 1.5; }
+        .error strong { display: block; margin-bottom: 8px; }
+        .small { margin-top: 60px; font-size: 13px; color: #999; }
+        .small a { color: #f38020; text-decoration: none; }
+        .checkmark { display: none; width: 80px; height: 80px; margin: 0 auto 32px; }
+        .checkmark.show { display: block; animation: scaleIn 0.3s ease; }
+        @keyframes scaleIn { from { transform: scale(0); } to { transform: scale(1); } }
+        .checkmark circle { fill: #2e7d32; }
+        .checkmark path { stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 24; stroke-dashoffset: 24; animation: draw 0.4s ease 0.2s forwards; }
+        @keyframes draw { to { stroke-dashoffset: 0; } }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <img src="https://www.cloudflare.com/img/logo-cloudflare-dark.svg" alt="Security Check" class="cf-logo" onerror="this.style.display=\'none\'">
+    <h1 id="title">Проверка...</h1>
+    <p class="subtitle" id="subtitle">Проверяем ваш браузер перед входом на сайт</p>
+    
+    <div class="cf-spinner" id="spinner"></div>
+    <svg class="checkmark" id="checkmark" viewBox="0 0 80 80">
+        <circle cx="40" cy="40" r="38"/>
+        <path d="M24 42 L35 53 L56 28" fill="none"/>
+    </svg>
+    
+    <div class="progress-container">
+        <div class="progress-bar">
+            <div class="progress-fill" id="progress"></div>
+        </div>
+    </div>
+    <div class="status" id="status">Инициализация защиты...</div>
+    <div class="stats" id="stats"></div>
+    
+    <div class="error" id="error"></div>
+    <div class="small">Powered by <a href="#">MurKir Security</a> | Proof-of-Work Protection</div>
+</div>
+
+<script>
+    var challengeData = ' . $challengeJson . ';
+    var redirectUrl = ' . $redirectJson . ';
+    
+    var progressBar = document.getElementById("progress");
+    var statusEl = document.getElementById("status");
+    var statsEl = document.getElementById("stats");
+    var errorEl = document.getElementById("error");
+    var spinnerEl = document.getElementById("spinner");
+    var checkmarkEl = document.getElementById("checkmark");
+    var titleEl = document.getElementById("title");
+    var subtitleEl = document.getElementById("subtitle");
+
+    function updateProgress(percent, message) {
+        progressBar.style.width = percent + "%";
+        statusEl.textContent = message;
+    }
+
+    function showError(msg) {
+        errorEl.innerHTML = "<strong>⚠️ Ошибка проверки</strong>" + msg;
+        errorEl.style.display = "block";
+        spinnerEl.style.display = "none";
+        statusEl.textContent = "Проверка не пройдена";
+        statsEl.textContent = "";
+    }
+    
+    function showSuccess() {
+        spinnerEl.style.display = "none";
+        checkmarkEl.classList.add("show");
+        titleEl.textContent = "Проверка пройдена!";
+        subtitleEl.textContent = "Перенаправление на сайт...";
+        statusEl.className = "status success";
+    }
+
+    // SHA-256 hash function
+    async function sha256(str) {
+        var buf = new TextEncoder().encode(str);
+        var hash = await crypto.subtle.digest("SHA-256", buf);
+        return Array.from(new Uint8Array(hash)).map(function(b) {
+            return b.toString(16).padStart(2, "0");
+        }).join("");
+    }
+    
+    // Перевірка cookies
+    function areCookiesEnabled() {
+        try {
+            document.cookie = "cookietest=1; SameSite=Lax";
+            var result = document.cookie.indexOf("cookietest=") !== -1;
+            document.cookie = "cookietest=1; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax";
+            return result;
+        } catch (e) {
+            return false;
+        }
+    }
+    
+    // Перевірка захисту від циклу
+    function checkLoopProtection() {
+        try {
+            var key = "pow_attempts_" + challengeData.id.substr(0, 8);
+            var attempts = parseInt(sessionStorage.getItem(key) || "0", 10);
+            if (attempts >= 3) return false;
+            sessionStorage.setItem(key, (attempts + 1).toString());
+            return true;
+        } catch (e) {
+            return true;
+        }
+    }
+
+    async function performChallenge() {
+        try {
+            updateProgress(5, "Анализ окружения...");
+            await new Promise(function(r) { setTimeout(r, 400); });
+            
+            // Перевірка циклу
+            if (!checkLoopProtection()) {
+                showError("<br>Обнаружен цикл проверки. Пожалуйста, включите cookies и обновите страницу.");
+                return;
+            }
+            
+            // Перевірка cookies
+            updateProgress(10, "Проверка cookies...");
+            await new Promise(function(r) { setTimeout(r, 300); });
+            
+            if (!areCookiesEnabled()) {
+                showError("<br>Для прохождения проверки необходимо включить cookies в вашем браузере.");
+                return;
+            }
+            
+            // Proof of Work
+            updateProgress(15, "Вычисление токена безопасности...");
+            
+            var nonce = 0;
+            var hash = "";
+            var target = challengeData.target || "0".repeat(challengeData.difficulty || 4);
+            var startTime = Date.now();
+            var timeout = (challengeData.timeout || 60) * 1000;
+            var lastUpdate = startTime;
+            var hashesPerUpdate = 1000;
+            
+            while (true) {
+                hash = await sha256(challengeData.id + nonce);
+                
+                if (hash.startsWith(target)) {
+                    break;
+                }
+                
+                nonce++;
+                
+                // Оновлення прогресу кожні 500 ітерацій
+                if (nonce % hashesPerUpdate === 0) {
+                    var elapsed = Date.now() - startTime;
+                    var hashRate = Math.round(nonce / (elapsed / 1000));
+                    
+                    // Прогрес від 15% до 85%
+                    var progress = Math.min(85, 15 + (elapsed / timeout) * 70);
+                    updateProgress(progress, "Вычисление токена безопасности...");
+                    statsEl.textContent = nonce.toLocaleString() + " хешей | " + hashRate.toLocaleString() + " H/s";
+                    
+                    // Перевірка timeout
+                    if (elapsed > timeout) {
+                        showError("<br>Время проверки истекло. Пожалуйста, обновите страницу и попробуйте снова.");
+                        return;
+                    }
+                    
+                    // Даємо браузеру "дихати"
+                    await new Promise(function(r) { setTimeout(r, 0); });
+                }
+            }
+            
+            var totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+            statsEl.textContent = nonce.toLocaleString() + " хешей за " + totalTime + " сек";
+            
+            updateProgress(90, "Верификация результата...");
+            
+            // Відправка на сервер
+            var xhr = new XMLHttpRequest();
+            xhr.open("POST", window.location.href, true);
+            xhr.setRequestHeader("Content-Type", "application/json");
+            xhr.setRequestHeader("X-JSC-Response", "1");
+            
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    try {
+                        var result = JSON.parse(xhr.responseText);
+                        if (result.success) {
+                            updateProgress(100, "Проверка завершена!");
+                            showSuccess();
+                            
+                            // Очищення лічильника
+                            try {
+                                sessionStorage.removeItem("pow_attempts_" + challengeData.id.substr(0, 8));
+                            } catch (e) {}
+                            
+                            setTimeout(function() {
+                                window.location.href = redirectUrl;
+                            }, 800);
+                        } else {
+                            showError("<br>" + (result.error || "Ошибка верификации"));
+                        }
+                    } catch (e) {
+                        showError("<br>Некорректный ответ сервера");
+                    }
+                } else {
+                    showError("<br>HTTP ошибка: " + xhr.status);
+                }
+            };
+            
+            xhr.onerror = function() {
+                showError("<br>Сетевая ошибка. Проверьте подключение к интернету.");
+            };
+            
+            xhr.send(JSON.stringify({
+                challenge_id: challengeData.id,
+                nonce: nonce,
+                hash: hash,
+                timestamp: challengeData.timestamp,
+                type: "pow"
+            }));
+            
+        } catch (error) {
+            showError("<br>Не удалось пройти проверку: " + error.message);
+        }
+    }
+
+    window.addEventListener("load", function() {
+        setTimeout(performChallenge, 500);
+    });
+</script>
+</body>
+</html>';
+}
+
+/**
+ * v3.8.0: SMF-style Challenge сторінка (оригінальний стиль з PoW підтримкою)
+ */
+function _jsc_showSMFChallengePage($challengeJson, $redirectJson, $isPow = false) {
     echo '<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -874,6 +1231,13 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
             margin-top: 15px;
             font-style: italic;
         }
+        .stats {
+            text-align: center;
+            color: #888;
+            font-size: 11px;
+            margin-top: 10px;
+            font-family: monospace;
+        }
         .error {
             background: #fff0f0;
             border: 1px solid #cc3300;
@@ -909,10 +1273,10 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
         </div>
         <div id="content">
             <div class="catbg">
-                Проверка безопасности
+                Проверка безопасности' . ($isPow ? ' (Proof-of-Work)' : '') . '
             </div>
             <div class="windowbg">
-                <div class="spinner"></div>
+                <div class="spinner" id="spinner"></div>
                 <div class="info-text">
                     <strong>Пожалуйста, подождите...</strong><br>
                     Выполняется автоматическая проверка вашего браузера для защиты от автоматизированных запросов.
@@ -921,6 +1285,7 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
                     <div class="progress-fill" id="progress"></div>
                 </div>
                 <div class="status" id="status">Инициализация проверки...</div>
+                <div class="stats" id="stats"></div>
                 <div class="error" id="error"></div>
                 <div class="smalltext">
                     Эта проверка обычно занимает несколько секунд.<br>
@@ -937,8 +1302,9 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
         var redirectUrl = ' . $redirectJson . ';
         var progressBar = document.getElementById("progress");
         var statusEl = document.getElementById("status");
+        var statsEl = document.getElementById("stats");
         var errorEl = document.getElementById("error");
-        var loopProtection = 0; // Захист від циклу
+        var loopProtection = 0;
         
         function updateProgress(percent, message) {
             progressBar.style.width = percent + "%";
@@ -949,14 +1315,13 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
             errorEl.innerHTML = message;
             errorEl.style.display = "block";
             statusEl.textContent = "Ошибка проверки";
-            document.querySelector(".spinner").style.display = "none";
+            document.getElementById("spinner").style.display = "none";
         }
         
         function sleep(ms) {
             return new Promise(function(resolve) { setTimeout(resolve, ms); });
         }
         
-        // Перевірка доступності cookies
         function areCookiesEnabled() {
             try {
                 document.cookie = "cookietest=1; SameSite=Lax";
@@ -968,34 +1333,27 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
             }
         }
         
-        // Перевірка захисту від циклу через sessionStorage
         function checkLoopProtection() {
             try {
                 var key = "jsc_attempts_" + challengeData.id.substr(0, 8);
                 var attempts = parseInt(sessionStorage.getItem(key) || "0", 10);
-                if (attempts >= 3) {
-                    return false; // Занадто багато спроб
-                }
+                if (attempts >= 3) return false;
                 sessionStorage.setItem(key, (attempts + 1).toString());
                 return true;
             } catch (e) {
-                // sessionStorage недоступний, використовуємо URL
                 var url = new URL(window.location.href);
                 var attempts = parseInt(url.searchParams.get("_jsc_retry") || "0", 10);
                 return attempts < 3;
             }
         }
         
-        // Додаємо лічильник спроб до URL
-        function addRetryToUrl(url) {
-            try {
-                var urlObj = new URL(url, window.location.origin);
-                var attempts = parseInt(urlObj.searchParams.get("_jsc_retry") || "0", 10);
-                urlObj.searchParams.set("_jsc_retry", (attempts + 1).toString());
-                return urlObj.toString();
-            } catch (e) {
-                return url + (url.indexOf("?") > -1 ? "&" : "?") + "_jsc_retry=1";
-            }
+        // SHA-256 for PoW
+        async function sha256(str) {
+            var buf = new TextEncoder().encode(str);
+            var hash = await crypto.subtle.digest("SHA-256", buf);
+            return Array.from(new Uint8Array(hash)).map(function(b) {
+                return b.toString(16).padStart(2, "0");
+            }).join("");
         }
         
         async function performChallenge() {
@@ -1003,40 +1361,65 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
                 updateProgress(10, "Проверка браузера...");
                 await sleep(300);
                 
-                // Перевіряємо захист від циклу
                 if (!checkLoopProtection()) {
                     showError("<strong>🔄 Обнаружен цикл проверки</strong><br><br>" +
-                        "Похоже, проверка повторяется бесконечно.<br><br>" +
-                        "<strong>Возможные причины:</strong><br>" +
-                        "• Cookies отключены в браузере<br>" +
-                        "• Блокировщик рекламы блокирует cookies<br>" +
-                        "• Режим инкогнито с жёсткими настройками<br><br>" +
-                        "<strong>Решение:</strong> Включите cookies для этого сайта и обновите страницу (F5)");
+                        "Пожалуйста, включите cookies и обновите страницу (F5)");
                     return;
                 }
                 
                 updateProgress(20, "Проверка JavaScript...");
                 await sleep(300);
                 
-                // Перевіряємо cookies
-                updateProgress(40, "Проверка cookies...");
+                updateProgress(30, "Проверка cookies...");
                 await sleep(300);
                 
                 if (!areCookiesEnabled()) {
                     showError("<strong>⚠️ Cookies отключены</strong><br><br>" +
-                        "Для прохождения проверки безопасности необходимо включить cookies в вашем браузере.<br><br>" +
-                        "<strong>Как включить:</strong><br>" +
-                        "• Chrome: Настройки → Конфиденциальность → Файлы cookie<br>" +
-                        "• Firefox: Настройки → Приватность → Cookies<br>" +
-                        "• Safari: Настройки → Конфиденциальность → Cookies<br><br>" +
-                        "После включения cookies обновите страницу (F5)");
+                        "Для прохождения проверки необходимо включить cookies в вашем браузере.");
                     return;
                 }
                 
-                updateProgress(60, "Вычисление задачи...");
-                var answer = challengeData.numbers.reduce(function(sum, num) { return sum + num; }, 0);
+                var answer, nonce, hash;
+                var isPow = challengeData.type === "pow";
                 
-                updateProgress(80, "Отправка решения...");
+                if (isPow) {
+                    // Proof of Work
+                    updateProgress(40, "Вычисление токена безопасности...");
+                    
+                    nonce = 0;
+                    var target = challengeData.target || "0".repeat(challengeData.difficulty || 4);
+                    var startTime = Date.now();
+                    var timeout = (challengeData.timeout || 60) * 1000;
+                    
+                    while (true) {
+                        hash = await sha256(challengeData.id + nonce);
+                        if (hash.startsWith(target)) break;
+                        nonce++;
+                        
+                        if (nonce % 500 === 0) {
+                            var elapsed = Date.now() - startTime;
+                            var hashRate = Math.round(nonce / (elapsed / 1000));
+                            var progress = Math.min(85, 40 + (elapsed / timeout) * 45);
+                            updateProgress(progress, "Вычисление токена безопасности...");
+                            statsEl.textContent = nonce.toLocaleString() + " хешей | " + hashRate.toLocaleString() + " H/s";
+                            
+                            if (elapsed > timeout) {
+                                showError("<strong>⏱️ Время истекло</strong><br><br>Пожалуйста, обновите страницу.");
+                                return;
+                            }
+                            await sleep(0);
+                        }
+                    }
+                    
+                    var totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+                    statsEl.textContent = nonce.toLocaleString() + " хешей за " + totalTime + " сек";
+                } else {
+                    // Sum challenge (legacy)
+                    updateProgress(60, "Вычисление задачи...");
+                    answer = challengeData.numbers.reduce(function(sum, num) { return sum + num; }, 0);
+                }
+                
+                updateProgress(90, "Отправка решения...");
                 
                 var xhr = new XMLHttpRequest();
                 xhr.open("POST", window.location.href, true);
@@ -1050,23 +1433,15 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
                             if (result.success) {
                                 updateProgress(100, "Проверка завершена!");
                                 statusEl.className = "status success";
+                                document.getElementById("spinner").style.display = "none";
                                 
-                                // Очищаємо лічильник спроб
                                 try {
-                                    var key = "jsc_attempts_" + challengeData.id.substr(0, 8);
+                                    var key = (isPow ? "pow_attempts_" : "jsc_attempts_") + challengeData.id.substr(0, 8);
                                     sessionStorage.removeItem(key);
                                 } catch (e) {}
                                 
-                                // Видаляємо параметр _jsc_retry з URL
-                                var cleanUrl = redirectUrl;
-                                try {
-                                    var urlObj = new URL(redirectUrl, window.location.origin);
-                                    urlObj.searchParams.delete("_jsc_retry");
-                                    cleanUrl = urlObj.toString();
-                                } catch (e) {}
-                                
                                 setTimeout(function() {
-                                    window.location.href = cleanUrl;
+                                    window.location.href = redirectUrl;
                                 }, 500);
                             } else {
                                 showError(result.error || "Verification failed");
@@ -1083,11 +1458,20 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
                     showError("Network error");
                 };
                 
-                xhr.send(JSON.stringify({
+                var payload = {
                     challenge_id: challengeData.id,
-                    answer: answer,
-                    timestamp: challengeData.timestamp
-                }));
+                    timestamp: challengeData.timestamp,
+                    type: isPow ? "pow" : "sum"
+                };
+                
+                if (isPow) {
+                    payload.nonce = nonce;
+                    payload.hash = hash;
+                } else {
+                    payload.answer = answer;
+                }
+                
+                xhr.send(JSON.stringify(payload));
                 
             } catch (error) {
                 showError("Не удалось пройти проверку. Обновите страницу.");
@@ -1100,7 +1484,6 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
     </script>
 </body>
 </html>';
-    exit;
 }
 
 // ============================================================================
@@ -1112,16 +1495,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_JSC_RESPONS
     
     $input = json_decode(file_get_contents('php://input'), true);
     
-    if (!$input || !isset($input['challenge_id']) || !isset($input['answer']) || !isset($input['timestamp'])) {
+    if (!$input || !isset($input['challenge_id']) || !isset($input['timestamp'])) {
         echo json_encode(array('success' => false, 'error' => 'Invalid request'));
         exit;
     }
     
     $timestamp = (int)$input['timestamp'];
+    $challengeType = isset($input['type']) ? $input['type'] : 'sum';
     
-    if (time() - $timestamp > 300) {
+    // v3.8.0: Різний timeout для PoW та звичайного challenge
+    $maxAge = ($challengeType === 'pow') ? 120 : 300;
+    
+    if (time() - $timestamp > $maxAge) {
         echo json_encode(array('success' => false, 'error' => 'Challenge expired'));
         exit;
+    }
+    
+    // v3.8.0: Proof of Work верифікація
+    if ($challengeType === 'pow') {
+        if (!isset($input['nonce']) || !isset($input['hash'])) {
+            echo json_encode(array('success' => false, 'error' => 'Missing PoW data'));
+            exit;
+        }
+        
+        $challengeId = $input['challenge_id'];
+        $nonce = (int)$input['nonce'];
+        $clientHash = $input['hash'];
+        $difficulty = isset($_JSC_CONFIG['pow_difficulty']) ? (int)$_JSC_CONFIG['pow_difficulty'] : 4;
+        
+        // Серверна верифікація PoW
+        $serverHash = hash('sha256', $challengeId . $nonce);
+        $target = str_repeat('0', $difficulty);
+        
+        if ($serverHash !== $clientHash) {
+            _jsc_logStats('failed', _jsc_getClientIP());
+            echo json_encode(array('success' => false, 'error' => 'Hash mismatch'));
+            exit;
+        }
+        
+        if (strpos($serverHash, $target) !== 0) {
+            _jsc_logStats('failed', _jsc_getClientIP());
+            echo json_encode(array('success' => false, 'error' => 'Invalid PoW solution'));
+            exit;
+        }
+        
+        // PoW пройдено успішно
+        _jsc_logStats('passed', _jsc_getClientIP());
+    } else {
+        // Legacy: перевірка суми (для зворотної сумісності)
+        if (!isset($input['answer'])) {
+            echo json_encode(array('success' => false, 'error' => 'Missing answer'));
+            exit;
+        }
     }
     
     $ip = _jsc_getClientIP();
@@ -1493,7 +1918,7 @@ class SimpleBotProtection {
     // Налаштування API
     private $apiSettings = array(
         'enabled' => false,
-        'url' => 'https://my/redis-bot_protection/API/iptables.php',
+        'url' => 'https://mysite.com/redis-bot_protection/API/iptables.php',
         'api_key' => '12345',
         'timeout' => 5,
         'retry_on_failure' => 2,
