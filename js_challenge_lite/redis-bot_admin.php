@@ -1,10 +1,16 @@
 <?php
 /**
  * ============================================================================
- * MurKir Security - Admin Panel v1.3
+ * MurKir Security - Admin Panel v1.4
  * ============================================================================
  * 
  * Полноценная админ-панель для управления Redis Bot Protection
+ * 
+ * НОВОЕ v1.4 (2026-01-27):
+ * ✅ rDNS відображення в "Лог пошукових систем"
+ * ✅ rDNS відображення в "JS Challenge Статистика"
+ * ✅ Кешування rDNS запитів в Redis (1 година)
+ * ✅ Асинхронне завантаження rDNS для кращої продуктивності
  * 
  * НОВОЕ v1.3 (для inline_check_lite v3.7.0):
  * ✅ Статистика IP Whitelist кешу пошукових систем
@@ -802,6 +808,13 @@ function getSearchBotStatsFromRedis($redis, $prefix) {
         $logKey = $prefix . 'search_log';
         $logs = $redis->lrange($logKey, 0, 99);
         if (is_array($logs)) {
+            // v1.4: Додаємо rDNS до кожного запису
+            foreach ($logs as &$log) {
+                if (is_array($log) && isset($log['ip']) && filter_var($log['ip'], FILTER_VALIDATE_IP)) {
+                    $log['rdns'] = resolveRDNS($log['ip'], $redis);
+                }
+            }
+            unset($log);
             $result['lines'] = $logs;
         }
         
@@ -1027,6 +1040,10 @@ function getJSChallengeStats($redis, $prefix) {
         if ($logs) {
             foreach ($logs as $log) {
                 if (is_array($log)) {
+                    // v1.4: Додаємо rDNS до кожного запису
+                    if (isset($log['ip']) && filter_var($log['ip'], FILTER_VALIDATE_IP)) {
+                        $log['rdns'] = resolveRDNS($log['ip'], $redis);
+                    }
                     $stats['recent_logs'][$type][] = $log;
                 }
             }
@@ -2870,8 +2887,10 @@ if (isLoggedIn() && $redis) {
                 <div class="card-header">
                     <div class="card-title">
                         <span>🔍</span> Лог пошукових систем
+                        <span id="searchBotsLastUpdate" style="font-size: 0.75rem; color: var(--text-muted); margin-left: 15px; font-weight: normal;"></span>
                     </div>
                     <div style="display: flex; gap: 10px; align-items: center;">
+                        <span style="font-size: 0.8rem; color: var(--accent-success);">🔴 Live</span>
                         <select id="searchLogLines" class="form-input" style="width: auto; padding: 8px 12px;" onchange="loadSearchBotLog()">
                             <option value="50">50 записів</option>
                             <option value="100" selected>100 записів</option>
@@ -2900,13 +2919,14 @@ if (isLoggedIn() && $redis) {
                                     <th style="width: 140px;">Час</th>
                                     <th style="width: 110px;">Бот</th>
                                     <th style="width: 130px;">IP</th>
+                                    <th style="width: 180px;">rDNS</th>
                                     <th style="width: 80px;">Метод</th>
                                     <th style="width: 150px;">Домен</th>
                                     <th>URL</th>
                                 </tr>
                             </thead>
                             <tbody id="searchBotBody">
-                                <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Натисніть "Оновити" для завантаження...</td></tr>
+                                <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">Натисніть "Оновити" для завантаження...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -2925,8 +2945,10 @@ if (isLoggedIn() && $redis) {
                 <div class="card-header">
                     <div class="card-title">
                         <span>🛡️</span> JS Challenge Статистика
+                        <span id="jscLastUpdate" style="font-size: 0.75rem; color: var(--text-muted); margin-left: 15px; font-weight: normal;"></span>
                     </div>
                     <div style="display: flex; gap: 10px; align-items: center;">
+                        <span style="font-size: 0.8rem; color: var(--accent-success);">🔴 Live</span>
                         <button class="btn btn-secondary btn-sm" onclick="loadJSChallengeStats()">
                             <span>🔄</span> Оновити
                         </button>
@@ -3014,12 +3036,13 @@ if (isLoggedIn() && $redis) {
                                 <thead>
                                     <tr>
                                         <th style="width: 150px;">Час</th>
-                                        <th style="width: 150px;">IP</th>
+                                        <th style="width: 130px;">IP</th>
+                                        <th style="width: 200px;">rDNS</th>
                                         <th>User Agent</th>
                                     </tr>
                                 </thead>
                                 <tbody id="jsc-log-body-shown">
-                                    <tr><td colspan="3" style="text-align: center; color: var(--text-muted);">Немає даних</td></tr>
+                                    <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Немає даних</td></tr>
                                 </tbody>
                             </table>
                             
@@ -3027,12 +3050,13 @@ if (isLoggedIn() && $redis) {
                                 <thead>
                                     <tr>
                                         <th style="width: 150px;">Час</th>
-                                        <th style="width: 150px;">IP</th>
+                                        <th style="width: 130px;">IP</th>
+                                        <th style="width: 200px;">rDNS</th>
                                         <th>User Agent</th>
                                     </tr>
                                 </thead>
                                 <tbody id="jsc-log-body-passed">
-                                    <tr><td colspan="3" style="text-align: center; color: var(--text-muted);">Немає даних</td></tr>
+                                    <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Немає даних</td></tr>
                                 </tbody>
                             </table>
                             
@@ -3040,12 +3064,13 @@ if (isLoggedIn() && $redis) {
                                 <thead>
                                     <tr>
                                         <th style="width: 150px;">Час</th>
-                                        <th style="width: 150px;">IP</th>
+                                        <th style="width: 130px;">IP</th>
+                                        <th style="width: 200px;">rDNS</th>
                                         <th>User Agent</th>
                                     </tr>
                                 </thead>
                                 <tbody id="jsc-log-body-failed">
-                                    <tr><td colspan="3" style="text-align: center; color: var(--text-muted);">Немає даних</td></tr>
+                                    <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Немає даних</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -3096,6 +3121,13 @@ if (isLoggedIn() && $redis) {
             
             document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
             document.getElementById(`panel-${tabName}`).classList.add('active');
+            
+            // v1.4: Автозавантаження даних при перемиканні на вкладку
+            if (tabName === 'searchbots') {
+                loadSearchBotLog();
+            } else if (tabName === 'jschallenge') {
+                loadJSChallengeStats();
+            }
         }
         
         // Toast Notifications
@@ -3661,6 +3693,16 @@ if (isLoggedIn() && $redis) {
                 }
             }
             
+            // v1.4: Live update Search Bots log if panel is visible
+            if (liveUpdateEnabled && document.getElementById('panel-searchbots')?.classList.contains('active')) {
+                await loadSearchBotLog();
+            }
+            
+            // v1.4: Live update JS Challenge stats if panel is visible
+            if (liveUpdateEnabled && document.getElementById('panel-jschallenge')?.classList.contains('active')) {
+                await loadJSChallengeStats();
+            }
+            
             indicator.classList.remove('loading');
             refreshTimer = <?= $config['refresh_interval'] ?>;
         }
@@ -3744,6 +3786,7 @@ if (isLoggedIn() && $redis) {
                 'facebook': '#1877F2',
                 'apple': '#555555',
                 'yahoo': '#720e9e',
+                'test': '#00FF00',
                 'other': '#6c757d'
             };
             
@@ -3756,6 +3799,7 @@ if (isLoggedIn() && $redis) {
                 'facebook': '🔷',
                 'apple': '🍎',
                 'yahoo': '🟪',
+                'test': '🧪',
                 'other': '🤖'
             };
             
@@ -3839,7 +3883,7 @@ if (isLoggedIn() && $redis) {
             }
             
             if (logEntries.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">📭 Лог порожній. Дані з\'являться після першого візиту бота.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">📭 Лог порожній. Дані з\'являться після першого візиту бота.</td></tr>';
             } else {
                 tbody.innerHTML = logEntries.map(entry => {
                     const engine = (entry.engine || entry.bot || 'unknown').toLowerCase();
@@ -3851,14 +3895,21 @@ if (isLoggedIn() && $redis) {
                         '<span style="background: #17a2b8; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem;">' + escapeHtml(method) + '</span>' :
                         '<span style="background: #6c757d; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem;">' + escapeHtml(method) + '</span>';
                     
+                    // v1.4: rDNS відображення
+                    const rdns = entry.rdns || null;
+                    const rdnsHtml = rdns 
+                        ? `<span style="font-size: 0.8rem; color: var(--accent-success);" title="${escapeHtml(rdns)}">${escapeHtml(rdns.length > 25 ? rdns.substring(0, 22) + '...' : rdns)}</span>`
+                        : '<span style="color: var(--text-muted); font-size: 0.8rem;">—</span>';
+                    
                     return `
                         <tr>
                             <td style="font-family: var(--font-mono); font-size: 0.85rem;">${escapeHtml(entry.time)}</td>
                             <td>${icon} ${escapeHtml(entry.engine || entry.bot || '-')}</td>
                             <td style="font-family: var(--font-mono);">${escapeHtml(entry.ip)}</td>
+                            <td>${rdnsHtml}</td>
                             <td>${methodBadge}</td>
                             <td style="font-size: 0.85rem; color: var(--accent-primary);">${escapeHtml(entry.host || '-')}</td>
-                            <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(entry.url || '')}">${escapeHtml(entry.url || '-')}</td>
+                            <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(entry.url || '')}">${escapeHtml(entry.url || '-')}</td>
                         </tr>
                     `;
                 }).join('');
@@ -3883,6 +3934,12 @@ if (isLoggedIn() && $redis) {
                 infoHtml = '📭 Статистика поки відсутня';
             }
             infoDiv.innerHTML = infoHtml;
+            
+            // v1.4: Оновлюємо timestamp
+            const lastUpdateEl = document.getElementById('searchBotsLastUpdate');
+            if (lastUpdateEl) {
+                lastUpdateEl.textContent = '⏱ ' + new Date().toLocaleTimeString('uk-UA');
+            }
         }
         
         function confirmClearSearchLog() {
@@ -3938,6 +3995,12 @@ if (isLoggedIn() && $redis) {
             
             // Load current log tab
             loadJSCLog(currentJSCLogTab, result.recent_logs);
+            
+            // v1.4: Оновлюємо timestamp
+            const lastUpdateEl = document.getElementById('jscLastUpdate');
+            if (lastUpdateEl) {
+                lastUpdateEl.textContent = '⏱ ' + new Date().toLocaleTimeString('uk-UA');
+            }
         }
         
         function renderJSCHourlyChart(hourlyData) {
@@ -4033,16 +4096,23 @@ if (isLoggedIn() && $redis) {
             const logs = logsData[type] || [];
             
             if (logs.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--text-muted);">Немає даних</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Немає даних</td></tr>';
                 return;
             }
             
             tbody.innerHTML = logs.map(log => {
+                // v1.4: rDNS відображення
+                const rdns = log.rdns || null;
+                const rdnsHtml = rdns 
+                    ? `<span style="font-size: 0.8rem; color: var(--accent-success);" title="${escapeHtml(rdns)}">${escapeHtml(rdns.length > 28 ? rdns.substring(0, 25) + '...' : rdns)}</span>`
+                    : '<span style="color: var(--text-muted); font-size: 0.8rem;">—</span>';
+                
                 return `
                     <tr>
                         <td style="font-family: var(--font-mono); font-size: 0.85rem;">${escapeHtml(log.date || '-')}</td>
                         <td style="font-family: var(--font-mono); color: var(--accent-secondary);">${escapeHtml(log.ip || '-')}</td>
-                        <td style="font-size: 0.85rem; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(log.ua || '-')}">${escapeHtml(log.ua || '-')}</td>
+                        <td>${rdnsHtml}</td>
+                        <td style="font-size: 0.85rem; max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(log.ua || '-')}">${escapeHtml(log.ua || '-')}</td>
                     </tr>
                 `;
             }).join('');
