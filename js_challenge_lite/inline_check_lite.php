@@ -1,7 +1,29 @@
 <?php
 /**
  * ============================================================================
- * Redis Bot Protection - SEO ОПТИМІЗОВАНА ВЕРСІЯ v3.8.3 (GOOGLE IP UPDATE)
+ * Redis Bot Protection - SEO ОПТИМІЗОВАНА ВЕРСІЯ v3.8.4 (ADMIN AJAX FIX)
+ * ============================================================================
+ * 
+ * ВЕРСІЯ 3.8.4 - ADMIN AJAX PROTECTION FIX (2026-01-28)
+ * 
+ * НОВЕ v3.8.4:
+ * 🔥 Білий список URL адмінки ($ADMIN_URL_WHITELIST)
+ * 🔥 Виключення AJAX запитів з Rate Limit (опціонально)
+ * 🔥 Множник лімітів для AJAX запитів ($AJAX_RATE_LIMIT_MULTIPLIER)
+ * 🔥 Функція _should_skip_rate_limit() для централізованої перевірки
+ * 🔥 Підтримка Content-Type та Accept заголовків для визначення AJAX
+ * 
+ * ПРОБЛЕМА ЯКУ ВИРІШЕНО:
+ * - При інтенсивній роботі в адмінці (багато AJAX запитів) Rate Limit блокував адміна
+ * - AJAX використовує такий самий User-Agent як і браузер (відрізняється тільки X-Requested-With)
+ * - JS Challenge вже пропускав AJAX, але Rate Limit в protect() - ні
+ * 
+ * ВАРІАНТИ РІШЕННЯ (можна комбінувати):
+ * 1. Додати свій IP в $ADMIN_IP_WHITELIST (найпростіше)
+ * 2. Увімкнути $ADMIN_URL_WHITELIST (захищає конкретні URL)
+ * 3. Увімкнути $AJAX_SKIP_RATE_LIMIT (пропускає всі AJAX)
+ * 4. Використовувати $AJAX_RATE_LIMIT_MULTIPLIER (збільшує ліміти для AJAX)
+ * 
  * ============================================================================
  * 
  * ВЕРСІЯ 3.8.3 - OFFICIAL GOOGLE IP WHITELIST (2026-01-27)
@@ -253,6 +275,76 @@ $ADMIN_IP_WHITELIST = array(
 );
 
 // ============================================================================
+// НОВЕ v3.8.4: БІЛИЙ СПИСОК URL АДМІНКИ
+// ============================================================================
+/**
+ * URL шляхи які пропускають Rate Limit та інші перевірки
+ * 
+ * ⚠️ ВАЖЛИВО: 
+ * - Перевірка часткова (strpos), тобто '/admin' збігається з '/admin/ajax.php'
+ * - Будь обережний з короткими шляхами!
+ * - JS Challenge все одно працює (захист від ботів)
+ * 
+ * Формати:
+ * - '/admin'                - адмінка DLE/інших CMS
+ * - '/engine/ajax'          - AJAX движка DLE
+ * - '/wp-admin'             - WordPress адмінка
+ * - '/administrator'        - Joomla адмінка
+ */
+$ADMIN_URL_WHITELIST_ENABLED = true;  // Увімкнути/вимкнути білий список URL
+
+$ADMIN_URL_WHITELIST = array(
+    // ========================================================================
+    // ШЛЯХИ АДМІНКИ (часткове співпадіння)
+    // ========================================================================
+    'redis-bot_admin.php',
+	'/admin',                    // DLE та багато інших CMS
+    '/engine/ajax',              // DLE AJAX запити
+    '/engine/admin',             // DLE адмінка (engine)
+    '/engine/inc/',              // DLE includes (де можуть бути AJAX обробники)
+    
+    // WordPress (розкоментуй якщо потрібно):
+    // '/wp-admin',
+    // '/wp-json',
+    
+    // Joomla (розкоментуй якщо потрібно):
+    // '/administrator',
+    
+    // SMF (розкоментуй якщо потрібно):
+    // '?action=admin',
+);
+
+// ============================================================================
+// НОВЕ v3.8.4: НАЛАШТУВАННЯ RATE LIMIT ДЛЯ AJAX ЗАПИТІВ
+// ============================================================================
+/**
+ * Пропускати Rate Limit для ВСІХ AJAX запитів?
+ * 
+ * ⚠️ УВАГА: 
+ * - Боти можуть емулювати заголовок X-Requested-With
+ * - Рекомендується використовувати разом з JS Challenge (який залишається)
+ * - Безпечніше використовувати $ADMIN_URL_WHITELIST для конкретних URL
+ * 
+ * true  = Всі AJAX пропускають Rate Limit (менш безпечно)
+ * false = AJAX перевіряються Rate Limit (за замовчуванням)
+ */
+$AJAX_SKIP_RATE_LIMIT = false;
+
+/**
+ * Множник лімітів для AJAX запитів (якщо $AJAX_SKIP_RATE_LIMIT = false)
+ * 
+ * Наприклад, 3.0 = ліміти в 3 рази вищі для AJAX запитів
+ * Це дозволяє більше AJAX запитів без повного відключення захисту
+ * 
+ * Рекомендовані значення:
+ * - 1.0 = без змін (AJAX = звичайні запити)
+ * - 2.0 = подвійні ліміти для AJAX
+ * - 3.0 = потрійні ліміти для AJAX (рекомендовано для адмінок)
+ * - 5.0 = п'ятикратні ліміти (для дуже інтенсивних AJAX операцій)
+ */
+$AJAX_RATE_LIMIT_MULTIPLIER = 3.0;
+
+// ============================================================================
 // БІЛИЙ СПИСОК IP ПОШУКОВИХ СИСТЕМ (v3.8.3 - ОНОВЛЕНО 2026-01-27)
 // ============================================================================
 /**
@@ -276,7 +368,14 @@ $SEARCH_ENGINE_IP_RANGES = array(
     // Джерело: https://developers.google.com/search/apis/ipranges/googlebot.json
     // ========================================================================
     
+	// GOOGLE PROXY / WEB LIGHT / INFRASTRUCTURE
+	'74.125.0.0/16',
+	'172.217.0.0/16',
+	'142.250.0.0/15',
+	'66.102.0.0/20',
+
     // GOOGLEBOT IPv4
+	'66.249.64.0/19',
     '192.178.4.0/27',
     '192.178.4.128/27',
     '192.178.4.160/27',
@@ -807,6 +906,140 @@ function _is_whitelisted_ip($ip) {
     }
     
     return false;
+}
+
+// ============================================================================
+// НОВЕ v3.8.4: ФУНКЦІЇ ПЕРЕВІРКИ URL АДМІНКИ ТА AJAX
+// ============================================================================
+
+/**
+ * Перевірка чи URL належить до адмінки
+ * Повертає true якщо URL збігається з будь-яким шляхом з $ADMIN_URL_WHITELIST
+ * 
+ * @return bool true якщо URL в білому списку адмінки
+ */
+function _is_admin_url() {
+    global $ADMIN_URL_WHITELIST_ENABLED, $ADMIN_URL_WHITELIST;
+    
+    if (empty($ADMIN_URL_WHITELIST_ENABLED) || empty($ADMIN_URL_WHITELIST)) {
+        return false;
+    }
+    
+    $uri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '';
+    if (empty($uri)) {
+        return false;
+    }
+    
+    // Перевіряємо і шлях і повний URI (для query string як ?action=admin)
+    $path = parse_url($uri, PHP_URL_PATH);
+    if (empty($path)) {
+        $path = $uri;
+    }
+    
+    $uriLower = strtolower($uri);
+    $pathLower = strtolower($path);
+    
+    foreach ($ADMIN_URL_WHITELIST as $adminPath) {
+        if (empty($adminPath)) {
+            continue;
+        }
+        
+        $adminPathLower = strtolower($adminPath);
+        
+        // Перевіряємо і шлях і повний URI
+        if (strpos($pathLower, $adminPathLower) !== false || 
+            strpos($uriLower, $adminPathLower) !== false) {
+            // Debug log (розкоментуй для діагностики)
+            // error_log("ADMIN URL WHITELIST: Matched '$adminPath' for URI: $uri");
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+/**
+ * Перевірка чи запит є AJAX
+ * Перевіряє стандартний заголовок X-Requested-With та Content-Type/Accept для fetch API
+ * 
+ * @return bool true якщо це AJAX запит
+ */
+function _is_ajax_request() {
+    // 1. Стандартний спосіб: заголовок X-Requested-With (jQuery, axios, etc.)
+    if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && 
+        strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
+        return true;
+    }
+    
+    // 2. Fetch API: Content-Type = application/json
+    if (!empty($_SERVER['CONTENT_TYPE'])) {
+        $contentType = strtolower($_SERVER['CONTENT_TYPE']);
+        if (strpos($contentType, 'application/json') !== false) {
+            return true;
+        }
+    }
+    
+    // 3. Fetch API: Accept починається з application/json
+    if (!empty($_SERVER['HTTP_ACCEPT'])) {
+        $accept = strtolower($_SERVER['HTTP_ACCEPT']);
+        // Перевіряємо що JSON є першим у списку Accept (пріоритетний формат)
+        if (strpos($accept, 'application/json') === 0) {
+            return true;
+        }
+    }
+    
+    // 4. Перевірка X-JSC-Response (наш власний AJAX для JS Challenge)
+    if (!empty($_SERVER['HTTP_X_JSC_RESPONSE'])) {
+        return true;
+    }
+    
+    return false;
+}
+
+/**
+ * v3.8.4: УНІВЕРСАЛЬНА перевірка чи пропускати Rate Limit
+ * Централізована функція для перевірки всіх умов пропуску
+ * 
+ * @param string $ip IP адреса
+ * @return bool|string false якщо перевіряти Rate Limit, інакше причина пропуску
+ */
+function _should_skip_rate_limit($ip) {
+    global $AJAX_SKIP_RATE_LIMIT;
+    
+    // 1. Білі списки IP (найвищий пріоритет - перевіряється першим)
+    $whitelistType = _is_whitelisted_ip($ip);
+    if ($whitelistType !== false) {
+        return 'ip_whitelist:' . $whitelistType;
+    }
+    
+    // 2. URL адмінки (другий пріоритет)
+    if (_is_admin_url()) {
+        return 'admin_url';
+    }
+    
+    // 3. AJAX запити (тільки якщо увімкнено глобальний пропуск)
+    if (!empty($AJAX_SKIP_RATE_LIMIT) && _is_ajax_request()) {
+        return 'ajax_request';
+    }
+    
+    return false;
+}
+
+/**
+ * v3.8.4: Отримати множник Rate Limit для поточного запиту
+ * Повертає множник на основі типу запиту (AJAX отримує вищий множник)
+ * 
+ * @return float множник (1.0 = без змін, >1.0 = збільшені ліміти)
+ */
+function _get_rate_limit_multiplier() {
+    global $AJAX_RATE_LIMIT_MULTIPLIER;
+    
+    // Якщо це AJAX запит і множник налаштований
+    if (_is_ajax_request() && !empty($AJAX_RATE_LIMIT_MULTIPLIER) && $AJAX_RATE_LIMIT_MULTIPLIER > 1.0) {
+        return (float)$AJAX_RATE_LIMIT_MULTIPLIER;
+    }
+    
+    return 1.0;
 }
 
 /**
@@ -2398,7 +2631,7 @@ class SimpleBotProtection {
         'timeout' => 5,
         'retry_on_failure' => 2,
         'verify_ssl' => true,
-        'user_agent' => 'BotProtection/3.6',
+        'user_agent' => 'BotProtection/3.8.4',
         'block_on_api' => true,
         'block_on_redis' => true,
     );
@@ -2902,7 +3135,7 @@ class SimpleBotProtection {
     
     /**
      * ========================================================================
-     * ГОЛОВНИЙ МЕТОД ЗАХИСТУ (v3.8.2 - єдиний білий список)
+     * ГОЛОВНИЙ МЕТОД ЗАХИСТУ (v3.8.4 - Admin URL + AJAX Support)
      * ========================================================================
      */
     public function protect() {
@@ -2911,15 +3144,15 @@ class SimpleBotProtection {
             $userAgent = isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '';
             
             // ================================================================
-            // КРОК 0: ВСІ БІЛІ СПИСКИ IP (АБСОЛЮТНИЙ ПРІОРИТЕТ!) v3.8.2
+            // КРОК 0: ПЕРЕВІРКА ПРОПУСКУ RATE LIMIT (v3.8.4)
             // ================================================================
-            // Перевіряє: $ADMIN_IP_WHITELIST + $SEARCH_ENGINE_IP_RANGES
-            $whitelistType = _is_whitelisted_ip($ip);
-            if ($whitelistType !== false) {
+            // Перевіряє: IP whitelist, Admin URL whitelist, AJAX (якщо увімкнено)
+            $skipReason = _should_skip_rate_limit($ip);
+            if ($skipReason !== false) {
                 if ($this->debugMode) {
-                    error_log("BOT PROTECTION: IP in whitelist ($whitelistType), allowing: $ip (bypassing ALL checks)");
+                    error_log("BOT PROTECTION: Skipping all checks - reason: $skipReason, IP: $ip");
                 }
-                return; // IP в білому списку - пропускаємо ВСІ перевірки
+                return; // Пропускаємо ВСІ перевірки
             }
             
             // ================================================================
@@ -2955,21 +3188,28 @@ class SimpleBotProtection {
             
             // Debug logging
             if ($this->debugMode) {
-                error_log("BOT PROTECTION: Checking IP=$ip, UA=" . substr($userAgent, 0, 50));
+                error_log("BOT PROTECTION: Checking IP=$ip, UA=" . substr($userAgent, 0, 50) . ", AJAX=" . (_is_ajax_request() ? 'yes' : 'no'));
             }
             
             // ================================================================
             // КРОК 4: ПЕРЕВІРКИ ЗАХИСТУ (для звичайних користувачів)
             // ================================================================
             
-            // Перевірка UA Rotation
+            // v3.8.4: Отримуємо множник для AJAX запитів
+            $rateMultiplier = _get_rate_limit_multiplier();
+            
+            if ($this->debugMode && $rateMultiplier > 1.0) {
+                error_log("BOT PROTECTION: AJAX rate limit multiplier applied: x" . $rateMultiplier);
+            }
+            
+            // Перевірка UA Rotation (не застосовується множник - це інший тип атаки)
             if ($this->checkUserAgentRotation($ip)) {
                 error_log("BOT PROTECTION: UA rotation detected, blocking IP=$ip");
                 $this->show502Error();
             }
             
-            // Перевірка Rate Limit і Burst
-            if ($this->checkRateLimit($ip)) {
+            // Перевірка Rate Limit і Burst (з множником для AJAX)
+            if ($this->checkRateLimit($ip, $rateMultiplier)) {
                 error_log("BOT PROTECTION: Rate limit exceeded, blocking IP=$ip");
                 $this->show502Error();
             }
@@ -3471,7 +3711,14 @@ class SimpleBotProtection {
     /**
      * Перевірка Rate Limit
      */
-    private function checkRateLimit($ip) {
+    /**
+     * Перевірка Rate Limit (v3.8.4 - з підтримкою AJAX множника)
+     * 
+     * @param string $ip IP адреса користувача
+     * @param float $ajaxMultiplier Множник для AJAX запитів (за замовчуванням 1.0)
+     * @return bool true якщо ліміт перевищено
+     */
+    private function checkRateLimit($ip, $ajaxMultiplier = 1.0) {
         $now = time();
         $userId = $this->generateUserIdentifier();
         $hasCookie = $this->hasValidCookie();
@@ -3580,10 +3827,11 @@ class SimpleBotProtection {
         $requests['last_10sec'][] = $now;
         
         // ========================================================================
-        // Встановлення лімітів залежно від наявності cookie
+        // Встановлення лімітів залежно від наявності cookie (v3.8.4 + AJAX multiplier)
         // ========================================================================
         if ($useStrictLimits) {
             // Жорсткі ліміти для користувачів БЕЗ bot_protection_uid cookie
+            // AJAX множник НЕ застосовується для strict limits (це можливі боти)
             $limits = array(
                 'minute' => $this->noCookieRateLimits['minute'],
                 '5min' => $this->noCookieRateLimits['5min'],
@@ -3600,12 +3848,23 @@ class SimpleBotProtection {
                 $multiplier = $this->rateLimitSettings['js_verified_multiplier'];
             }
             
+            // v3.8.4: Застосовуємо AJAX множник додатково
+            // Ліміти = базові * cookie/JS multiplier * AJAX multiplier
+            $totalMultiplier = $multiplier * $ajaxMultiplier;
+            
             $limits = array(
-                'minute' => (int)($this->rateLimitSettings['max_requests_per_minute'] * $multiplier),
-                '5min' => (int)($this->rateLimitSettings['max_requests_per_5min'] * $multiplier),
-                'hour' => (int)($this->rateLimitSettings['max_requests_per_hour'] * $multiplier),
-                'burst' => (int)($this->rateLimitSettings['burst_threshold'] * $multiplier)
+                'minute' => (int)($this->rateLimitSettings['max_requests_per_minute'] * $totalMultiplier),
+                '5min' => (int)($this->rateLimitSettings['max_requests_per_5min'] * $totalMultiplier),
+                'hour' => (int)($this->rateLimitSettings['max_requests_per_hour'] * $totalMultiplier),
+                'burst' => (int)($this->rateLimitSettings['burst_threshold'] * $totalMultiplier)
             );
+            
+            if ($this->debugMode && $ajaxMultiplier > 1.0) {
+                error_log(sprintf(
+                    "RATE LIMIT: AJAX multiplier applied: base_mult=%.1f, ajax_mult=%.1f, total=%.1f",
+                    $multiplier, $ajaxMultiplier, $totalMultiplier
+                ));
+            }
         }
         // ========================================================================
         
