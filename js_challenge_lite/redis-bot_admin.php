@@ -1003,6 +1003,7 @@ function getJSChallengeStats($redis, $prefix) {
             'shown' => [],
             'passed' => [],
             'failed' => [],
+            'expired' => [],
         ],
     ];
     
@@ -1032,7 +1033,7 @@ function getJSChallengeStats($redis, $prefix) {
     }
     
     // Останні логи (останні 20 записів для кожного типу)
-    $logTypes = ['shown', 'passed', 'failed'];
+    $logTypes = ['shown', 'passed', 'failed', 'expired'];
     foreach ($logTypes as $type) {
         $logKey = $statsPrefix . 'log:' . $type;
         $logs = $redis->lRange($logKey, 0, 19); // Отримуємо останні 20
@@ -2966,13 +2967,13 @@ if (isLoggedIn() && $redis) {
                             <div class="stat-value" id="jsc-total-passed">-</div>
                             <div class="stat-label">Пройдено</div>
                         </div>
+						<div class="stat-card" style="border-left: 3px solid var(--accent-warning);">
+                            <div class="stat-value" id="jsc-total-expired">-</div>
+                            <div class="stat-label">Протерміновано</div>
+                        </div>
                         <div class="stat-card" style="border-left: 3px solid var(--accent-danger);">
                             <div class="stat-value" id="jsc-total-failed">-</div>
                             <div class="stat-label">Провалено</div>
-                        </div>
-                        <div class="stat-card" style="border-left: 3px solid var(--accent-warning);">
-                            <div class="stat-value" id="jsc-total-expired">-</div>
-                            <div class="stat-label">Протерміновано</div>
                         </div>
                         <div class="stat-card" style="border-left: 3px solid var(--accent-secondary);">
                             <div class="stat-value" id="jsc-success-rate">-</div>
@@ -3025,6 +3026,9 @@ if (isLoggedIn() && $redis) {
                             <button class="btn btn-sm" id="jsc-log-tab-passed" onclick="switchJSCLogTab('passed')" style="background: var(--bg-tertiary);">
                                 ✅ Пройдено
                             </button>
+							<button class="btn btn-sm" id="jsc-log-tab-expired" onclick="switchJSCLogTab('expired')" style="background: var(--bg-tertiary);">
+                                ⏱️ Протерміновано
+                            </button>
                             <button class="btn btn-sm" id="jsc-log-tab-failed" onclick="switchJSCLogTab('failed')" style="background: var(--bg-tertiary);">
                                 ❌ Провалено
                             </button>
@@ -3070,6 +3074,20 @@ if (isLoggedIn() && $redis) {
                                     </tr>
                                 </thead>
                                 <tbody id="jsc-log-body-failed">
+                                    <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Немає даних</td></tr>
+                                </tbody>
+                            </table>
+                            
+                            <table class="data-table" id="jsc-log-table-expired" style="display: none;">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 150px;">Час</th>
+                                        <th style="width: 130px;">IP</th>
+                                        <th style="width: 200px;">rDNS</th>
+                                        <th>User Agent</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="jsc-log-body-expired">
                                     <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Немає даних</td></tr>
                                 </tbody>
                             </table>
@@ -3898,7 +3916,7 @@ if (isLoggedIn() && $redis) {
                     // v1.4: rDNS відображення
                     const rdns = entry.rdns || null;
                     const rdnsHtml = rdns 
-                        ? `<span style="font-size: 0.8rem; color: var(--accent-success);" title="${escapeHtml(rdns)}">${escapeHtml(rdns.length > 25 ? rdns.substring(0, 22) + '...' : rdns)}</span>`
+                        ? `<span style="font-size: 0.8rem; color: var(--accent-success);" title="${escapeHtml(rdns)}">${escapeHtml(rdns.length > 55 ? rdns.substring(0, 55) + '...' : rdns)}</span>`
                         : '<span style="color: var(--text-muted); font-size: 0.8rem;">—</span>';
                     
                     return `
@@ -3993,8 +4011,10 @@ if (isLoggedIn() && $redis) {
             // Render hourly chart
             renderJSCHourlyChart(result.hourly);
             
-            // Load current log tab
-            loadJSCLog(currentJSCLogTab, result.recent_logs);
+            // Load ALL log tabs (not just current one)
+            ['shown', 'passed', 'failed', 'expired'].forEach(type => {
+                loadJSCLog(type, result.recent_logs);
+            });
             
             // v1.4: Оновлюємо timestamp
             const lastUpdateEl = document.getElementById('jscLastUpdate');
@@ -4073,7 +4093,7 @@ if (isLoggedIn() && $redis) {
             currentJSCLogTab = tabName;
             
             // Update buttons
-            ['shown', 'passed', 'failed'].forEach(type => {
+            ['shown', 'passed', 'failed', 'expired'].forEach(type => {
                 const btn = document.getElementById(`jsc-log-tab-${type}`);
                 if (type === tabName) {
                     btn.style.background = 'var(--accent-primary)';
@@ -4085,7 +4105,7 @@ if (isLoggedIn() && $redis) {
             });
             
             // Show/hide tables
-            ['shown', 'passed', 'failed'].forEach(type => {
+            ['shown', 'passed', 'failed', 'expired'].forEach(type => {
                 const table = document.getElementById(`jsc-log-table-${type}`);
                 table.style.display = type === tabName ? 'table' : 'none';
             });
@@ -4104,7 +4124,7 @@ if (isLoggedIn() && $redis) {
                 // v1.4: rDNS відображення
                 const rdns = log.rdns || null;
                 const rdnsHtml = rdns 
-                    ? `<span style="font-size: 0.8rem; color: var(--accent-success);" title="${escapeHtml(rdns)}">${escapeHtml(rdns.length > 28 ? rdns.substring(0, 25) + '...' : rdns)}</span>`
+                    ? `<span style="font-size: 0.8rem; color: var(--accent-success);" title="${escapeHtml(rdns)}">${escapeHtml(rdns.length > 55 ? rdns.substring(0, 55) + '...' : rdns)}</span>`
                     : '<span style="color: var(--text-muted); font-size: 0.8rem;">—</span>';
                 
                 return `
