@@ -1,10 +1,16 @@
 <?php
 /**
  * ============================================================================
- * MurKir Security - Admin Panel v1.4
+ * MurKir Security - Admin Panel v1.5
  * ============================================================================
  * 
  * Полноценная админ-панель для управления Redis Bot Protection
+ * 
+ * НОВОЕ v1.5 (2026-01-29):
+ * ✅ Статус перевірки в "JS Challenge Статистика" → "Показано"
+ * ✅ Галочка (✓) для пройдених, хрестик (✗) для провалених
+ * ✅ Годинник (⏱) для протермінованих, крапки (⋯) для очікування
+ * ✅ Повний User Agent без обрізки
  * 
  * НОВОЕ v1.4 (2026-01-27):
  * ✅ rDNS відображення в "Лог пошукових систем"
@@ -1032,6 +1038,44 @@ function getJSChallengeStats($redis, $prefix) {
         ];
     }
     
+    // v1.5: Спочатку збираємо passed/failed/expired для визначення статусу shown
+    $passedIndex = [];  // IP|UA => time
+    $failedIndex = [];
+    $expiredIndex = [];
+    
+    // Збираємо passed записи
+    $passedLogs = $redis->lRange($statsPrefix . 'log:passed', 0, 99);
+    if ($passedLogs) {
+        foreach ($passedLogs as $log) {
+            if (is_array($log) && isset($log['ip'])) {
+                $key = $log['ip'] . '|' . ($log['ua'] ?? '');
+                $passedIndex[$key] = $log['date'] ?? '';
+            }
+        }
+    }
+    
+    // Збираємо failed записи
+    $failedLogs = $redis->lRange($statsPrefix . 'log:failed', 0, 99);
+    if ($failedLogs) {
+        foreach ($failedLogs as $log) {
+            if (is_array($log) && isset($log['ip'])) {
+                $key = $log['ip'] . '|' . ($log['ua'] ?? '');
+                $failedIndex[$key] = $log['date'] ?? '';
+            }
+        }
+    }
+    
+    // Збираємо expired записи
+    $expiredLogs = $redis->lRange($statsPrefix . 'log:expired', 0, 99);
+    if ($expiredLogs) {
+        foreach ($expiredLogs as $log) {
+            if (is_array($log) && isset($log['ip'])) {
+                $key = $log['ip'] . '|' . ($log['ua'] ?? '');
+                $expiredIndex[$key] = $log['date'] ?? '';
+            }
+        }
+    }
+    
     // Останні логи (останні 20 записів для кожного типу)
     $logTypes = ['shown', 'passed', 'failed', 'expired'];
     foreach ($logTypes as $type) {
@@ -1045,6 +1089,43 @@ function getJSChallengeStats($redis, $prefix) {
                     if (isset($log['ip']) && filter_var($log['ip'], FILTER_VALIDATE_IP)) {
                         $log['rdns'] = resolveRDNS($log['ip'], $redis);
                     }
+                    
+                    // v1.5: Для shown записів визначаємо статус
+                    if ($type === 'shown' && isset($log['ip'])) {
+                        $key = $log['ip'] . '|' . ($log['ua'] ?? '');
+                        $shownTime = strtotime($log['date'] ?? 'now');
+                        
+                        // Перевіряємо passed (пріоритет)
+                        if (isset($passedIndex[$key])) {
+                            $passedTime = strtotime($passedIndex[$key]);
+                            // Passed має бути після shown і не більше 10 хвилин
+                            if ($passedTime >= $shownTime && ($passedTime - $shownTime) < 600) {
+                                $log['status'] = 'passed';
+                            }
+                        }
+                        
+                        // Перевіряємо failed
+                        if (!isset($log['status']) && isset($failedIndex[$key])) {
+                            $failedTime = strtotime($failedIndex[$key]);
+                            if ($failedTime >= $shownTime && ($failedTime - $shownTime) < 600) {
+                                $log['status'] = 'failed';
+                            }
+                        }
+                        
+                        // Перевіряємо expired
+                        if (!isset($log['status']) && isset($expiredIndex[$key])) {
+                            $expiredTime = strtotime($expiredIndex[$key]);
+                            if ($expiredTime >= $shownTime && ($expiredTime - $shownTime) < 600) {
+                                $log['status'] = 'expired';
+                            }
+                        }
+                        
+                        // Якщо статус не визначено - pending
+                        if (!isset($log['status'])) {
+                            $log['status'] = 'pending';
+                        }
+                    }
+                    
                     $stats['recent_logs'][$type][] = $log;
                 }
             }
@@ -3043,10 +3124,11 @@ if (isLoggedIn() && $redis) {
                                         <th style="width: 130px;">IP</th>
                                         <th style="width: 200px;">rDNS</th>
                                         <th>User Agent</th>
+                                        <th style="width: 70px; text-align: center;">Статус</th>
                                     </tr>
                                 </thead>
                                 <tbody id="jsc-log-body-shown">
-                                    <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Немає даних</td></tr>
+                                    <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">Немає даних</td></tr>
                                 </tbody>
                             </table>
                             
@@ -4115,8 +4197,11 @@ if (isLoggedIn() && $redis) {
             const tbody = document.getElementById(`jsc-log-body-${type}`);
             const logs = logsData[type] || [];
             
+            // v1.5: Для shown потрібно 5 колонок, для інших - 4
+            const colSpan = type === 'shown' ? 5 : 4;
+            
             if (logs.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Немає даних</td></tr>';
+                tbody.innerHTML = `<tr><td colspan="${colSpan}" style="text-align: center; color: var(--text-muted);">Немає даних</td></tr>`;
                 return;
             }
             
@@ -4127,12 +4212,28 @@ if (isLoggedIn() && $redis) {
                     ? `<span style="font-size: 0.8rem; color: var(--accent-success);" title="${escapeHtml(rdns)}">${escapeHtml(rdns.length > 55 ? rdns.substring(0, 55) + '...' : rdns)}</span>`
                     : '<span style="color: var(--text-muted); font-size: 0.8rem;">—</span>';
                 
+                // v1.5: Статус для shown
+                let statusHtml = '';
+                if (type === 'shown') {
+                    const status = log.status || 'pending';
+                    if (status === 'passed') {
+                        statusHtml = '<td style="text-align: center;"><span style="color: var(--accent-success); font-size: 1.2rem;" title="Пройдено">✓</span></td>';
+                    } else if (status === 'failed') {
+                        statusHtml = '<td style="text-align: center;"><span style="color: var(--accent-danger); font-size: 1.2rem;" title="Провалено">✗</span></td>';
+                    } else if (status === 'expired') {
+                        statusHtml = '<td style="text-align: center;"><span style="color: var(--accent-warning); font-size: 1.1rem;" title="Протерміновано">⏱</span></td>';
+                    } else {
+                        statusHtml = '<td style="text-align: center;"><span style="color: var(--text-muted); font-size: 1rem;" title="Очікування">⋯</span></td>';
+                    }
+                }
+                
                 return `
                     <tr>
                         <td style="font-family: var(--font-mono); font-size: 0.85rem;">${escapeHtml(log.date || '-')}</td>
                         <td style="font-family: var(--font-mono); color: var(--accent-secondary);">${escapeHtml(log.ip || '-')}</td>
                         <td>${rdnsHtml}</td>
-                        <td style="font-size: 0.85rem; max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(log.ua || '-')}">${escapeHtml(log.ua || '-')}</td>
+                        <td style="font-size: 0.8rem; word-break: break-all; max-width: 450px;">${escapeHtml(log.ua || '-')}</td>
+                        ${statusHtml}
                     </tr>
                 `;
             }).join('');
