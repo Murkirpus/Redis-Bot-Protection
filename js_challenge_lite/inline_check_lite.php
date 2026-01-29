@@ -12,6 +12,7 @@
  * 🔥 Множник лімітів для AJAX запитів ($AJAX_RATE_LIMIT_MULTIPLIER)
  * 🔥 Функція _should_skip_rate_limit() для централізованої перевірки
  * 🔥 Підтримка Content-Type та Accept заголовків для визначення AJAX
+ * 🔥 Додано PetalBot (Huawei Petal Search) до білого списку пошукових систем
  * 
  * ПРОБЛЕМА ЯКУ ВИРІШЕНО:
  * - При інтенсивній роботі в адмінці (багато AJAX запитів) Rate Limit блокував адміна
@@ -297,8 +298,7 @@ $ADMIN_URL_WHITELIST = array(
     // ========================================================================
     // ШЛЯХИ АДМІНКИ (часткове співпадіння)
     // ========================================================================
-    'redis-bot_admin.php',
-	'/admin',                    // DLE та багато інших CMS
+    '/admin',                    // DLE та багато інших CMS
     '/engine/ajax',              // DLE AJAX запити
     '/engine/admin',             // DLE адмінка (engine)
     '/engine/inc/',              // DLE includes (де можуть бути AJAX обробники)
@@ -735,6 +735,7 @@ $SEARCH_ENGINE_IP_RANGES = array(
     '2620:1ec:8f8::/46',
     '2a01:111::/32',
     // BAIDU IPv4
+    '116.179.0.0/16',
     '119.63.192.0/21',
     '123.125.71.0/24',
     '180.76.0.0/16',
@@ -767,6 +768,8 @@ $SEARCH_ENGINE_IP_RANGES = array(
     // APPLE IPv6
     '2620:149::/32',
     '2a01:b740::/32',
+    // PETALBOT (HUAWEI) IPv4 - https://aspiegel.com/petalbot
+    '114.119.128.0/17',          // Основной диапазон PetalBot
 );
 
 // ============================================================================
@@ -833,7 +836,8 @@ function _is_seo_bot($userAgent) {
     $seoBots = array(
         'googlebot', 'yandex', 'bingbot', 'duckduckbot',
         'facebookexternalhit', 'twitterbot', 'pinterest',
-        'linkedinbot', 'whatsapp', 'telegram', 'viber'
+        'linkedinbot', 'whatsapp', 'telegram', 'viber',
+        'petalbot'  // v3.8.4: Huawei Petal Search
     );
     
     foreach ($seoBots as $bot) {
@@ -1215,7 +1219,7 @@ function _detect_engine_by_cidr($cidr) {
     }
     
     // Baidu
-    if (preg_match('/^(119\.63|123\.125|180\.76|220\.181)/', $cidr)) {
+    if (preg_match('/^(116\.179|119\.63|123\.125|180\.76|220\.181)/', $cidr)) {
         return 'Baidu';
     }
     
@@ -1237,6 +1241,11 @@ function _detect_engine_by_cidr($cidr) {
     // Yahoo
     if (preg_match('/^(67\.195|72\.30|74\.6|98\.136)/', $cidr)) {
         return 'Yahoo';
+    }
+    
+    // PetalBot (Huawei)
+    if (preg_match('/^114\.119\./', $cidr)) {
+        return 'PetalBot';
     }
     
     return 'Other';
@@ -1272,6 +1281,8 @@ function _log_search_engine_visit($redis, $ip, $method, $engine = null) {
                     $engine = 'Facebook';
                 } elseif (strpos($ua, 'applebot') !== false) {
                     $engine = 'Apple';
+                } elseif (strpos($ua, 'petalbot') !== false) {
+                    $engine = 'PetalBot';
                 } else {
                     $engine = 'Other';
                 }
@@ -1503,7 +1514,7 @@ function _jsc_logStats($type, $ip = null) {
         $logEntry = array(
             'date' => date('Y-m-d H:i:s'),
             'ip' => $ip,
-            'ua' => isset($_SERVER['HTTP_USER_AGENT']) ? substr($_SERVER['HTTP_USER_AGENT'], 0, 100) : '-',
+            'ua' => isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '-',
         );
         
         $logKey = $prefix . 'log:' . $type;
@@ -2864,8 +2875,8 @@ class SimpleBotProtection {
             'rdns_patterns' => array('.crawl.baidu.com', '.baidu.com'),
             'skip_forward_verification' => false,
             'ip_ranges' => array(
-                '119.63.192.0/21', '123.125.71.0/24', '180.76.0.0/16',
-                '220.181.0.0/16',
+                '116.179.0.0/16', '119.63.192.0/21', '123.125.71.0/24', 
+                '180.76.0.0/16', '220.181.0.0/16',
             )
         ),
         
@@ -3096,6 +3107,16 @@ class SimpleBotProtection {
             'rdns_patterns' => array(),
             'skip_forward_verification' => true,
             'ip_ranges' => array()
+        ),
+        
+        // v3.8.4: PETALBOT (HUAWEI PETAL SEARCH)
+        'petalbot' => array(
+            'user_agent_patterns' => array('petalbot'),
+            'rdns_patterns' => array('.petalsearch.com', '.aspiegel.com'),
+            'skip_forward_verification' => true,
+            'ip_ranges' => array(
+                '114.119.128.0/17',
+            )
         ),
     );
     
