@@ -1,6 +1,23 @@
 <?php
 /**
  * ============================================================================
+ * JS CHALLENGE PAGES v3.8.6 - VISIBILITY CHANGE SUPPORT
+ * ============================================================================
+ * 
+ * НОВЕ v3.8.6:
+ * 🔥 Автоматичне перезавантаження сторінки при активації вкладки браузера
+ * 🔥 Вирішує проблему з неактивними вкладками які не проходять перевірку
+ * 🔥 Флаг challengeComplete запобігає зайвим перезавантаженням
+ * 
+ * ПРОБЛЕМА ЯКУ ВИРІШЕНО:
+ * - Браузери throttle-ять JavaScript в неактивних вкладках
+ * - Timeout спрацьовував хоча реальних обчислень майже не було
+ * - Тепер при переключенні на вкладку сторінка перезавантажується
+ * 
+ * ============================================================================
+ */
+/**
+ * ============================================================================
  * Redis Bot Protection - SEO ОПТИМІЗОВАНА ВЕРСІЯ v3.8.5 (JS CHALLENGE 1.5 DAYS)
  * ============================================================================
  * 
@@ -285,7 +302,9 @@ $ADMIN_IP_WHITELIST = array(
     // ДОДАЙ СВОЇ IP ТУТ:
     // ========================================================================
     // '212.84.160.58/32',           // Приклад: Домашній IP
-    // '212.84.160.58',              // Те саме без /32
+     '185.109.48.79',
+	 '2a03:3f40:2:e:0:4:0:2',
+	 '2a03:3f40:2:e:0:4:0:3',
     // '10.0.0.0/8',                 // Приклад: Внутрішня мережа
     // '2a00:1e20:11:9108::/64',     // Приклад: IPv6
 );
@@ -314,6 +333,7 @@ $ADMIN_URL_WHITELIST = array(
     // ШЛЯХИ АДМІНКИ (часткове співпадіння)
     // ========================================================================
     'redis-bot_admin.php',
+	'iptables.php',
 	'/admin',                    // DLE та багато інших CMS
     '/engine/ajax',              // DLE AJAX запити
     '/engine/admin',             // DLE адмінка (engine)
@@ -722,30 +742,35 @@ $SEARCH_ENGINE_IP_RANGES = array(
     '213.180.192.0/19',
     // YANDEX IPv6
     '2a02:6b8::/32',
-    // BING/MICROSOFT IPv4
-    '13.66.0.0/16',
-    '13.67.0.0/16',
-    '13.68.0.0/15',
-    '13.104.0.0/14',
-    '20.33.0.0/16',
-    '20.40.0.0/13',
-    '40.74.0.0/15',
-    '40.76.0.0/14',
-    '40.80.0.0/12',
-    '52.96.0.0/12',
-    '52.160.0.0/11',
-    '52.224.0.0/11',
-    '65.52.0.0/14',
-    '65.55.0.0/16',
-    '104.40.0.0/13',
-    '104.208.0.0/13',
-    '131.253.0.0/16',
-    '157.55.0.0/16',
-    '157.56.0.0/14',
-    '168.61.0.0/16',
-    '191.232.0.0/13',
-    '199.30.16.0/20',
-    '207.46.0.0/16',
+    // BINGBOT IPv4 - OFFICIAL (2024-01-03)
+	'157.55.39.0/24',
+	'207.46.13.0/24',
+	'40.77.167.0/24',
+	'13.66.139.0/24',
+	'13.66.144.0/24',
+	'52.167.144.0/24',
+	'13.67.10.16/28',
+	'13.69.66.240/28',
+	'13.71.172.224/28',
+	'139.217.52.0/28',
+	'191.233.204.224/28',
+	'20.36.108.32/28',
+	'20.43.120.16/28',
+	'40.79.131.208/28',
+	'40.79.186.176/28',
+	'52.231.148.0/28',
+	'20.79.107.240/28',
+	'51.105.67.0/28',
+	'20.125.163.80/28',
+	'40.77.188.0/22',
+	'65.55.210.0/24',
+	'199.30.24.0/23',
+	'40.77.202.0/24',
+	'40.77.139.0/25',
+	'20.74.197.0/28',
+	'20.15.133.160/27',
+	'40.77.177.0/24',
+	'40.77.178.0/23',
     // BING IPv6
     '2620:1ec:c::0/40',
     '2620:1ec:8f8::/46',
@@ -1621,7 +1646,7 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
 }
 
 /**
- * v3.8.0: Cloudflare-style Proof of Work сторінка
+ * v3.8.6: Cloudflare-style Proof of Work сторінка
  */
 function _jsc_showCloudflarePoWPage($challengeJson, $redirectJson) {
     echo '<!DOCTYPE html>
@@ -1697,6 +1722,10 @@ function _jsc_showCloudflarePoWPage($challengeJson, $redirectJson) {
     var checkmarkEl = document.getElementById("checkmark");
     var titleEl = document.getElementById("title");
     var subtitleEl = document.getElementById("subtitle");
+    
+    // v3.8.6: Флаг завершення перевірки
+    var challengeComplete = false;
+    var challengeStarted = false;
 
     function updateProgress(percent, message) {
         progressBar.style.width = percent + "%";
@@ -1745,7 +1774,7 @@ function _jsc_showCloudflarePoWPage($challengeJson, $redirectJson) {
         try {
             var key = "pow_attempts_" + challengeData.id.substr(0, 8);
             var attempts = parseInt(sessionStorage.getItem(key) || "0", 10);
-            if (attempts >= 3) return false;
+            if (attempts >= 5) return false;
             sessionStorage.setItem(key, (attempts + 1).toString());
             return true;
         } catch (e) {
@@ -1754,13 +1783,17 @@ function _jsc_showCloudflarePoWPage($challengeJson, $redirectJson) {
     }
 
     async function performChallenge() {
+        // Запобігаємо повторному запуску
+        if (challengeStarted || challengeComplete) return;
+        challengeStarted = true;
+        
         try {
             updateProgress(5, "Анализ окружения...");
             await new Promise(function(r) { setTimeout(r, 400); });
             
             // Перевірка циклу
             if (!checkLoopProtection()) {
-                showError("<br>Обнаружен цикл проверки. Пожалуйста, включите cookies и обновите страницу.");
+                showError("<br>Обнаружен цикл проверки. Пожалуйста, очистите cookies браузера и обновите страницу.");
                 return;
             }
             
@@ -1785,6 +1818,15 @@ function _jsc_showCloudflarePoWPage($challengeJson, $redirectJson) {
             var hashesPerUpdate = 1000;
             
             while (true) {
+                // v3.8.6: Перевірка чи вкладка активна
+                if (document.hidden) {
+                    // Вкладка неактивна - чекаємо
+                    await new Promise(function(r) { setTimeout(r, 100); });
+                    // Не рахуємо час коли вкладка неактивна
+                    startTime += 100;
+                    continue;
+                }
+                
                 hash = await sha256(challengeData.id + nonce);
                 
                 if (hash.startsWith(target)) {
@@ -1793,7 +1835,7 @@ function _jsc_showCloudflarePoWPage($challengeJson, $redirectJson) {
                 
                 nonce++;
                 
-                // Оновлення прогресу кожні 500 ітерацій
+                // Оновлення прогресу кожні 1000 ітерацій
                 if (nonce % hashesPerUpdate === 0) {
                     var elapsed = Date.now() - startTime;
                     var hashRate = Math.round(nonce / (elapsed / 1000));
@@ -1830,6 +1872,9 @@ function _jsc_showCloudflarePoWPage($challengeJson, $redirectJson) {
                     try {
                         var result = JSON.parse(xhr.responseText);
                         if (result.success) {
+                            // v3.8.6: Позначаємо що перевірка завершена
+                            challengeComplete = true;
+                            
                             updateProgress(100, "Проверка завершена!");
                             showSuccess();
                             
@@ -1869,8 +1914,28 @@ function _jsc_showCloudflarePoWPage($challengeJson, $redirectJson) {
         }
     }
 
+    // v3.8.6: Перезавантаження сторінки при активації вкладки
+    document.addEventListener("visibilitychange", function() {
+        if (document.visibilityState === "visible" && !challengeComplete && !challengeStarted) {
+            // Вкладка стала активною і перевірка ще не почалась - запускаємо
+            setTimeout(performChallenge, 300);
+        } else if (document.visibilityState === "visible" && !challengeComplete && challengeStarted) {
+            // Перевірка вже почалась але не завершена - перезавантажуємо
+            // (можливо timeout вже спрацював або щось пішло не так)
+            setTimeout(function() {
+                if (!challengeComplete) {
+                    location.reload();
+                }
+            }, 1000);
+        }
+    });
+
     window.addEventListener("load", function() {
-        setTimeout(performChallenge, 500);
+        // Запускаємо тільки якщо вкладка активна
+        if (!document.hidden) {
+            setTimeout(performChallenge, 500);
+        }
+        // Якщо вкладка неактивна - visibilitychange handler запустить пізніше
     });
 </script>
 </body>
@@ -1878,7 +1943,7 @@ function _jsc_showCloudflarePoWPage($challengeJson, $redirectJson) {
 }
 
 /**
- * v3.8.0: SMF-style Challenge сторінка (оригінальний стиль з PoW підтримкою)
+ * v3.8.6: SMF-style Challenge сторінка (оригінальний стиль з PoW підтримкою)
  */
 function _jsc_showSMFChallengePage($challengeJson, $redirectJson, $isPow = false) {
     echo '<!DOCTYPE html>
@@ -2050,7 +2115,10 @@ function _jsc_showSMFChallengePage($challengeJson, $redirectJson, $isPow = false
         var statusEl = document.getElementById("status");
         var statsEl = document.getElementById("stats");
         var errorEl = document.getElementById("error");
-        var loopProtection = 0;
+        
+        // v3.8.6: Флаги стану
+        var challengeComplete = false;
+        var challengeStarted = false;
         
         function updateProgress(percent, message) {
             progressBar.style.width = percent + "%";
@@ -2083,13 +2151,13 @@ function _jsc_showSMFChallengePage($challengeJson, $redirectJson, $isPow = false
             try {
                 var key = "jsc_attempts_" + challengeData.id.substr(0, 8);
                 var attempts = parseInt(sessionStorage.getItem(key) || "0", 10);
-                if (attempts >= 3) return false;
+                if (attempts >= 5) return false;
                 sessionStorage.setItem(key, (attempts + 1).toString());
                 return true;
             } catch (e) {
                 var url = new URL(window.location.href);
                 var attempts = parseInt(url.searchParams.get("_jsc_retry") || "0", 10);
-                return attempts < 3;
+                return attempts < 5;
             }
         }
         
@@ -2103,13 +2171,17 @@ function _jsc_showSMFChallengePage($challengeJson, $redirectJson, $isPow = false
         }
         
         async function performChallenge() {
+            // v3.8.6: Запобігаємо повторному запуску
+            if (challengeStarted || challengeComplete) return;
+            challengeStarted = true;
+            
             try {
                 updateProgress(10, "Проверка браузера...");
                 await sleep(300);
                 
                 if (!checkLoopProtection()) {
                     showError("<strong>🔄 Обнаружен цикл проверки</strong><br><br>" +
-                        "Пожалуйста, включите cookies и обновите страницу (F5)");
+                        "Пожалуйста, очистите cookies браузера и обновите страницу (F5)");
                     return;
                 }
                 
@@ -2138,6 +2210,13 @@ function _jsc_showSMFChallengePage($challengeJson, $redirectJson, $isPow = false
                     var timeout = (challengeData.timeout || 60) * 1000;
                     
                     while (true) {
+                        // v3.8.6: Перевірка чи вкладка активна
+                        if (document.hidden) {
+                            await sleep(100);
+                            startTime += 100; // Не рахуємо час коли вкладка неактивна
+                            continue;
+                        }
+                        
                         hash = await sha256(challengeData.id + nonce);
                         if (hash.startsWith(target)) break;
                         nonce++;
@@ -2177,6 +2256,9 @@ function _jsc_showSMFChallengePage($challengeJson, $redirectJson, $isPow = false
                         try {
                             var result = JSON.parse(xhr.responseText);
                             if (result.success) {
+                                // v3.8.6: Позначаємо що перевірка завершена
+                                challengeComplete = true;
+                                
                                 updateProgress(100, "Проверка завершена!");
                                 statusEl.className = "status success";
                                 document.getElementById("spinner").style.display = "none";
@@ -2224,8 +2306,26 @@ function _jsc_showSMFChallengePage($challengeJson, $redirectJson, $isPow = false
             }
         }
         
+        // v3.8.6: Перезавантаження сторінки при активації вкладки
+        document.addEventListener("visibilitychange", function() {
+            if (document.visibilityState === "visible" && !challengeComplete && !challengeStarted) {
+                // Вкладка стала активною і перевірка ще не почалась
+                setTimeout(performChallenge, 300);
+            } else if (document.visibilityState === "visible" && !challengeComplete && challengeStarted) {
+                // Перевірка вже почалась але не завершена - перезавантажуємо
+                setTimeout(function() {
+                    if (!challengeComplete) {
+                        location.reload();
+                    }
+                }, 1000);
+            }
+        });
+        
         window.addEventListener("load", function() {
-            setTimeout(performChallenge, 1000);
+            // Запускаємо тільки якщо вкладка активна
+            if (!document.hidden) {
+                setTimeout(performChallenge, 1000);
+            }
         });
     </script>
 </body>
