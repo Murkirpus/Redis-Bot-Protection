@@ -1,6 +1,29 @@
 <?php
 /**
  * ============================================================================
+ * JS CHALLENGE PAGES v3.8.8 - UNIFIED API CONFIG + AUTO RELOAD
+ * ============================================================================
+ * 
+ * НОВЕ v3.8.8:
+ * 🔥 Єдині налаштування API в глобальному масиві $_API_CONFIG
+ * 🔥 Прибрано дублювання налаштувань API (було в 2 місцях)
+ * 🔥 Автоматичне оновлення сторінки при помилці "Challenge expired"
+ * 🔥 Вирішує проблему з неактивними вкладками браузера
+ * 
+ * НАЛАШТУВАННЯ API (ОДНЕ МІСЦЕ!):
+ * $_API_CONFIG = array(
+ *     'enabled' => true,
+ *     'url' => 'https://your-api-url.com/iptables.php',
+ *     'api_key' => 'YOUR_API_KEY',
+ *     'timeout' => 5,
+ *     'verify_ssl' => true,
+ *     // ... інші налаштування
+ * );
+ * 
+ * ============================================================================
+ */
+/**
+ * ============================================================================
  * JS CHALLENGE PAGES v3.8.7 - HAMMER PROTECTION (API BLOCK)
  * ============================================================================
  * 
@@ -887,6 +910,22 @@ $_HAMMER_PROTECTION = array(
 );
 
 // ============================================================================
+// v3.8.8: ЄДИНІ НАЛАШТУВАННЯ API (використовуються скрізь)
+// ============================================================================
+
+$_API_CONFIG = array(
+    'enabled' => false,                                                              // Увімкнути API
+    'url' => 'https://blog.dj-x.info/redis-bot_protection/API/iptables.php',       // URL API
+    'api_key' => '12345',                                                       // API ключ
+    'timeout' => 5,                                                                 // Таймаут запиту (секунди)
+    'retry_on_failure' => 2,                                                        // Кількість повторів при помилці
+    'verify_ssl' => true,                                                           // Перевіряти SSL сертифікат
+    'user_agent' => 'BotProtection/3.8.8',                                         // User-Agent для API запитів
+    'block_on_api' => false,                                                         // Блокувати через API
+    'block_on_redis' => true,                                                       // Блокувати в Redis
+);
+
+// ============================================================================
 // ШВИДКА ПЕРЕВІРКА ВЛАСНИХ USER AGENTS (ПЕРЕД JS CHALLENGE!)
 // ============================================================================
 
@@ -1098,17 +1137,21 @@ function _track_page_hammer($ip, $pageType = 'challenge') {
 
 /**
  * v3.8.7: Виклик API для блокування IP
+ * v3.8.8: Використовує глобальні налаштування $_API_CONFIG
  */
 function _hammer_call_api($ip, $reason = 'hammer_attack') {
-    // Використовуємо стандартні налаштування API
-    $apiUrl = 'https://blog.dj-x.info/redis-bot_protection/API/iptables.php';
-    $apiKey = '12345';
+    global $_API_CONFIG;
     
-    $url = $apiUrl .
+    // Перевіряємо чи API увімкнено
+    if (empty($_API_CONFIG['enabled']) || empty($_API_CONFIG['block_on_api'])) {
+        return array('status' => 'skipped', 'message' => 'API disabled');
+    }
+    
+    $url = $_API_CONFIG['url'] .
            '?action=block' .
            '&ip=' . urlencode($ip) .
            '&api=1' .
-           '&api_key=' . urlencode($apiKey) .
+           '&api_key=' . urlencode($_API_CONFIG['api_key']) .
            '&reason=' . urlencode($reason);
     
     try {
@@ -1120,12 +1163,12 @@ function _hammer_call_api($ip, $reason = 'hammer_attack') {
         curl_setopt_array($ch, array(
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 5,
+            CURLOPT_TIMEOUT => $_API_CONFIG['timeout'],
             CURLOPT_CONNECTTIMEOUT => 3,
             CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_USERAGENT => 'BotProtection/3.8.7-Hammer',
+            CURLOPT_SSL_VERIFYPEER => $_API_CONFIG['verify_ssl'],
+            CURLOPT_SSL_VERIFYHOST => $_API_CONFIG['verify_ssl'] ? 2 : 0,
+            CURLOPT_USERAGENT => $_API_CONFIG['user_agent'] . '-Hammer',
             CURLOPT_HTTPHEADER => array(
                 'Accept: application/json',
                 'Cache-Control: no-cache'
@@ -2050,6 +2093,18 @@ function _jsc_showCloudflarePoWPage($challengeJson, $redirectJson) {
     }
 
     function showError(msg) {
+        // v3.8.8: Автоматичне оновлення сторінки при "Challenge expired"
+        if (msg && msg.toLowerCase().indexOf("expired") !== -1) {
+            errorEl.innerHTML = "<strong>⏰ Время проверки истекло</strong><br>Страница автоматически обновится через 3 секунды...";
+            errorEl.style.display = "block";
+            spinnerEl.style.display = "none";
+            statusEl.textContent = "Обновление страницы...";
+            statsEl.textContent = "";
+            setTimeout(function() {
+                location.reload();
+            }, 3000);
+            return;
+        }
         errorEl.innerHTML = "<strong>⚠️ Ошибка проверки</strong>" + msg;
         errorEl.style.display = "block";
         spinnerEl.style.display = "none";
@@ -2443,6 +2498,17 @@ function _jsc_showSMFChallengePage($challengeJson, $redirectJson, $isPow = false
         }
         
         function showError(message) {
+            // v3.8.8: Автоматичне оновлення сторінки при "Challenge expired"
+            if (message && message.toLowerCase().indexOf("expired") !== -1) {
+                errorEl.innerHTML = "⏰ Время проверки истекло<br>Страница автоматически обновится через 3 секунды...";
+                errorEl.style.display = "block";
+                statusEl.textContent = "Обновление страницы...";
+                document.getElementById("spinner").style.display = "none";
+                setTimeout(function() {
+                    location.reload();
+                }, 3000);
+                return;
+            }
             errorEl.innerHTML = message;
             errorEl.style.display = "block";
             statusEl.textContent = "Ошибка проверки";
@@ -3091,18 +3157,8 @@ class SimpleBotProtection {
         'tracking_window' => 3600,
     );
     
-    // Налаштування API
-    private $apiSettings = array(
-        'enabled' => false,
-        'url' => 'https://blog.dj-x.info/redis-bot_protection/API/iptables.php',
-        'api_key' => '12345',
-        'timeout' => 5,
-        'retry_on_failure' => 2,
-        'verify_ssl' => true,
-        'user_agent' => 'BotProtection/3.8.7',
-        'block_on_api' => false,
-        'block_on_redis' => true,
-    );
+    // Налаштування API (ініціалізуються з глобального $_API_CONFIG в конструкторі)
+    private $apiSettings = array();
     
     // ============================================================================
     // ЗАХИСТ ВІД БОТІВ БЕЗ COOKIES v1.0 (2026-01-15)
@@ -3584,9 +3640,14 @@ class SimpleBotProtection {
     private $customUserAgents = array();
     
     public function __construct() {
-        global $CUSTOM_USER_AGENTS;
+        global $CUSTOM_USER_AGENTS, $_API_CONFIG;
+        
         // Завантажуємо власні UA з глобальної конфігурації
         $this->customUserAgents = $CUSTOM_USER_AGENTS;
+        
+        // v3.8.8: Завантажуємо налаштування API з глобальної конфігурації
+        $this->apiSettings = $_API_CONFIG;
+        
         $this->connectRedis();
     }
     
