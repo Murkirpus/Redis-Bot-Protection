@@ -3093,14 +3093,14 @@ class SimpleBotProtection {
     
     // Налаштування API
     private $apiSettings = array(
-        'enabled' => true,
+        'enabled' => false,
         'url' => 'https://blog.dj-x.info/redis-bot_protection/API/iptables.php',
-        'api_key' => 'Asd123456',
+        'api_key' => '12345',
         'timeout' => 5,
         'retry_on_failure' => 2,
         'verify_ssl' => true,
         'user_agent' => 'BotProtection/3.8.7',
-        'block_on_api' => true,
+        'block_on_api' => false,
         'block_on_redis' => true,
     );
     
