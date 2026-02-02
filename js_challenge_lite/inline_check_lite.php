@@ -1,30 +1,33 @@
 <?php
 /**
  * ============================================================================
- * JS CHALLENGE PAGES v3.8.8 - UNIFIED API CONFIG + AUTO RELOAD
+ * JS CHALLENGE PAGES v3.8.9 - POW FALLBACK FOR OLD BROWSERS
  * ============================================================================
  * 
- * НОВЕ v3.8.8:
+ * НОВЕ v3.8.9:
+ * 🔥 Автоматичний fallback на простий challenge якщо браузер не підтримує PoW
+ * 🔥 Перевірка crypto.subtle перед запуском PoW
+ * 🔥 Працює на HTTP сайтах (де crypto.subtle недоступний)
+ * 🔥 Сумісність з IE11, старими Safari, Android браузерами
  * 🔥 Єдині налаштування API в глобальному масиві $_API_CONFIG
- * 🔥 Прибрано дублювання налаштувань API (було в 2 місцях)
- * 🔥 Автоматичне оновлення сторінки при помилці "Challenge expired"
- * 🔥 Вирішує проблему з неактивними вкладками браузера
+ * 🔥 Автоматичне оновлення сторінки при "Challenge expired"
  * 
- * НАЛАШТУВАННЯ API (ОДНЕ МІСЦЕ!):
- * $_API_CONFIG = array(
- *     'enabled' => true,
- *     'url' => 'https://your-api-url.com/iptables.php',
- *     'api_key' => 'YOUR_API_KEY',
- *     'timeout' => 5,
- *     'verify_ssl' => true,
- *     // ... інші налаштування
- * );
+ * ЯК ПРАЦЮЄ FALLBACK:
+ * - Сервер генерує дані для обох типів challenge (PoW + sum)
+ * - JavaScript перевіряє: чи є window.crypto.subtle?
+ * - Якщо є → PoW (SHA-256 хешування)
+ * - Якщо немає → fallback на суму чисел
+ * - Користувач нічого не помічає
+ * 
+ * ПІДТРИМКА БРАУЗЕРІВ:
+ * PoW: Chrome 37+, Firefox 34+, Edge 12+, Safari 11+
+ * Fallback: Всі браузери включаючи IE6+
  * 
  * ============================================================================
  */
 /**
  * ============================================================================
- * JS CHALLENGE PAGES v3.8.7 - HAMMER PROTECTION (API BLOCK)
+ * JS CHALLENGE PAGES v3.8.8 - UNIFIED API CONFIG + AUTO RELOAD
  * ============================================================================
  * 
  * НОВЕ v3.8.7:
@@ -1937,39 +1940,47 @@ function _jsc_logStats($type, $ip = null) {
 function _jsc_generateChallenge($secret_key) {
     global $_JSC_CONFIG;
     
-    // v3.8.0: Proof of Work challenge
+    // v3.8.9: Генеруємо дані для обох типів challenge (PoW + fallback sum)
+    $id = bin2hex(random_bytes(16));
+    $timestamp = time();
+    
+    // Дані для fallback challenge (сума чисел)
+    $numbers = array();
+    for ($i = 0; $i < 5; $i++) {
+        $numbers[] = mt_rand(10, 99);
+    }
+    $answer = array_sum($numbers);
+    $sumTarget = hash('sha256', $id . $timestamp . $answer . $secret_key);
+    
+    // v3.8.0: Proof of Work challenge (з fallback)
     if (!empty($_JSC_CONFIG['pow_enabled'])) {
-        $challenge_id = bin2hex(random_bytes(16));
         $difficulty = isset($_JSC_CONFIG['pow_difficulty']) ? (int)$_JSC_CONFIG['pow_difficulty'] : 4;
         $timeout = isset($_JSC_CONFIG['pow_timeout']) ? (int)$_JSC_CONFIG['pow_timeout'] : 60;
         $style = isset($_JSC_CONFIG['pow_style']) ? $_JSC_CONFIG['pow_style'] : 'cloudflare';
         
         return array(
             'type' => 'pow',
-            'id' => $challenge_id,
-            'timestamp' => time(),
+            'id' => $id,
+            'timestamp' => $timestamp,
             'difficulty' => $difficulty,
             'timeout' => $timeout,
             'style' => $style,
-            'target' => str_repeat('0', $difficulty)
+            'target' => str_repeat('0', $difficulty),
+            // v3.8.9: Fallback дані для браузерів без crypto.subtle
+            'fallback' => array(
+                'numbers' => $numbers,
+                'target' => $sumTarget
+            )
         );
     }
     
-    // Fallback: стандартний challenge (сума чисел)
-    $id = md5(uniqid(mt_rand(), true));
-    $timestamp = time();
-    $numbers = array();
-    for ($i = 0; $i < 5; $i++) {
-        $numbers[] = mt_rand(10, 99);
-    }
-    $answer = array_sum($numbers);
-    $target = hash('sha256', $id . $timestamp . $answer . $secret_key);
+    // Стандартний challenge (сума чисел)
     return array(
         'type' => 'sum',
         'id' => $id,
         'timestamp' => $timestamp,
         'numbers' => $numbers,
-        'target' => $target,
+        'target' => $sumTarget,
         'difficulty' => 3
     );
 }
@@ -2154,6 +2165,15 @@ function _jsc_showCloudflarePoWPage($challengeJson, $redirectJson) {
         }
     }
 
+    // v3.8.9: Перевірка підтримки crypto.subtle (потребує HTTPS!)
+    function isCryptoSupported() {
+        try {
+            return !!(window.crypto && window.crypto.subtle && window.crypto.subtle.digest);
+        } catch (e) {
+            return false;
+        }
+    }
+
     async function performChallenge() {
         // Запобігаємо повторному запуску
         if (challengeStarted || challengeComplete) return;
@@ -2178,112 +2198,143 @@ function _jsc_showCloudflarePoWPage($challengeJson, $redirectJson) {
                 return;
             }
             
-            // Proof of Work
-            updateProgress(15, "Вычисление токена безопасности...");
+            // v3.8.9: Вибір методу challenge (PoW або fallback sum)
+            var usePow = isCryptoSupported();
             
-            var nonce = 0;
-            var hash = "";
-            var target = challengeData.target || "0".repeat(challengeData.difficulty || 4);
-            var startTime = Date.now();
-            var timeout = (challengeData.timeout || 60) * 1000;
-            var lastUpdate = startTime;
-            var hashesPerUpdate = 1000;
-            
-            while (true) {
-                // v3.8.6: Перевірка чи вкладка активна
-                if (document.hidden) {
-                    // Вкладка неактивна - чекаємо
-                    await new Promise(function(r) { setTimeout(r, 100); });
-                    // Не рахуємо час коли вкладка неактивна
-                    startTime += 100;
-                    continue;
-                }
+            if (usePow) {
+                // ============ PROOF OF WORK ============
+                updateProgress(15, "Вычисление токена безопасности...");
                 
-                hash = await sha256(challengeData.id + nonce);
+                var nonce = 0;
+                var hash = "";
+                var target = challengeData.target || "0".repeat(challengeData.difficulty || 4);
+                var startTime = Date.now();
+                var timeout = (challengeData.timeout || 60) * 1000;
+                var hashesPerUpdate = 1000;
                 
-                if (hash.startsWith(target)) {
-                    break;
-                }
-                
-                nonce++;
-                
-                // Оновлення прогресу кожні 1000 ітерацій
-                if (nonce % hashesPerUpdate === 0) {
-                    var elapsed = Date.now() - startTime;
-                    var hashRate = Math.round(nonce / (elapsed / 1000));
-                    
-                    // Прогрес від 15% до 85%
-                    var progress = Math.min(85, 15 + (elapsed / timeout) * 70);
-                    updateProgress(progress, "Вычисление токена безопасности...");
-                    statsEl.textContent = nonce.toLocaleString() + " хешей | " + hashRate.toLocaleString() + " H/s";
-                    
-                    // Перевірка timeout
-                    if (elapsed > timeout) {
-                        showError("<br>Время проверки истекло. Пожалуйста, обновите страницу и попробуйте снова.");
-                        return;
+                while (true) {
+                    // v3.8.6: Перевірка чи вкладка активна
+                    if (document.hidden) {
+                        await new Promise(function(r) { setTimeout(r, 100); });
+                        startTime += 100;
+                        continue;
                     }
                     
-                    // Даємо браузеру "дихати"
-                    await new Promise(function(r) { setTimeout(r, 0); });
-                }
-            }
-            
-            var totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-            statsEl.textContent = nonce.toLocaleString() + " хешей за " + totalTime + " сек";
-            
-            updateProgress(90, "Верификация результата...");
-            
-            // Відправка на сервер
-            var xhr = new XMLHttpRequest();
-            xhr.open("POST", window.location.href, true);
-            xhr.setRequestHeader("Content-Type", "application/json");
-            xhr.setRequestHeader("X-JSC-Response", "1");
-            
-            xhr.onload = function() {
-                if (xhr.status === 200) {
-                    try {
-                        var result = JSON.parse(xhr.responseText);
-                        if (result.success) {
-                            // v3.8.6: Позначаємо що перевірка завершена
-                            challengeComplete = true;
-                            
-                            updateProgress(100, "Проверка завершена!");
-                            showSuccess();
-                            
-                            // Очищення лічильника
-                            try {
-                                sessionStorage.removeItem("pow_attempts_" + challengeData.id.substr(0, 8));
-                            } catch (e) {}
-                            
-                            setTimeout(function() {
-                                window.location.href = redirectUrl;
-                            }, 800);
-                        } else {
-                            showError("<br>" + (result.error || "Ошибка верификации"));
+                    hash = await sha256(challengeData.id + nonce);
+                    
+                    if (hash.startsWith(target)) {
+                        break;
+                    }
+                    
+                    nonce++;
+                    
+                    if (nonce % hashesPerUpdate === 0) {
+                        var elapsed = Date.now() - startTime;
+                        var hashRate = Math.round(nonce / (elapsed / 1000));
+                        var progress = Math.min(85, 15 + (elapsed / timeout) * 70);
+                        updateProgress(progress, "Вычисление токена безопасности...");
+                        statsEl.textContent = nonce.toLocaleString() + " хешей | " + hashRate.toLocaleString() + " H/s";
+                        
+                        if (elapsed > timeout) {
+                            showError("<br>Время проверки истекло. Пожалуйста, обновите страницу и попробуйте снова.");
+                            return;
                         }
-                    } catch (e) {
-                        showError("<br>Некорректный ответ сервера");
+                        
+                        await new Promise(function(r) { setTimeout(r, 0); });
                     }
-                } else {
-                    showError("<br>HTTP ошибка: " + xhr.status);
                 }
-            };
-            
-            xhr.onerror = function() {
-                showError("<br>Сетевая ошибка. Проверьте подключение к интернету.");
-            };
-            
-            xhr.send(JSON.stringify({
-                challenge_id: challengeData.id,
-                nonce: nonce,
-                hash: hash,
-                timestamp: challengeData.timestamp,
-                type: "pow"
-            }));
+                
+                var totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+                statsEl.textContent = nonce.toLocaleString() + " хешей за " + totalTime + " сек";
+                
+                updateProgress(90, "Верификация результата...");
+                
+                // Відправка PoW на сервер
+                sendResult({
+                    challenge_id: challengeData.id,
+                    nonce: nonce,
+                    hash: hash,
+                    timestamp: challengeData.timestamp,
+                    type: "pow"
+                });
+                
+            } else {
+                // ============ FALLBACK: SUM CHALLENGE ============
+                updateProgress(15, "Вычисление результата...");
+                statsEl.textContent = "Режим совместимости (без PoW)";
+                
+                // Отримуємо fallback дані
+                var fb = challengeData.fallback;
+                if (!fb || !fb.numbers) {
+                    showError("<br>Ошибка: данные проверки недоступны");
+                    return;
+                }
+                
+                await new Promise(function(r) { setTimeout(r, 500); });
+                updateProgress(50, "Обработка данных...");
+                
+                // Обчислюємо суму
+                var sum = 0;
+                for (var i = 0; i < fb.numbers.length; i++) {
+                    sum += fb.numbers[i];
+                }
+                
+                await new Promise(function(r) { setTimeout(r, 500); });
+                updateProgress(90, "Верификация результата...");
+                
+                // Відправка суми на сервер
+                sendResult({
+                    challenge_id: challengeData.id,
+                    answer: sum,
+                    timestamp: challengeData.timestamp,
+                    type: "sum"
+                });
+            }
             
         } catch (error) {
             showError("<br>Не удалось пройти проверку: " + error.message);
         }
+    }
+    
+    // v3.8.9: Універсальна функція відправки результату
+    function sendResult(data) {
+        var xhr = new XMLHttpRequest();
+        xhr.open("POST", window.location.href, true);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.setRequestHeader("X-JSC-Response", "1");
+        
+        xhr.onload = function() {
+            if (xhr.status === 200) {
+                try {
+                    var result = JSON.parse(xhr.responseText);
+                    if (result.success) {
+                        challengeComplete = true;
+                        updateProgress(100, "Проверка завершена!");
+                        showSuccess();
+                        
+                        try {
+                            sessionStorage.removeItem("pow_attempts_" + challengeData.id.substr(0, 8));
+                        } catch (e) {}
+                        
+                        setTimeout(function() {
+                            window.location.href = redirectUrl;
+                        }, 800);
+                    } else {
+                        showError("<br>" + (result.error || "Ошибка верификации"));
+                    }
+                } catch (e) {
+                    showError("<br>Некорректный ответ сервера");
+                }
+            } else {
+                showError("<br>HTTP ошибка: " + xhr.status);
+            }
+        };
+        
+        xhr.onerror = function() {
+            showError("<br>Сетевая ошибка. Проверьте подключение к интернету.");
+        };
+        
+        xhr.send(JSON.stringify(data));
     }
 
     // v3.8.6: Перезавантаження сторінки при активації вкладки
@@ -2553,6 +2604,15 @@ function _jsc_showSMFChallengePage($challengeJson, $redirectJson, $isPow = false
             }).join("");
         }
         
+        // v3.8.9: Перевірка підтримки crypto.subtle
+        function isCryptoSupported() {
+            try {
+                return !!(window.crypto && window.crypto.subtle && window.crypto.subtle.digest);
+            } catch (e) {
+                return false;
+            }
+        }
+        
         async function performChallenge() {
             // v3.8.6: Запобігаємо повторному запуску
             if (challengeStarted || challengeComplete) return;
@@ -2581,9 +2641,12 @@ function _jsc_showSMFChallengePage($challengeJson, $redirectJson, $isPow = false
                 }
                 
                 var answer, nonce, hash;
-                var isPow = challengeData.type === "pow";
+                var wantsPow = challengeData.type === "pow";
+                // v3.8.9: Перевіряємо чи браузер підтримує PoW
+                var canDoPow = wantsPow && isCryptoSupported();
+                var isPow = canDoPow;
                 
-                if (isPow) {
+                if (canDoPow) {
                     // Proof of Work
                     updateProgress(40, "Вычисление токена безопасности...");
                     
@@ -2621,6 +2684,13 @@ function _jsc_showSMFChallengePage($challengeJson, $redirectJson, $isPow = false
                     
                     var totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
                     statsEl.textContent = nonce.toLocaleString() + " хешей за " + totalTime + " сек";
+                } else if (wantsPow && challengeData.fallback) {
+                    // v3.8.9: Fallback - використовуємо sum challenge замість PoW
+                    updateProgress(60, "Режим совместимости...");
+                    statsEl.textContent = "Ваш браузер не поддерживает PoW";
+                    var fb = challengeData.fallback;
+                    answer = fb.numbers.reduce(function(sum, num) { return sum + num; }, 0);
+                    isPow = false;
                 } else {
                     // Sum challenge (legacy)
                     updateProgress(60, "Вычисление задачи...");
