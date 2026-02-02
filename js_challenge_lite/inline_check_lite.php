@@ -1,6 +1,33 @@
 <?php
 /**
  * ============================================================================
+ * JS CHALLENGE PAGES v3.8.7 - HAMMER PROTECTION (API BLOCK)
+ * ============================================================================
+ * 
+ * НОВЕ v3.8.7:
+ * 🔥 Автоматичне блокування ботів що долбять challenge page
+ * 🔥 Автоматичне блокування ботів що долбять 502 page
+ * 🔥 API блокування при перевищенні порогу запитів
+ * 🔥 Налаштовувані пороги та часові вікна
+ * 🔥 Статистика hammer атак в Redis
+ * 
+ * ЯК ПРАЦЮЄ:
+ * - При кожному показі challenge page рахується лічильник IP
+ * - При кожному показі 502 page рахується лічильник IP  
+ * - Якщо IP перевищує поріг запитів за часове вікно → API блокування
+ * - Challenge: 10 запитів за 60 секунд → блок
+ * - 502 page: 5 запитів за 30 секунд → блок
+ * 
+ * НАЛАШТУВАННЯ:
+ * $_HAMMER_PROTECTION['challenge_threshold'] = 10;  // запитів
+ * $_HAMMER_PROTECTION['challenge_window'] = 60;     // секунд
+ * $_HAMMER_PROTECTION['blocked_threshold'] = 5;
+ * $_HAMMER_PROTECTION['blocked_window'] = 30;
+ * 
+ * ============================================================================
+ */
+/**
+ * ============================================================================
  * JS CHALLENGE PAGES v3.8.6 - VISIBILITY CHANGE SUPPORT
  * ============================================================================
  * 
@@ -302,6 +329,8 @@ $ADMIN_IP_WHITELIST = array(
     // ДОДАЙ СВОЇ IP ТУТ:
     // ========================================================================
     // '212.84.160.58/32',           // Приклад: Домашній IP
+	'::1',
+	'127.0.0.1',
      '185.109.48.79',
 	 '2a03:3f40:2:e:0:4:0:2',
 	 '2a03:3f40:2:e:0:4:0:3',
@@ -833,6 +862,31 @@ $_JSC_CONFIG = array(
 );
 
 // ============================================================================
+// v3.8.7: НАЛАШТУВАННЯ ЗАХИСТУ ВІД HAMMER АТАК (долбіння сторінок)
+// ============================================================================
+
+$_HAMMER_PROTECTION = array(
+    'enabled' => true,                    // Увімкнути захист
+    
+    // Challenge page (сторінка проверки)
+    // Бот без кінця запитує challenge page без успішного проходження
+    'challenge_threshold' => 10,          // Макс. запитів до блокування
+    'challenge_window' => 60,             // Часове вікно (секунди)
+    
+    // 502 page (сторінка блокування)  
+    // Вже заблокований бот продовжує долбити сервер
+    'blocked_threshold' => 5,             // Макс. запитів до API блоку
+    'blocked_window' => 30,               // Часове вікно (секунди)
+    
+    // API налаштування (використовує основні налаштування API)
+    'api_block_enabled' => true,          // Блокувати через API
+    
+    // Логування
+    'log_enabled' => true,                // Логувати події в error_log
+    'redis_stats' => true,                // Зберігати статистику в Redis
+);
+
+// ============================================================================
 // ШВИДКА ПЕРЕВІРКА ВЛАСНИХ USER AGENTS (ПЕРЕД JS CHALLENGE!)
 // ============================================================================
 
@@ -888,6 +942,250 @@ function _is_seo_bot($userAgent) {
     }
     
     return false;
+}
+
+// ============================================================================
+// v3.8.7: ФУНКЦІЇ ЗАХИСТУ ВІД HAMMER АТАК
+// ============================================================================
+
+/**
+ * v3.8.7: Відстеження та блокування ботів що долбять сторінки
+ * 
+ * @param string $ip IP адреса
+ * @param string $pageType Тип сторінки: 'challenge' або 'blocked'
+ * @return bool true якщо IP заблоковано
+ */
+function _track_page_hammer($ip, $pageType = 'challenge') {
+    global $_HAMMER_PROTECTION;
+    
+    // Перевірка чи увімкнено захист
+    if (empty($_HAMMER_PROTECTION['enabled'])) {
+        return false;
+    }
+    
+    // Визначаємо пороги для типу сторінки
+    if ($pageType === 'blocked') {
+        $threshold = $_HAMMER_PROTECTION['blocked_threshold'];
+        $window = $_HAMMER_PROTECTION['blocked_window'];
+        $keyPrefix = 'hammer:blocked:';
+        $blockReason = '502_page_hammer';
+    } else {
+        $threshold = $_HAMMER_PROTECTION['challenge_threshold'];
+        $window = $_HAMMER_PROTECTION['challenge_window'];
+        $keyPrefix = 'hammer:challenge:';
+        $blockReason = 'challenge_page_hammer';
+    }
+    
+    // Підключення до Redis
+    static $redis = null;
+    static $connected = false;
+    
+    if ($redis === null) {
+        try {
+            $redis = new Redis();
+            $connected = $redis->connect('127.0.0.1', 6379, 0.5);
+            if ($connected) {
+                $redis->select(1);
+                $redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_PHP);
+            }
+        } catch (Exception $e) {
+            error_log("HAMMER PROTECTION: Redis connection failed - " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    if (!$connected) {
+        return false;
+    }
+    
+    $prefix = 'bot_protection:';
+    $key = $prefix . $keyPrefix . $ip;
+    $now = time();
+    
+    try {
+        // Отримуємо історію запитів
+        $attempts = $redis->get($key);
+        if (!$attempts || !is_array($attempts)) {
+            $attempts = array();
+        }
+        
+        // Фільтруємо старі записи (поза часовим вікном)
+        $filtered = array();
+        foreach ($attempts as $timestamp) {
+            if (($now - $timestamp) < $window) {
+                $filtered[] = $timestamp;
+            }
+        }
+        
+        // Додаємо поточний запит
+        $filtered[] = $now;
+        $attemptCount = count($filtered);
+        
+        // Зберігаємо в Redis з подвійним TTL
+        $redis->setex($key, $window * 2, $filtered);
+        
+        // Логування статистики в Redis
+        if (!empty($_HAMMER_PROTECTION['redis_stats'])) {
+            $statsKey = $prefix . 'hammer_stats:' . $pageType . ':' . date('Y-m-d');
+            $redis->incr($statsKey);
+            $redis->expire($statsKey, 86400 * 7); // 7 днів
+        }
+        
+        // Перевірка порогу - чи потрібно блокувати
+        if ($attemptCount >= $threshold) {
+            // Логування атаки
+            if (!empty($_HAMMER_PROTECTION['log_enabled'])) {
+                $ua = isset($_SERVER['HTTP_USER_AGENT']) ? substr($_SERVER['HTTP_USER_AGENT'], 0, 100) : '-';
+                error_log(sprintf(
+                    "HAMMER ATTACK DETECTED: IP=%s, page=%s, hits=%d in %dsec (threshold=%d), UA=%s",
+                    $ip, $pageType, $attemptCount, $window, $threshold, $ua
+                ));
+            }
+            
+            // Блокуємо в Redis
+            $blockKey = $prefix . 'blocked:hammer:' . $ip;
+            $redis->setex($blockKey, 3600, array(
+                'ip' => $ip,
+                'time' => $now,
+                'reason' => $blockReason,
+                'page_type' => $pageType,
+                'attempts' => $attemptCount,
+                'threshold' => $threshold,
+                'window' => $window,
+                'ua' => isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '-',
+            ));
+            
+            // Статистика блокувань
+            if (!empty($_HAMMER_PROTECTION['redis_stats'])) {
+                $blockStatsKey = $prefix . 'hammer_blocks:' . $pageType . ':' . date('Y-m-d');
+                $redis->incr($blockStatsKey);
+                $redis->expire($blockStatsKey, 86400 * 7);
+            }
+            
+            // Блокуємо через API
+            if (!empty($_HAMMER_PROTECTION['api_block_enabled'])) {
+                $apiResult = _hammer_call_api($ip, $blockReason);
+                
+                if ($apiResult && isset($apiResult['status'])) {
+                    if ($apiResult['status'] === 'success') {
+                        error_log("HAMMER API BLOCK SUCCESS: IP=$ip (reason=$blockReason, $attemptCount hits in {$window}sec)");
+                    } elseif ($apiResult['status'] !== 'already_blocked') {
+                        $msg = isset($apiResult['message']) ? $apiResult['message'] : 'unknown';
+                        error_log("HAMMER API BLOCK FAILED: IP=$ip, reason=" . $msg);
+                    } else {
+                        error_log("HAMMER API: IP=$ip already blocked");
+                    }
+                }
+            }
+            
+            return true;
+        }
+        
+        // Debug логування проміжних результатів
+        if ($attemptCount > 2 && !empty($_HAMMER_PROTECTION['log_enabled'])) {
+            error_log(sprintf(
+                "HAMMER CHECK: IP=%s, page=%s, hits=%d/%d in %dsec",
+                $ip, $pageType, $attemptCount, $threshold, $window
+            ));
+        }
+        
+    } catch (Exception $e) {
+        error_log("HAMMER PROTECTION ERROR: " . $e->getMessage());
+    }
+    
+    return false;
+}
+
+/**
+ * v3.8.7: Виклик API для блокування IP
+ */
+function _hammer_call_api($ip, $reason = 'hammer_attack') {
+    // Використовуємо стандартні налаштування API
+    $apiUrl = 'https://blog.dj-x.info/redis-bot_protection/API/iptables.php';
+    $apiKey = '12345';
+    
+    $url = $apiUrl .
+           '?action=block' .
+           '&ip=' . urlencode($ip) .
+           '&api=1' .
+           '&api_key=' . urlencode($apiKey) .
+           '&reason=' . urlencode($reason);
+    
+    try {
+        $ch = curl_init();
+        if (!$ch) {
+            return array('status' => 'error', 'message' => 'cURL init failed');
+        }
+        
+        curl_setopt_array($ch, array(
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 5,
+            CURLOPT_CONNECTTIMEOUT => 3,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_USERAGENT => 'BotProtection/3.8.7-Hammer',
+            CURLOPT_HTTPHEADER => array(
+                'Accept: application/json',
+                'Cache-Control: no-cache'
+            )
+        ));
+        
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+        
+        if (!empty($curlError)) {
+            return array('status' => 'error', 'message' => $curlError);
+        }
+        
+        if ($httpCode !== 200) {
+            return array('status' => 'error', 'message' => 'HTTP ' . $httpCode);
+        }
+        
+        $result = json_decode($response, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return array('status' => 'error', 'message' => 'Invalid JSON');
+        }
+        
+        return $result;
+        
+    } catch (Exception $e) {
+        return array('status' => 'error', 'message' => $e->getMessage());
+    }
+}
+
+/**
+ * v3.8.7: Перевірка чи IP вже заблокований за hammer attack
+ */
+function _is_hammer_blocked($ip) {
+    static $redis = null;
+    static $connected = false;
+    
+    if ($redis === null) {
+        try {
+            $redis = new Redis();
+            $connected = $redis->connect('127.0.0.1', 6379, 0.5);
+            if ($connected) {
+                $redis->select(1);
+            }
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+    
+    if (!$connected) {
+        return false;
+    }
+    
+    try {
+        $blockKey = 'bot_protection:blocked:hammer:' . $ip;
+        return $redis->exists($blockKey);
+    } catch (Exception $e) {
+        return false;
+    }
 }
 
 // ============================================================================
@@ -1235,57 +1533,68 @@ function _detect_engine_by_cidr($cidr) {
         return 'Test';
     }
     
-    // Google ranges start with 66.249, 64.233, 72.14, 74.125, etc.
-    if (preg_match('/^(66\.249|64\.233|72\.14|74\.125|216\.239|209\.85|108\.177|142\.250|172\.217|172\.253|173\.194|192\.178|34\.64|35\.190|203\.208)/', $cidr)) {
+    // Google IPv4 - всі діапазони з білого списку
+    if (preg_match('/^(66\.249|66\.102|74\.125|142\.250|172\.217|192\.178|34\.|35\.247)/', $cidr)) {
         return 'Google';
     }
-    if (strpos($cidr, '2001:4860') === 0 || strpos($cidr, '2404:6800') === 0 || strpos($cidr, '2607:f8b0') === 0) {
+    // Google IPv6
+    if (strpos($cidr, '2001:4860') === 0) {
         return 'Google';
     }
     
-    // Yandex
-    if (preg_match('/^(5\.45|5\.255|37\.9|37\.140|77\.88|84\.201|87\.250|93\.158|95\.108|141\.8|178\.154|213\.180)/', $cidr)) {
+    // Yandex IPv4 - всі діапазони
+    if (preg_match('/^(5\.45|5\.255|37\.9|37\.140|77\.88|84\.201|87\.250|90\.156|93\.158|95\.108|100\.43|130\.193|141\.8|178\.154|185\.32\.187|199\.21|199\.36|213\.180)/', $cidr)) {
         return 'Yandex';
     }
+    // Yandex IPv6
     if (strpos($cidr, '2a02:6b8') === 0) {
         return 'Yandex';
     }
     
-    // Bing/Microsoft
-    if (preg_match('/^(13\.|20\.|40\.|52\.|65\.|104\.|131\.253|157\.55|157\.56|168\.6|191\.232|199\.30|207\.46)/', $cidr)) {
+    // Bing/Microsoft IPv4 - всі діапазони
+    if (preg_match('/^(13\.|20\.|40\.|51\.105|52\.|65\.55|139\.217|157\.55|191\.233|199\.30|207\.46)/', $cidr)) {
         return 'Bing';
     }
+    // Bing IPv6
     if (strpos($cidr, '2620:1ec') === 0 || strpos($cidr, '2a01:111') === 0) {
         return 'Bing';
     }
     
-    // Baidu
+    // Baidu IPv4
     if (preg_match('/^(116\.179|119\.63|123\.125|180\.76|220\.181)/', $cidr)) {
         return 'Baidu';
     }
     
-    // Facebook
+    // Facebook IPv4
     if (preg_match('/^(31\.13|66\.220|69\.63|69\.171|157\.240|173\.252|185\.60)/', $cidr)) {
         return 'Facebook';
     }
+    // Facebook IPv6
+    if (strpos($cidr, '2a03:2880') === 0) {
+        return 'Facebook';
+    }
     
-    // Apple
+    // Apple IPv4
     if (strpos($cidr, '17.') === 0) {
         return 'Apple';
     }
+    // Apple IPv6
+    if (strpos($cidr, '2620:149') === 0 || strpos($cidr, '2a01:b740') === 0) {
+        return 'Apple';
+    }
     
-    // DuckDuckGo
+    // DuckDuckGo IPv4
     if (preg_match('/^(20\.191|40\.88|52\.142|72\.94)/', $cidr)) {
         return 'DuckDuckGo';
     }
     
-    // Yahoo
-    if (preg_match('/^(67\.195|72\.30|74\.6|98\.136)/', $cidr)) {
+    // Yahoo IPv4
+    if (preg_match('/^(67\.195|72\.30|74\.6|98\.13[6-9])/', $cidr)) {
         return 'Yahoo';
     }
     
-    // PetalBot (Huawei)
-    if (preg_match('/^114\.119\./', $cidr)) {
+    // PetalBot (Huawei) IPv4
+    if (strpos($cidr, '114.119.') === 0) {
         return 'PetalBot';
     }
     
@@ -1623,6 +1932,14 @@ function _jsc_generateChallenge($secret_key) {
 }
 
 function _jsc_showChallengePage($challenge, $redirect_url) {
+    // v3.8.7: Відстеження hammer атак на challenge page
+    $ip = _jsc_getClientIP();
+    if (_track_page_hammer($ip, 'challenge')) {
+        // IP заблоковано за hammer - показуємо 502
+        _show_502_error();
+        return;
+    }
+    
     // v3.8.0: Логуємо показ challenge
     _jsc_logStats('shown');
     
@@ -2432,6 +2749,11 @@ function _quick_block_check() {
         $ip = _jsc_getClientIP();
         $prefix = 'bot_protection:';
         
+        // v3.8.7: Перевірка hammer block
+        if ($redis->exists($prefix . 'blocked:hammer:' . $ip)) {
+            return true;
+        }
+        
         if ($redis->exists($prefix . 'ua_blocked:' . $ip)) {
             return true;
         }
@@ -2462,6 +2784,10 @@ function _quick_block_check() {
 }
 
 function _show_502_error() {
+    // v3.8.7: Відстеження hammer атак на 502 page
+    $ip = _jsc_getClientIP();
+    _track_page_hammer($ip, 'blocked');
+    
     http_response_code(502);
     header('Content-Type: text/html; charset=UTF-8');
     header('Cache-Control: no-cache, no-store');
@@ -2767,13 +3093,13 @@ class SimpleBotProtection {
     
     // Налаштування API
     private $apiSettings = array(
-        'enabled' => false,
-        'url' => 'https://mysite.com/redis-bot_protection/API/iptables.php',
-        'api_key' => '12345',
+        'enabled' => true,
+        'url' => 'https://blog.dj-x.info/redis-bot_protection/API/iptables.php',
+        'api_key' => 'Asd123456',
         'timeout' => 5,
         'retry_on_failure' => 2,
         'verify_ssl' => true,
-        'user_agent' => 'BotProtection/3.8.4',
+        'user_agent' => 'BotProtection/3.8.7',
         'block_on_api' => true,
         'block_on_redis' => true,
     );
