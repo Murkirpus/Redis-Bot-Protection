@@ -1,9 +1,19 @@
 <?php
 /**
  * ============================================================================
- * MurKir Security - Advanced Cleanup Script v1.0
+ * MurKir Security - Advanced Cleanup Script v1.1
  * ============================================================================
  * Сумісний з inline_check_lite.php v3.8.2+
+ * 
+ * НОВЕ v1.1:
+ * 🔥 Додано паттерн ua_rotation_blocked (старий формат)
+ * 🔥 Режим --force для примусової очистки ВСІХ блокувань
+ * 🔥 Очистка total та log лічильників в force режимі
+ * 
+ * ВИКОРИСТАННЯ FORCE MODE:
+ *   CLI:  php cleanup.php --force
+ *   WEB:  cleanup.php?force=1
+ *   Також можна встановити FORCE_CLEANUP = true в конфігурації
  * 
  * Функції:
  *   1. Очистка блокировок з TTL що закінчується (+ API розблокування)
@@ -37,7 +47,7 @@ define('REDIS_PREFIX', 'bot_protection:');
 
 // API налаштування для iptables (має збігатися з inline_check_lite.php)
 define('API_ENABLED', true);
-define('API_URL', 'https://mysite.com/redis-bot_protection/API/iptables.php');  // ЗМІНІТЬ!
+define('API_URL', 'https://blog.dj-x.info/redis-bot_protection/API/iptables.php');  // ЗМІНІТЬ!
 define('API_KEY', '12345');                        // ЗМІНІТЬ!
 define('API_TIMEOUT', 5);
 define('API_USER_AGENT', 'MurKir-Cleanup/1.0');
@@ -57,6 +67,11 @@ define('JSC_STATS_TTL', 604800);      // JS Challenge статистика - 7 �
 // Пороги для агресивної очистки
 define('CLEANUP_THRESHOLD', 10000);   // Поріг кількості ключів
 define('MAX_CLEANUP_TIME_MS', 500);   // Максимальний час на очистку (мс)
+
+// v1.1: Режим примусової очистки (видаляє ВСІ блокування незалежно від TTL)
+// Можна встановити через CLI: php cleanup.php --force
+// Або через WEB: cleanup.php?key=XXX&force=1
+define('FORCE_CLEANUP', false);       // За замовчуванням вимкнено
 
 // Захист веб-доступу (опціонально - розкоментуй якщо потрібен захист)
 // define('WEB_ACCESS_KEY', 'YOUR_SECRET_KEY');
@@ -83,6 +98,22 @@ if ($isWeb) {
     @ini_set('implicit_flush', 'on');
     if (ob_get_level()) {
         ob_end_flush();
+    }
+}
+
+// v1.1: Перевірка режиму примусової очистки
+$forceCleanup = FORCE_CLEANUP;
+
+if ($isCLI) {
+    // CLI: php cleanup.php --force
+    global $argv;
+    if (isset($argv) && in_array('--force', $argv)) {
+        $forceCleanup = true;
+    }
+} else {
+    // WEB: cleanup.php?force=1
+    if (isset($_GET['force']) && $_GET['force'] == '1') {
+        $forceCleanup = true;
     }
 }
 
@@ -136,8 +167,12 @@ class MurKirCleanup {
         'metrics_updated' => false,
     );
     
-    public function __construct($isWeb = false) {
+    // v1.1: Режим примусової очистки
+    private $forceCleanup = false;
+    
+    public function __construct($isWeb = false, $forceCleanup = false) {
         $this->isWeb = $isWeb;
+        $this->forceCleanup = $forceCleanup;
         $this->startTime = microtime(true);
         $this->connectRedis();
     }
@@ -284,12 +319,19 @@ class MurKirCleanup {
         $this->output("════════════════════════════════════════════════════════════════\n");
         
         $blockPatterns = array(
-            // UA rotation blocks
+            // UA rotation blocks (обидва формати!)
             array(
                 'pattern' => REDIS_PREFIX . 'ua_blocked:*',
-                'description' => 'UA Rotation Blocks',
+                'description' => 'UA Blocks (new format)',
                 'api_unblock' => true,
                 'ip_from_key' => true  // IP береться з ключа
+            ),
+            // v1.1: Старий формат UA rotation blocks
+            array(
+                'pattern' => REDIS_PREFIX . 'ua_rotation_blocked:*',
+                'description' => 'UA Rotation Blocks (old format)',
+                'api_unblock' => true,
+                'ip_from_key' => true
             ),
             // No-cookie blocks
             array(
@@ -357,7 +399,10 @@ class MurKirCleanup {
                 // Перевіряємо чи потрібно очищати
                 $shouldCleanup = false;
                 
-                if ($ttl === -1) {
+                // v1.1: Примусова очистка - видаляємо ВСЕ
+                if ($this->forceCleanup) {
+                    $shouldCleanup = true;
+                } elseif ($ttl === -1) {
                     // Ключ без TTL - підозрілий
                     $this->output("  ⚠ Key without TTL: " . basename($key) . "\n");
                     $shouldCleanup = true;
@@ -640,6 +685,13 @@ class MurKirCleanup {
             REDIS_PREFIX . 'jsc_stats:hourly:*',
         );
         
+        // v1.1: В режимі force також очищаємо total лічильники
+        if ($this->forceCleanup) {
+            $patterns[] = REDIS_PREFIX . 'jsc_stats:total:*';
+            $patterns[] = REDIS_PREFIX . 'jsc_stats:log:*';
+            $this->output("  ⚠ FORCE MODE: очищаємо також total та log\n");
+        }
+        
         $cleaned = 0;
         
         foreach ($patterns as $pattern) {
@@ -654,6 +706,13 @@ class MurKirCleanup {
                 
                 foreach ($keys as $key) {
                     $this->stats['jsc_stats_checked']++;
+                    
+                    // v1.1: В режимі force видаляємо все
+                    if ($this->forceCleanup) {
+                        $this->redis->del($key);
+                        $cleaned++;
+                        continue;
+                    }
                     
                     // Витягуємо дату з ключа
                     if (preg_match('/(\d{4}-\d{2}-\d{2})/', $key, $matches)) {
@@ -892,20 +951,26 @@ try {
     $startTime = microtime(true);
     
     echo "╔══════════════════════════════════════════════════════════════╗\n";
-    echo "║    MurKir Security - Advanced Cleanup v1.0                   ║\n";
+    echo "║    MurKir Security - Advanced Cleanup v1.1                   ║\n";
     echo "║    Сумісний з inline_check_lite.php v3.8.2+                  ║\n";
     echo "╚══════════════════════════════════════════════════════════════╝\n";
     echo "Started: " . date('Y-m-d H:i:s') . "\n";
     echo "Mode: " . ($isCLI ? "CLI" : "WEB") . "\n";
     
+    // v1.1: Показуємо режим очистки
+    if ($forceCleanup) {
+        echo "⚠️  FORCE MODE: Видаляються ВСІ блокування незалежно від TTL!\n";
+    }
+    
     echo "\nSettings:\n";
     echo "  Redis: " . REDIS_HOST . ":" . REDIS_PORT . " (DB " . REDIS_DATABASE . ")\n";
     echo "  API: " . (API_ENABLED ? API_URL : 'Disabled') . "\n";
     echo "  TTL threshold: " . TTL_THRESHOLD . " seconds\n";
-    echo "  Cleanup threshold: " . CLEANUP_THRESHOLD . " keys\n\n";
+    echo "  Cleanup threshold: " . CLEANUP_THRESHOLD . " keys\n";
+    echo "  Force cleanup: " . ($forceCleanup ? "YES" : "NO") . "\n\n";
     
     // Запуск очистки
-    $cleanup = new MurKirCleanup($isWeb);
+    $cleanup = new MurKirCleanup($isWeb, $forceCleanup);
     $cleanup->runFullCleanup();
     
     // Результат
