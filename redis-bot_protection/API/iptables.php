@@ -1,7 +1,7 @@
 <?php
 /**
  * iptables.php - Управление блокировкой IP-адресов через iptables
- * Версия: 2.0
+ * Версия: 2.1
  * 
  * Скрипт для блокировки IPv4 и IPv6 адресов через iptables
  * Работает через sudo (требуется настройка sudoers)
@@ -16,11 +16,13 @@
  * =====================================================================
  * 
  * 1. Блокировка IP
- *    URL: ?action=block&ip=IP_ADDRESS&api=1&api_key=YOUR_KEY
+ *    GET:  ?action=block&ip=IP_ADDRESS&api=1&api_key=YOUR_KEY
+ *    POST: action=block&ip=IP_ADDRESS&api=1&api_key=YOUR_KEY
  *    Блокирует IP для портов 80 и 443
  * 
  * 2. Разблокировка IP
- *    URL: ?action=unblock&ip=IP_ADDRESS&api=1&api_key=YOUR_KEY
+ *    GET:  ?action=unblock&ip=IP_ADDRESS&api=1&api_key=YOUR_KEY
+ *    POST: action=unblock&ip=IP_ADDRESS&api=1&api_key=YOUR_KEY
  *    Разблокирует IP
  * 
  * 3. Список заблокированных IPv4
@@ -39,7 +41,7 @@
  *    URL: ?action=debug&api=1&api_key=YOUR_KEY
  *    Возвращает полную информацию о правилах iptables
  * 
- * Все API вызовы возвращают JSON
+ * Все API вызовы возвращают JSON (с поддержкой кириллицы)
  */
 
 // Отключаем уведомления для совместимости
@@ -253,8 +255,8 @@ if (!checkAccess($valid_api_key, $allowed_ips, $enable_ip_restriction)) {
     exit;
 }
 
-// Режим API
-$api_mode = isset($_GET['api']) && $_GET['api'] == 1;
+// Режим API (поддержка GET и POST)
+$api_mode = isset($_REQUEST['api']) && $_REQUEST['api'] == 1;
 
 if ($api_mode) {
     header('Content-Type: application/json');
@@ -737,7 +739,7 @@ if ($action === 'block' && $ip) {
 
 // Возврат результата в режиме API
 if ($api_mode) {
-    echo json_encode($result, JSON_PRETTY_PRINT);
+    echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     exit;
 }
 
