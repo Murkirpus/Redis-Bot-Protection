@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iptables API v2.1 — Документация</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #e0e0e0;
+            line-height: 1.6;
+        }
+        .container { max-width: 1100px; margin: 0 auto; padding: 40px 20px; }
+        header { text-align: center; margin-bottom: 50px; }
+        header h1 { font-size: 42px; color: #00d9ff; margin-bottom: 10px; text-shadow: 0 0 20px rgba(0, 217, 255, 0.3); }
+        header p { font-size: 18px; color: #888; }
+        .version-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #00d9ff, #0066ff);
+            color: #fff;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            margin-top: 15px;
+        }
+        .changelog {
+            background: linear-gradient(135deg, rgba(0, 217, 255, 0.1), rgba(0, 102, 255, 0.1));
+            border: 1px solid rgba(0, 217, 255, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 20px;
+            text-align: left;
+            display: inline-block;
+        }
+        .changelog h4 { color: #00d9ff; margin-bottom: 10px; }
+        .changelog ul { list-style: none; padding-left: 0; }
+        .changelog li { padding: 5px 0; color: #aaa; }
+        .changelog li::before { content: "✓ "; color: #51cf66; }
+        .section {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+        }
+        .section h2 {
+            color: #00d9ff;
+            font-size: 24px;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(0, 217, 255, 0.3);
+        }
+        .section h3 { color: #fff; font-size: 18px; margin: 25px 0 15px 0; }
+        .auth-box {
+            background: linear-gradient(135deg, rgba(255, 193, 7, 0.1), rgba(255, 152, 0, 0.1));
+            border: 1px solid rgba(255, 193, 7, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .auth-box h3 { color: #ffc107; margin-top: 0; }
+        .param-table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+        .param-table th, .param-table td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .param-table th { background: rgba(0, 217, 255, 0.1); color: #00d9ff; font-weight: 600; }
+        .param-table tr:hover { background: rgba(255, 255, 255, 0.03); }
+        .param-required { color: #ff6b6b; font-size: 12px; font-weight: bold; }
+        .endpoint {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            padding: 25px;
+            margin: 20px 0;
+            border-left: 4px solid #00d9ff;
+        }
+        .endpoint-header { display: flex; align-items: center; gap: 15px; margin-bottom: 15px; flex-wrap: wrap; }
+        .method { display: inline-block; padding: 6px 14px; border-radius: 6px; font-weight: bold; font-size: 13px; }
+        .method-get { background: #51cf66; color: #000; }
+        .method-post { background: #339af0; color: #fff; }
+        .endpoint-url { font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; color: #ffd43b; font-size: 14px; word-break: break-all; }
+        .endpoint-desc { color: #aaa; margin-bottom: 15px; }
+        pre {
+            background: #0d1117;
+            border-radius: 8px;
+            padding: 20px;
+            overflow-x: auto;
+            margin: 15px 0;
+            border: 1px solid #30363d;
+        }
+        code { font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; font-size: 13px; color: #c9d1d9; }
+        .code-label {
+            display: inline-block;
+            background: rgba(0, 217, 255, 0.2);
+            color: #00d9ff;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-bottom: 10px;
+        }
+        .code-label-alt {
+            display: inline-block;
+            background: rgba(81, 207, 102, 0.2);
+            color: #51cf66;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-bottom: 10px;
+        }
+        .response-success { border-left: 4px solid #51cf66; }
+        .response-error { border-left: 4px solid #ff6b6b; }
+        .status-table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+        .status-table td { padding: 10px 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+        .status-success { color: #51cf66; font-weight: bold; }
+        .status-error { color: #ff6b6b; font-weight: bold; }
+        .status-warning { color: #ffc107; font-weight: bold; }
+        .status-info { color: #339af0; font-weight: bold; }
+        .nav {
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(10px);
+        }
+        .nav h3 { color: #00d9ff; margin-bottom: 15px; font-size: 16px; }
+        .nav ul { list-style: none; display: flex; flex-wrap: wrap; gap: 10px 20px; }
+        .nav a { color: #aaa; text-decoration: none; font-size: 14px; transition: color 0.2s; }
+        .nav a:hover { color: #00d9ff; }
+        .tip-box {
+            background: linear-gradient(135deg, rgba(81, 207, 102, 0.1), rgba(0, 128, 0, 0.1));
+            border: 1px solid rgba(81, 207, 102, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .tip-box h4 { color: #51cf66; margin-bottom: 10px; }
+        .warning-box {
+            background: linear-gradient(135deg, rgba(255, 107, 107, 0.1), rgba(255, 0, 0, 0.1));
+            border: 1px solid rgba(255, 107, 107, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .warning-box h4 { color: #ff6b6b; margin-bottom: 10px; }
+        .new-badge {
+            display: inline-block;
+            background: #51cf66;
+            color: #000;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+        footer { text-align: center; padding: 40px 20px; color: #666; font-size: 14px; }
+        @media (max-width: 768px) {
+            header h1 { font-size: 28px; }
+            .endpoint-header { flex-direction: column; align-items: flex-start; }
+            .param-table { font-size: 14px; }
+            pre { padding: 15px; font-size: 12px; }
+            .nav ul { flex-direction: column; gap: 8px; }
+            .changelog { display: block; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔥 iptables API</h1>
+            <p>Документация по управлению блокировкой IP-адресов</p>
+            <span class="version-badge">Версия 2.1</span>
+            <div class="changelog">
+                <h4>🆕 Что нового в v2.1:</h4>
+                <ul>
+                    <li>Полная поддержка POST-запросов (параметр <code>api</code> в теле)</li>
+                    <li>Читаемая кириллица в JSON-ответах</li>
+                    <li>Обновлена документация API</li>
+                </ul>
+            </div>
+        </header>
+        
+        <nav class="nav">
+            <h3>📑 Навигация</h3>
+            <ul>
+                <li><a href="#auth">🔑 Авторизация</a></li>
+                <li><a href="#block">🚫 Блокировка IP</a></li>
+                <li><a href="#unblock">✅ Разблокировка IP</a></li>
+                <li><a href="#list">📋 Список IPv4</a></li>
+                <li><a href="#list6">📋 Список IPv6</a></li>
+                <li><a href="#clear">🗑️ Очистка правил</a></li>
+                <li><a href="#debug">🔧 Отладка</a></li>
+                <li><a href="#statuses">📊 Статусы ответов</a></li>
+                <li><a href="#examples">💡 Примеры интеграции</a></li>
+            </ul>
+        </nav>
+        
+        <!-- Авторизация -->
+        <section id="auth" class="section">
+            <h2>🔑 Авторизация</h2>
+            <div class="auth-box">
+                <h3>⚠️ Обязательные параметры</h3>
+                <p>Все запросы к API требуют следующих параметров:</p>
+                <table class="param-table">
+                    <tr><th>Параметр</th><th>Значение</th><th>Описание</th></tr>
+                    <tr><td><code>api</code></td><td><code>1</code></td><td>Включает режим API (ответ в JSON)</td></tr>
+                    <tr><td><code>api_key</code></td><td><code>YOUR_KEY</code></td><td>Ключ авторизации из settings.php</td></tr>
+                </table>
+            </div>
+            <p>API принимает параметры через <span class="method method-get">GET</span> и <span class="method method-post">POST</span> (используется <code>$_REQUEST</code>).</p>
+            <div class="tip-box">
+                <h4>💡 Два варианта POST-запросов <span class="new-badge">v2.1</span></h4>
+                <p>Начиная с версии 2.1, параметр <code>api=1</code> можно передавать:</p>
+                <ul style="margin-top: 10px; margin-left: 20px;">
+                    <li><strong>В URL:</strong> <code>iptables.php?api=1</code> + POST-данные</li>
+                    <li><strong>В теле запроса:</strong> <code>action=block&amp;ip=...&amp;api=1&amp;api_key=...</code></li>
+                </ul>
+            </div>
+        </section>
+        
+        <!-- Блокировка IP -->
+        <section id="block" class="section">
+            <h2>🚫 Блокировка IP</h2>
+            <div class="endpoint">
+                <div class="endpoint-header">
+                    <span class="method method-get">GET</span>
+                    <span class="method method-post">POST</span>
+                    <span class="endpoint-url">?action=block&amp;ip={IP}&amp;api=1&amp;api_key={KEY}</span>
+                </div>
+                <p class="endpoint-desc">Блокирует IP-адрес для портов 80 и 443. Поддерживает IPv4 и IPv6.</p>
+                <table class="param-table">
+                    <tr><th>Параметр</th><th>Тип</th><th>Описание</th></tr>
+                    <tr><td><code>action</code></td><td><span class="param-required">обязательный</span></td><td>Значение: <code>block</code></td></tr>
+                    <tr><td><code>ip</code></td><td><span class="param-required">обязательный</span></td><td>IP-адрес для блокировки (IPv4 или IPv6)</td></tr>
+                </table>
+            </div>
+            <h3>Примеры запросов</h3>
+            <span class="code-label">curl GET</span>
+            <pre><code>curl "https://your-server/iptables-API/iptables.php?action=block&amp;ip=192.168.1.100&amp;api=1&amp;api_key=YOUR_KEY"</code></pre>
+            <span class="code-label">curl POST (api в URL)</span>
+            <pre><code>curl -X POST "https://your-server/iptables-API/iptables.php?api=1" \
+  -d "action=block&amp;ip=192.168.1.100&amp;api_key=YOUR_KEY"</code></pre>
+            <span class="code-label-alt">curl POST (api в теле) — рекомендуется</span> <span class="new-badge">v2.1</span>
+            <pre><code>curl -X POST "https://your-server/iptables-API/iptables.php" \
+  -d "action=block&amp;ip=192.168.1.100&amp;api=1&amp;api_key=YOUR_KEY"</code></pre>
+            <span class="code-label">curl POST (IPv6)</span>
+            <pre><code>curl -X POST "https://your-server/iptables-API/iptables.php" \
+  -d "action=block&amp;ip=2001:db8::1&amp;api=1&amp;api_key=YOUR_KEY"</code></pre>
+            <h3>Ответы</h3>
+            <span class="code-label">✅ Успех</span>
+            <pre class="response-success"><code>{
+    "status": "success",
+    "message": "IP 192.168.1.100 успешно заблокирован для портов 80 и 443",
+    "details": "Порт 80: заблокирован, Порт 443: заблокирован"
+}</code></pre>
+            <span class="code-label">⚠️ Уже заблокирован</span>
+            <pre><code>{
+    "status": "success",
+    "message": "IP 192.168.1.100 успешно заблокирован для портов 80 и 443",
+    "details": "Порт 80: уже заблокирован, Порт 443: уже заблокирован"
+}</code></pre>
+            <span class="code-label">❌ Ошибка</span>
+            <pre class="response-error"><code>{
+    "status": "error",
+    "message": "Неверный формат IP: abc123"
+}</code></pre>
+        </section>
+        
+        <!-- Разблокировка IP -->
+        <section id="unblock" class="section">
+            <h2>✅ Разблокировка IP</h2>
+            <div class="endpoint">
+                <div class="endpoint-header">
+                    <span class="method method-get">GET</span>
+                    <span class="method method-post">POST</span>
+                    <span class="endpoint-url">?action=unblock&amp;ip={IP}&amp;api=1&amp;api_key={KEY}</span>
+                </div>
+                <p class="endpoint-desc">Разблокирует ранее заблокированный IP-адрес.</p>
+                <table class="param-table">
+                    <tr><th>Параметр</th><th>Тип</th><th>Описание</th></tr>
+                    <tr><td><code>action</code></td><td><span class="param-required">обязательный</span></td><td>Значение: <code>unblock</code></td></tr>
+                    <tr><td><code>ip</code></td><td><span class="param-required">обязательный</span></td><td>IP-адрес для разблокировки (IPv4 или IPv6)</td></tr>
+                </table>
+            </div>
+            <h3>Примеры запросов</h3>
+            <span class="code-label">curl GET</span>
+            <pre><code>curl "https://your-server/iptables-API/iptables.php?action=unblock&amp;ip=192.168.1.100&amp;api=1&amp;api_key=YOUR_KEY"</code></pre>
+            <span class="code-label-alt">curl POST (рекомендуется)</span>
+            <pre><code>curl -X POST "https://your-server/iptables-API/iptables.php" \
+  -d "action=unblock&amp;ip=192.168.1.100&amp;api=1&amp;api_key=YOUR_KEY"</code></pre>
+            <h3>Ответы</h3>
+            <span class="code-label">✅ Успех</span>
+            <pre class="response-success"><code>{
+    "status": "success",
+    "message": "IP 192.168.1.100 успешно разблокирован",
+    "details": "Порт 80: разблокирован, Порт 443: разблокирован"
+}</code></pre>
+            <span class="code-label">⚠️ Частичная разблокировка</span>
+            <pre><code>{
+    "status": "warning",
+    "message": "Частичная разблокировка IP: 192.168.1.100",
+    "details": "Порт 80: разблокирован, Порт 443: ошибка разблокировки"
+}</code></pre>
+        </section>
+        
+        <!-- Список IPv4 -->
+        <section id="list" class="section">
+            <h2>📋 Список заблокированных IPv4</h2>
+            <div class="endpoint">
+                <div class="endpoint-header">
+                    <span class="method method-get">GET</span>
+                    <span class="method method-post">POST</span>
+                    <span class="endpoint-url">?action=list&amp;api=1&amp;api_key={KEY}</span>
+                </div>
+                <p class="endpoint-desc">Возвращает список всех заблокированных IPv4 адресов с информацией о портах.</p>
+                <table class="param-table">
+                    <tr><th>Параметр</th><th>Тип</th><th>Описание</th></tr>
+                    <tr><td><code>action</code></td><td><span class="param-required">обязательный</span></td><td>Значение: <code>list</code></td></tr>
+                </table>
+            </div>
+            <h3>Примеры запросов</h3>
+            <span class="code-label">curl GET</span>
+            <pre><code>curl "https://your-server/iptables-API/iptables.php?action=list&amp;api=1&amp;api_key=YOUR_KEY"</code></pre>
+            <span class="code-label-alt">curl POST</span>
+            <pre><code>curl -X POST "https://your-server/iptables-API/iptables.php" \
+  -d "action=list&amp;api=1&amp;api_key=YOUR_KEY"</code></pre>
+            <h3>Ответ</h3>
+            <pre class="response-success"><code>{
+    "status": "success",
+    "version": "IPv4",
+    "count": 2,
+    "blocked_ips": [
+        "192.168.1.100",
+        "10.0.0.50"
+    ],
+    "blocked_details": [
+        { "ip": "192.168.1.100", "ports": ["80", "443"] },
+        { "ip": "10.0.0.50", "ports": ["80", "443"] }
+    ]
+}</code></pre>
+        </section>
+        
+        <!-- Список IPv6 -->
+        <section id="list6" class="section">
+            <h2>📋 Список заблокированных IPv6</h2>
+            <div class="endpoint">
+                <div class="endpoint-header">
+                    <span class="method method-get">GET</span>
+                    <span class="method method-post">POST</span>
+                    <span class="endpoint-url">?action=list6&amp;api=1&amp;api_key={KEY}</span>
+                </div>
+                <p class="endpoint-desc">Возвращает список всех заблокированных IPv6 адресов.</p>
+                <table class="param-table">
+                    <tr><th>Параметр</th><th>Тип</th><th>Описание</th></tr>
+                    <tr><td><code>action</code></td><td><span class="param-required">обязательный</span></td><td>Значение: <code>list6</code></td></tr>
+                </table>
+            </div>
+            <h3>Примеры запросов</h3>
+            <span class="code-label">curl GET</span>
+            <pre><code>curl "https://your-server/iptables-API/iptables.php?action=list6&amp;api=1&amp;api_key=YOUR_KEY"</code></pre>
+            <span class="code-label-alt">curl POST</span>
+            <pre><code>curl -X POST "https://your-server/iptables-API/iptables.php" \
+  -d "action=list6&amp;api=1&amp;api_key=YOUR_KEY"</code></pre>
+            <h3>Ответ</h3>
+            <pre class="response-success"><code>{
+    "status": "success",
+    "version": "IPv6",
+    "count": 1,
+    "blocked_ips": [ "2001:db8::1" ],
+    "blocked_details": [
+        { "ip": "2001:db8::1", "ports": ["80", "443"] }
+    ]
+}</code></pre>
+        </section>
+        
+        <!-- Очистка правил -->
+        <section id="clear" class="section">
+            <h2>🗑️ Очистка всех правил</h2>
+            <div class="warning-box">
+                <h4>⚠️ Внимание!</h4>
+                <p>Эта команда удалит <strong>ВСЕ</strong> правила блокировки для IPv4 и IPv6. Используйте с осторожностью!</p>
+            </div>
+            <div class="endpoint">
+                <div class="endpoint-header">
+                    <span class="method method-get">GET</span>
+                    <span class="method method-post">POST</span>
+                    <span class="endpoint-url">?action=clear&amp;api=1&amp;api_key={KEY}</span>
+                </div>
+                <p class="endpoint-desc">Удаляет все правила блокировки IP для портов 80 и 443.</p>
+                <table class="param-table">
+                    <tr><th>Параметр</th><th>Тип</th><th>Описание</th></tr>
+                    <tr><td><code>action</code></td><td><span class="param-required">обязательный</span></td><td>Значение: <code>clear</code></td></tr>
+                </table>
+            </div>
+            <h3>Примеры запросов</h3>
+            <span class="code-label">curl GET</span>
+            <pre><code>curl "https://your-server/iptables-API/iptables.php?action=clear&amp;api=1&amp;api_key=YOUR_KEY"</code></pre>
+            <span class="code-label-alt">curl POST</span>
+            <pre><code>curl -X POST "https://your-server/iptables-API/iptables.php" \
+  -d "action=clear&amp;api=1&amp;api_key=YOUR_KEY"</code></pre>
+            <h3>Ответы</h3>
+            <span class="code-label">✅ Успех</span>
+            <pre class="response-success"><code>{
+    "status": "success",
+    "message": "Все правила блокировки успешно удалены",
+    "details": "IPv4 192.168.1.100 разблокирован, IPv4 10.0.0.50 разблокирован"
+}</code></pre>
+            <span class="code-label">⚠️ Частичный успех</span>
+            <pre><code>{
+    "status": "warning",
+    "message": "Некоторые правила не удалось удалить",
+    "details": "IPv4 192.168.1.100 разблокирован, Ошибка разблокировки IPv4: 10.0.0.50"
+}</code></pre>
+        </section>
+        
+        <!-- Отладка -->
+        <section id="debug" class="section">
+            <h2>🔧 Отладочная информация</h2>
+            <div class="endpoint">
+                <div class="endpoint-header">
+                    <span class="method method-get">GET</span>
+                    <span class="method method-post">POST</span>
+                    <span class="endpoint-url">?action=debug&amp;api=1&amp;api_key={KEY}</span>
+                </div>
+                <p class="endpoint-desc">Возвращает полную отладочную информацию о правилах iptables и состоянии сервера.</p>
+                <table class="param-table">
+                    <tr><th>Параметр</th><th>Тип</th><th>Описание</th></tr>
+                    <tr><td><code>action</code></td><td><span class="param-required">обязательный</span></td><td>Значение: <code>debug</code></td></tr>
+                </table>
+            </div>
+            <h3>Примеры запросов</h3>
+            <span class="code-label">curl GET</span>
+            <pre><code>curl "https://your-server/iptables-API/iptables.php?action=debug&amp;api=1&amp;api_key=YOUR_KEY"</code></pre>
+            <span class="code-label-alt">curl POST</span>
+            <pre><code>curl -X POST "https://your-server/iptables-API/iptables.php" \
+  -d "action=debug&amp;api=1&amp;api_key=YOUR_KEY"</code></pre>
+            <h3>Ответ</h3>
+            <pre class="response-success"><code>{
+    "status": "success",
+    "debug_info": {
+        "iptables_ipv4": "Chain INPUT (policy ACCEPT)...",
+        "iptables_ipv6": "Chain INPUT (policy ACCEPT)...",
+        "server_load": 0.45,
+        "blocked_ipv4": { "status": "success", "version": "IPv4", "count": 2, ... },
+        "blocked_ipv6": { "status": "success", "version": "IPv6", "count": 0, ... }
+    }
+}</code></pre>
+        </section>
+        
+        <!-- Статусы ответов -->
+        <section id="statuses" class="section">
+            <h2>📊 Статусы ответов</h2>
+            <table class="status-table">
+                <tr><td><span class="status-success">success</span></td><td>Операция выполнена успешно</td></tr>
+                <tr><td><span class="status-error">error</span></td><td>Ошибка выполнения (неверный IP, ошибка iptables)</td></tr>
+                <tr><td><span class="status-warning">warning</span></td><td>Частичный успех (например, разблокирован только один порт)</td></tr>
+                <tr><td><span class="status-info">info</span></td><td>Информационное сообщение (IP уже обрабатывается)</td></tr>
+            </table>
+            <h3>Структура ответа</h3>
+            <pre><code>{
+    "status": "success|error|warning|info",
+    "message": "Описание результата операции",
+    "details": "Дополнительные детали (опционально)"
+}</code></pre>
+            <div class="tip-box">
+                <h4>💡 Кириллица в ответах <span class="new-badge">v2.1</span></h4>
+                <p>Начиная с версии 2.1, JSON-ответы содержат читаемую кириллицу (используется <code>JSON_UNESCAPED_UNICODE</code>).</p>
+            </div>
+        </section>
+        
+        <!-- Примеры интеграции -->
+        <section id="examples" class="section">
+            <h2>💡 Примеры интеграции</h2>
+            
+            <h3>PHP (file_get_contents) <span class="new-badge">POST в теле</span></h3>
+            <pre><code>&lt;?php
+$url = "http://127.0.0.1/iptables-API/iptables.php";
+$data = http_build_query([
+    'action'  =&gt; 'block',
+    'ip'      =&gt; '192.168.1.100',
+    'api'     =&gt; 1,
+    'api_key' =&gt; 'YOUR_KEY'
+]);
+
+$options = [
+    'http' =&gt; [
+        'method'  =&gt; 'POST',
+        'header'  =&gt; 'Content-Type: application/x-www-form-urlencoded',
+        'content' =&gt; $data,
+        'timeout' =&gt; 5
+    ]
+];
+
+$context = stream_context_create($options);
+$response = file_get_contents($url, false, $context);
+$result = json_decode($response, true);
+
+if ($result['status'] === 'success') {
+    echo "IP заблокирован: " . $result['message'];
+}
+?&gt;</code></pre>
+            
+            <h3>PHP (cURL)</h3>
+            <pre><code>&lt;?php
+function blockIP($ip) {
+    $ch = curl_init("http://127.0.0.1/iptables-API/iptables.php");
+    curl_setopt_array($ch, [
+        CURLOPT_POST           =&gt; true,
+        CURLOPT_RETURNTRANSFER =&gt; true,
+        CURLOPT_TIMEOUT        =&gt; 5,
+        CURLOPT_POSTFIELDS     =&gt; http_build_query([
+            'action'  =&gt; 'block',
+            'ip'      =&gt; $ip,
+            'api'     =&gt; 1,
+            'api_key' =&gt; 'YOUR_KEY'
+        ])
+    ]);
+    
+    $response = curl_exec($ch);
+    $error = curl_error($ch);
+    curl_close($ch);
+    
+    if ($error) {
+        return ['status' =&gt; 'error', 'message' =&gt; $error];
+    }
+    
+    return json_decode($response, true);
+}
+
+function unblockIP($ip) {
+    $ch = curl_init("http://127.0.0.1/iptables-API/iptables.php");
+    curl_setopt_array($ch, [
+        CURLOPT_POST           =&gt; true,
+        CURLOPT_RETURNTRANSFER =&gt; true,
+        CURLOPT_TIMEOUT        =&gt; 5,
+        CURLOPT_POSTFIELDS     =&gt; http_build_query([
+            'action'  =&gt; 'unblock',
+            'ip'      =&gt; $ip,
+            'api'     =&gt; 1,
+            'api_key' =&gt; 'YOUR_KEY'
+        ])
+    ]);
+    
+    $response = curl_exec($ch);
+    curl_close($ch);
+    
+    return json_decode($response, true);
+}
+
+// Использование
+$result = blockIP('1.2.3.4');
+echo $result['message'];
+?&gt;</code></pre>
+            
+            <h3>Интеграция с MurKir Security</h3>
+            <pre><code>&lt;?php
+// В функции блокировки MurKir Security
+function blockViaIptables($ip) {
+    $url = "http://127.0.0.1/iptables-API/iptables.php";
+    $data = http_build_query([
+        'action'  =&gt; 'block',
+        'ip'      =&gt; $ip,
+        'api'     =&gt; 1,
+        'api_key' =&gt; 'YOUR_KEY'
+    ]);
+    
+    // Асинхронный запрос (не ждем ответа)
+    $fp = @fsockopen('127.0.0.1', 80, $errno, $errstr, 1);
+    if ($fp) {
+        $request = "POST /iptables-API/iptables.php HTTP/1.1\r\n";
+        $request .= "Host: 127.0.0.1\r\n";
+        $request .= "Content-Type: application/x-www-form-urlencoded\r\n";
+        $request .= "Content-Length: " . strlen($data) . "\r\n";
+        $request .= "Connection: Close\r\n\r\n";
+        $request .= $data;
+        fwrite($fp, $request);
+        fclose($fp);
+    }
+}
+?&gt;</code></pre>
+            
+            <h3>Bash скрипт</h3>
+            <pre><code>#!/bin/bash
+
+API_URL="https://your-server/iptables-API/iptables.php"
+API_KEY="YOUR_KEY"
+
+# Функция блокировки (POST в теле)
+block_ip() {
+    curl -s -X POST "$API_URL" \
+        -d "action=block&amp;ip=$1&amp;api=1&amp;api_key=$API_KEY"
+}
+
+# Функция разблокировки
+unblock_ip() {
+    curl -s -X POST "$API_URL" \
+        -d "action=unblock&amp;ip=$1&amp;api=1&amp;api_key=$API_KEY"
+}
+
+# Получить список заблокированных
+list_blocked() {
+    curl -s -X POST "$API_URL" \
+        -d "action=list&amp;api=1&amp;api_key=$API_KEY" | jq .
+}
+
+# Использование
+block_ip "192.168.1.100"
+echo ""
+list_blocked</code></pre>
+            
+            <h3>Python</h3>
+            <pre><code>import requests
+
+API_URL = "http://127.0.0.1/iptables-API/iptables.php"
+API_KEY = "YOUR_KEY"
+
+def block_ip(ip):
+    response = requests.post(API_URL, data={
+        'action': 'block',
+        'ip': ip,
+        'api': 1,
+        'api_key': API_KEY
+    }, timeout=5)
+    return response.json()
+
+def unblock_ip(ip):
+    response = requests.post(API_URL, data={
+        'action': 'unblock',
+        'ip': ip,
+        'api': 1,
+        'api_key': API_KEY
+    }, timeout=5)
+    return response.json()
+
+def list_blocked(version=4):
+    action = 'list6' if version == 6 else 'list'
+    response = requests.post(API_URL, data={
+        'action': action,
+        'api': 1,
+        'api_key': API_KEY
+    }, timeout=5)
+    return response.json()
+
+# Использование
+result = block_ip('192.168.1.100')
+print(result['message'])
+
+blocked = list_blocked()
+print(f"Заблокировано IPv4: {blocked['count']}")</code></pre>
+        </section>
+        
+        <footer>
+            <p>iptables API v2.1 | Документация создана для MurKir Security</p>
+        </footer>
+    </div>
+</body>
+</html>
