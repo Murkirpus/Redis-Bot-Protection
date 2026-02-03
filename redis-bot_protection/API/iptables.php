@@ -346,9 +346,9 @@ function releaseOperationLock($lockData) {
  */
 function saveRules($isIPv6 = false) {
     if ($isIPv6) {
-        exec("sudo ip6tables-save > /etc/iptables/rules.v6 2>/dev/null");
+        exec("sudo ip6tables-save > /tmp/rules.v6 2>/dev/null");
     } else {
-        exec("sudo iptables-save > /etc/iptables/rules.v4 2>/dev/null");
+        exec("sudo iptables-save > /tmp/rules.v4 2>/dev/null");
     }
 }
 
