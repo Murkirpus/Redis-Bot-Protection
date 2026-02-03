@@ -1,10 +1,19 @@
 <?php
 /**
  * ============================================================================
- * MurKir Security - Admin Panel v1.5
+ * MurKir Security - Admin Panel v1.6
  * ============================================================================
  * 
  * Полноценная админ-панель для управления Redis Bot Protection
+ * 
+ * НОВОЕ v1.6 (2026-02-02):
+ * ✅ API розблокування в iptables при натисканні "Розблокувати"
+ * ✅ unblockIP() тепер викликає API перед видаленням з Redis
+ * ✅ unblockByKey() тепер викликає API
+ * ✅ clearAllBlocks() тепер викликає API для кожного IP
+ * ✅ Налаштування API в конфігурації (api_url, api_key)
+ * ✅ clearAllBlocks тепер видаляє ua_blocked:* (новий формат)
+ * ✅ Сумісність з inline_check_lite.php v3.8.9
  * 
  * НОВОЕ v1.5 (2026-01-29):
  * ✅ Статус перевірки в "JS Challenge Статистика" → "Показано"
@@ -71,6 +80,12 @@ $config = [
     'redis_db' => 1,
     'redis_prefix' => 'bot_protection:',
     'rdns_prefix' => 'rdns:',
+    
+    // v1.6: API iptables (для розблокування IP)
+    'api_enabled' => true,
+    'api_url' => 'https://blog.dj-x.info/redis-bot_protection/API/iptables.php',
+    'api_key' => 'Asd123456',
+    'api_timeout' => 5,
     
     // Панель
     'items_per_page' => 20,
@@ -185,21 +200,44 @@ function getStats($redis, $prefix) {
     ];
     
     foreach ($keys as $key) {
-        if (strpos($key, ':ua_rotation_blocked:') !== false || strpos($key, ':ua_blocked:') !== false) {
+        // ВИПРАВЛЕННЯ: Використовуємо сувору перевірку префікса (початок ключа),
+        // замість пошуку входження підстроки де завгодно.
+        
+        // 1. UA Rotation & UA Blocked
+        if (strpos($key, $prefix . 'ua_rotation_blocked:') === 0 || strpos($key, $prefix . 'ua_blocked:') === 0) {
             $stats['blocked_ua_rotation']++;
-        } elseif (strpos($key, ':blocked:no_cookie:') !== false) {
-            $stats['blocked_no_cookie']++;  // v1.3
-        } elseif (strpos($key, ':blocked:') !== false) {
+        } 
+        // 2. Blocked No Cookie
+        elseif (strpos($key, $prefix . 'blocked:no_cookie:') === 0) {
+            $stats['blocked_no_cookie']++;
+        } 
+        // 3. Blocked Rate Limit (звичайна блокировка)
+        elseif (strpos($key, $prefix . 'blocked:') === 0) {
             $stats['blocked_rate_limit']++;
-        } elseif (strpos($key, ':rate:') !== false) {
+        } 
+        // 4. Rate Limit Keys (Активні сесії)
+        elseif (strpos($key, $prefix . 'rate:') === 0) {
             $stats['rate_limit_keys']++;
             $stats['total_tracked']++;
-        } elseif (strpos($key, ':ua_rotation_5min:') !== false || strpos($key, ':ua_rotation_hour:') !== false || strpos($key, ':ua:') !== false) {
+        } 
+        // 5. UA Rotation Tracking
+        elseif (strpos($key, $prefix . 'ua_rotation_5min:') === 0 || strpos($key, $prefix . 'ua_rotation_hour:') === 0 || strpos($key, $prefix . 'ua:') === 0) {
             $stats['ua_rotation_tracked']++;
-        } elseif (strpos($key, 'rdns:cache:') !== false) {
+        } 
+        // 6. rDNS Cache
+        elseif (strpos($key, $prefix . 'rdns:cache:') === 0) { // Тут потрібно перевірити чи префікс rdns входить в загальний prefix
+            // Зазвичай rdns: має свій префікс, але в поточному коді ми скануємо $prefix.*
+            // Якщо rDNS ключі лежать окремо, вони не потраплять в цей цикл, якщо prefix не пустий.
+            // Але якщо вони під загальним префіксом:
             $stats['rdns_cache']++;
-        } elseif (strpos($key, ':ip_whitelist:') !== false) {
-            $stats['ip_whitelist_cache']++;  // v1.3
+        }
+        elseif (strpos($key, 'rdns:cache:') !== false && $prefix === '') {
+             // Fallback для rDNS якщо немає префікса бота
+             $stats['rdns_cache']++;
+        }
+        // 7. IP Whitelist Cache
+        elseif (strpos($key, $prefix . 'ip_whitelist:') === 0) {
+            $stats['ip_whitelist_cache']++;
         }
     }
     
@@ -638,10 +676,81 @@ function clearIPWhitelistCache($redis, $prefix) {
     ];
 }
 
+/**
+ * v1.6: Виклик API для розблокування IP в iptables
+ */
+function unblockViaAPI($ip) {
+    global $config;
+    
+    if (empty($config['api_enabled'])) {
+        return ['status' => 'disabled', 'message' => 'API disabled'];
+    }
+    
+    $url = $config['api_url'] . '?' . http_build_query([
+        'action' => 'unblock',
+        'ip' => $ip,
+        'api_key' => $config['api_key']
+    ]);
+    
+    try {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => $config['api_timeout'],
+            CURLOPT_CONNECTTIMEOUT => $config['api_timeout'],
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => false,
+            CURLOPT_USERAGENT => 'MurKir-Admin/1.6',
+            CURLOPT_HTTPHEADER => [
+                'Accept: application/json',
+                'Cache-Control: no-cache'
+            ]
+        ]);
+        
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+        
+        if ($curlError) {
+            return ['status' => 'error', 'message' => "CURL: $curlError"];
+        }
+        
+        if ($httpCode !== 200) {
+            return ['status' => 'error', 'message' => "HTTP $httpCode"];
+        }
+        
+        $data = json_decode($response, true);
+        
+        if (!$data) {
+            return ['status' => 'error', 'message' => 'Invalid JSON'];
+        }
+        
+        if (isset($data['status'])) {
+            if ($data['status'] === 'success' || $data['status'] === 'not_blocked') {
+                return ['status' => 'success', 'message' => 'Unblocked via API'];
+            }
+            return ['status' => 'error', 'message' => $data['message'] ?? 'Unknown error'];
+        }
+        
+        return ['status' => 'success', 'message' => 'OK'];
+        
+    } catch (Exception $e) {
+        return ['status' => 'error', 'message' => $e->getMessage()];
+    }
+}
+
 function unblockIP($redis, $prefix, $ip) {
     if (!$redis) return ['success' => false, 'message' => 'Redis недоступний'];
     
     $deleted = 0;
+    $apiResult = null;
+    
+    // v1.6: Спочатку викликаємо API для розблокування в iptables
+    if (filter_var($ip, FILTER_VALIDATE_IP)) {
+        $apiResult = unblockViaAPI($ip);
+    }
     
     // Прямые ключи для удаления
     $directKeys = [
@@ -679,39 +788,131 @@ function unblockIP($redis, $prefix, $ip) {
         }
     }
     
-    return ['success' => true, 'message' => "IP $ip розблоковано", 'deleted' => $deleted];
+    // v1.6: Формуємо повідомлення з результатом API
+    $message = "IP $ip розблоковано (Redis: $deleted)";
+    if ($apiResult) {
+        if ($apiResult['status'] === 'success') {
+            $message .= " ✓ API: OK";
+        } elseif ($apiResult['status'] === 'disabled') {
+            $message .= " (API вимкнено)";
+        } else {
+            $message .= " ⚠ API: " . $apiResult['message'];
+        }
+    }
+    
+    return [
+        'success' => true, 
+        'message' => $message, 
+        'deleted' => $deleted,
+        'api_result' => $apiResult
+    ];
 }
 
 function unblockByKey($redis, $key) {
     if (!$redis) return ['success' => false, 'message' => 'Redis недоступний'];
     
+    // v1.6: Витягуємо IP з ключа для API
+    $ip = null;
+    if (preg_match('/([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})/', $key, $matches)) {
+        $ip = $matches[1];
+    } elseif (preg_match('/([0-9a-f:]+:[0-9a-f:]+)/i', $key, $matches)) {
+        $ip = $matches[1]; // IPv6
+    }
+    
+    // Також перевіряємо дані ключа
+    if (!$ip) {
+        $data = $redis->get($key);
+        if (is_array($data) && isset($data['ip'])) {
+            $ip = $data['ip'];
+        }
+    }
+    
+    // Викликаємо API якщо знайшли IP
+    $apiResult = null;
+    if ($ip && filter_var($ip, FILTER_VALIDATE_IP)) {
+        $apiResult = unblockViaAPI($ip);
+    }
+    
     $deleted = $redis->del($key);
     
-    return ['success' => $deleted > 0, 'message' => $deleted > 0 ? 'Розблоковано' : 'Ключ не знайдено'];
+    $message = $deleted > 0 ? 'Розблоковано' : 'Ключ не знайдено';
+    if ($apiResult && $apiResult['status'] === 'success') {
+        $message .= ' ✓ API: OK';
+    }
+    
+    return ['success' => $deleted > 0, 'message' => $message, 'api_result' => $apiResult];
 }
 
 function clearAllBlocks($redis, $prefix) {
     if (!$redis) return ['success' => false, 'message' => 'Redis недоступний'];
     
     $deleted = 0;
+    $apiSuccess = 0;
+    $apiFailed = 0;
+    $processedIPs = [];  // Щоб не викликати API двічі для одного IP
     
-    // Получаем все ключи блокировок
+    // Получаем все ключи блокировок (все форматы)
     $blockedKeys = $redis->keys($prefix . 'blocked:*');
     $uaRotationKeys = $redis->keys($prefix . 'ua_rotation_blocked:*');
+    $uaBlockedKeys = $redis->keys($prefix . 'ua_blocked:*');  // v1.6: новий формат
     
     $keys = array_merge(
         is_array($blockedKeys) ? $blockedKeys : [],
-        is_array($uaRotationKeys) ? $uaRotationKeys : []
+        is_array($uaRotationKeys) ? $uaRotationKeys : [],
+        is_array($uaBlockedKeys) ? $uaBlockedKeys : []
     );
     
+    // Видаляємо дублікати
+    $keys = array_unique($keys);
+    
     foreach ($keys as $key) {
-        // Ключи возвращаются с префиксом Redis (если установлен), удаляем как есть
+        // v1.6: Витягуємо IP для API
+        $ip = null;
+        if (preg_match('/([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})/', $key, $matches)) {
+            $ip = $matches[1];
+        }
+        
+        // Також перевіряємо дані
+        if (!$ip) {
+            $data = $redis->get($key);
+            if (is_array($data) && isset($data['ip'])) {
+                $ip = $data['ip'];
+            }
+        }
+        
+        // Викликаємо API (один раз для кожного IP)
+        if ($ip && filter_var($ip, FILTER_VALIDATE_IP) && !isset($processedIPs[$ip])) {
+            $processedIPs[$ip] = true;
+            $apiResult = unblockViaAPI($ip);
+            if ($apiResult['status'] === 'success') {
+                $apiSuccess++;
+            } else {
+                $apiFailed++;
+            }
+            usleep(50000); // 50ms затримка між API запитами
+        }
+        
+        // Видаляємо ключ з Redis
         if ($redis->del($key)) {
             $deleted++;
         }
     }
     
-    return ['success' => true, 'message' => "Видалено $deleted блокувань", 'deleted' => $deleted];
+    $message = "Видалено $deleted блокувань";
+    if ($apiSuccess > 0 || $apiFailed > 0) {
+        $message .= " | API: ✓$apiSuccess";
+        if ($apiFailed > 0) {
+            $message .= " ✗$apiFailed";
+        }
+    }
+    
+    return [
+        'success' => true, 
+        'message' => $message, 
+        'deleted' => $deleted,
+        'api_success' => $apiSuccess,
+        'api_failed' => $apiFailed
+    ];
 }
 
 function getUARotationInfo($redis, $prefix, $ip) {
