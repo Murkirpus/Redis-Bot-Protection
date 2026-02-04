@@ -1,8 +1,10 @@
 <?php
 /**
- * MurKir Security - Redis Bot Protection v3.8.11
+ * MurKir Security - Redis Bot Protection v3.8.12
  * PoW JS Challenge + Rate Limit + IP Whitelist + Custom UA Logging
  * Security hardened: IP validation, input sanitization, Open Redirect protection
+ * 
+ * v3.8.12: Додано підтримку GET/POST методів для API запитів
  */
 
 // ВЛАСНІ USER AGENTS (пропускаються без JS Challenge)
@@ -497,16 +499,18 @@ $_HAMMER_PROTECTION = array(
 );
 
 // v3.8.8: ЄДИНІ НАЛАШТУВАННЯ API (використовуються скрізь)
+// v3.8.12: Додано підтримку GET/POST методів
 
 $_API_CONFIG = array(
-    'enabled' => false,                                                              // Увімкнути API
+    'enabled' => true,                                                              // Увімкнути API
     'url' => 'https://blog.dj-x.info/redis-bot_protection/API/iptables.php',       // URL API
-    'api_key' => '12345',                                                       // API ключ
+    'api_key' => 'Asd12345',                                                       // API ключ
+    'method' => 'POST',                                                             // Метод запиту: 'GET' або 'POST'
     'timeout' => 5,                                                                 // Таймаут запиту (секунди)
     'retry_on_failure' => 2,                                                        // Кількість повторів при помилці
     'verify_ssl' => true,                                                           // Перевіряти SSL сертифікат
-    'user_agent' => 'BotProtection/3.8.8',                                         // User-Agent для API запитів
-    'block_on_api' => false,                                                         // Блокувати через API
+    'user_agent' => 'BotProtection/3.8.12',                                        // User-Agent для API запитів
+    'block_on_api' => true,                                                         // Блокувати через API
     'block_on_redis' => true,                                                       // Блокувати в Redis
 );
 
@@ -750,6 +754,7 @@ function _track_page_hammer($ip, $pageType = 'challenge') {
 /**
  * v3.8.7: Виклик API для блокування IP
  * v3.8.8: Використовує глобальні налаштування $_API_CONFIG
+ * v3.8.12: Підтримка GET/POST методів
  */
 function _hammer_call_api($ip, $reason = 'hammer_attack') {
     global $_API_CONFIG;
@@ -759,12 +764,17 @@ function _hammer_call_api($ip, $reason = 'hammer_attack') {
         return array('status' => 'skipped', 'message' => 'API disabled');
     }
     
-    $url = $_API_CONFIG['url'] .
-           '?action=block' .
-           '&ip=' . urlencode($ip) .
-           '&api=1' .
-           '&api_key=' . urlencode($_API_CONFIG['api_key']) .
-           '&reason=' . urlencode($reason);
+    // Визначаємо метод запиту (за замовчуванням POST)
+    $method = isset($_API_CONFIG['method']) ? strtoupper($_API_CONFIG['method']) : 'POST';
+    
+    // Параметри запиту
+    $params = array(
+        'action' => 'block',
+        'ip' => $ip,
+        'api' => 1,
+        'api_key' => $_API_CONFIG['api_key'],
+        'reason' => $reason
+    );
     
     try {
         $ch = curl_init();
@@ -772,8 +782,7 @@ function _hammer_call_api($ip, $reason = 'hammer_attack') {
             return array('status' => 'error', 'message' => 'cURL init failed');
         }
         
-        curl_setopt_array($ch, array(
-            CURLOPT_URL => $url,
+        $curlOptions = array(
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => $_API_CONFIG['timeout'],
             CURLOPT_CONNECTTIMEOUT => 3,
@@ -785,7 +794,19 @@ function _hammer_call_api($ip, $reason = 'hammer_attack') {
                 'Accept: application/json',
                 'Cache-Control: no-cache'
             )
-        ));
+        );
+        
+        if ($method === 'POST') {
+            // POST запит - параметри в тілі
+            $curlOptions[CURLOPT_URL] = $_API_CONFIG['url'];
+            $curlOptions[CURLOPT_POST] = true;
+            $curlOptions[CURLOPT_POSTFIELDS] = http_build_query($params);
+        } else {
+            // GET запит - параметри в URL
+            $curlOptions[CURLOPT_URL] = $_API_CONFIG['url'] . '?' . http_build_query($params);
+        }
+        
+        curl_setopt_array($ch, $curlOptions);
         
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -4197,6 +4218,7 @@ class SimpleBotProtection {
     
     /**
      * Виклик API для блокування
+     * v3.8.12: Підтримка GET/POST методів
      */
     private function callBlockingAPI($ip, $action = 'block') {
         if (!$this->apiSettings['enabled']) {
@@ -4207,11 +4229,16 @@ class SimpleBotProtection {
             return array('status' => 'skipped', 'message' => 'API blocking disabled');
         }
         
-        $url = $this->apiSettings['url'] .
-               '?action=' . urlencode($action) .
-               '&ip=' . urlencode($ip) .
-               '&api=1' .
-               '&api_key=' . urlencode($this->apiSettings['api_key']);
+        // Визначаємо метод запиту (за замовчуванням POST)
+        $method = isset($this->apiSettings['method']) ? strtoupper($this->apiSettings['method']) : 'POST';
+        
+        // Параметри запиту
+        $params = array(
+            'action' => $action,
+            'ip' => $ip,
+            'api' => 1,
+            'api_key' => $this->apiSettings['api_key']
+        );
         
         $maxRetries = max(1, $this->apiSettings['retry_on_failure']);
         $attempt = 0;
@@ -4226,8 +4253,7 @@ class SimpleBotProtection {
                     throw new Exception("Failed to initialize cURL");
                 }
                 
-                curl_setopt_array($ch, array(
-                    CURLOPT_URL => $url,
+                $curlOptions = array(
                     CURLOPT_RETURNTRANSFER => true,
                     CURLOPT_TIMEOUT => $this->apiSettings['timeout'],
                     CURLOPT_CONNECTTIMEOUT => 3,
@@ -4239,7 +4265,19 @@ class SimpleBotProtection {
                         'Accept: application/json',
                         'Cache-Control: no-cache'
                     )
-                ));
+                );
+                
+                if ($method === 'POST') {
+                    // POST запит - параметри в тілі
+                    $curlOptions[CURLOPT_URL] = $this->apiSettings['url'];
+                    $curlOptions[CURLOPT_POST] = true;
+                    $curlOptions[CURLOPT_POSTFIELDS] = http_build_query($params);
+                } else {
+                    // GET запит - параметри в URL
+                    $curlOptions[CURLOPT_URL] = $this->apiSettings['url'] . '?' . http_build_query($params);
+                }
+                
+                curl_setopt_array($ch, $curlOptions);
                 
                 $response = curl_exec($ch);
                 $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
