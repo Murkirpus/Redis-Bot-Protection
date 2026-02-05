@@ -1,9 +1,14 @@
 <?php
 /**
  * ============================================================================
- * MurKir Security - Advanced Cleanup Script v1.1
+ * MurKir Security - Advanced Cleanup Script v1.2
  * ============================================================================
- * Сумісний з inline_check_lite.php v3.8.2+
+ * Сумісний з inline_check_lite.php v3.8.12+
+ * 
+ * НОВЕ v1.2:
+ * 🔥 Виправлено: Додано api=1 параметр для API запитів (IPv6 не працювало!)
+ * 🔥 Виправлено: IPv6 тепер коректно розблоковуються через POST
+ * 🔥 Додано: Підтримка GET/POST методів для API (налаштування API_METHOD)
  * 
  * НОВЕ v1.1:
  * 🔥 Додано паттерн ua_rotation_blocked (старий формат)
@@ -48,9 +53,10 @@ define('REDIS_PREFIX', 'bot_protection:');
 // API налаштування для iptables (має збігатися з inline_check_lite.php)
 define('API_ENABLED', true);
 define('API_URL', 'https://blog.dj-x.info/redis-bot_protection/API/iptables.php');  // ЗМІНІТЬ!
-define('API_KEY', '12345');                        // ЗМІНІТЬ!
+define('API_KEY', 'Asd12345');                        // ЗМІНІТЬ!
+define('API_METHOD', 'POST');                          // v1.2: 'GET' або 'POST' (POST рекомендовано для IPv6!)
 define('API_TIMEOUT', 5);
-define('API_USER_AGENT', 'MurKir-Cleanup/1.0');
+define('API_USER_AGENT', 'MurKir-Cleanup/1.2');
 
 // Налаштування очистки
 define('TTL_THRESHOLD', 300);         // Розблокувати якщо TTL < 5 хвилин
@@ -209,22 +215,27 @@ class MurKirCleanup {
     
     /**
      * Виклик API для розблокування IP
+     * v1.2: Виправлено - додано api=1, підтримка GET/POST, коректна робота з IPv6
      */
     private function unblockViaAPI($ip) {
         if (!API_ENABLED) {
             return array('status' => 'disabled', 'message' => 'API disabled');
         }
         
+        // v1.2: Додано api=1 - ОБОВ'ЯЗКОВО для отримання JSON відповіді!
         $params = array(
             'action' => 'unblock',
             'ip' => $ip,
+            'api' => 1,              // <-- Це було відсутнє! Без цього API повертає HTML
             'api_key' => API_KEY
         );
         
-        $url = API_URL . '?' . http_build_query($params);
+        // v1.2: Визначаємо метод запиту
+        $method = defined('API_METHOD') ? strtoupper(API_METHOD) : 'POST';
         
-        $ch = curl_init($url);
-        curl_setopt_array($ch, array(
+        $ch = curl_init();
+        
+        $curlOptions = array(
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => API_TIMEOUT,
             CURLOPT_CONNECTTIMEOUT => API_TIMEOUT,
@@ -236,7 +247,19 @@ class MurKirCleanup {
                 'Accept: application/json',
                 'Cache-Control: no-cache'
             )
-        ));
+        );
+        
+        if ($method === 'POST') {
+            // POST запит - параметри в тілі (безпечніше для IPv6!)
+            $curlOptions[CURLOPT_URL] = API_URL;
+            $curlOptions[CURLOPT_POST] = true;
+            $curlOptions[CURLOPT_POSTFIELDS] = http_build_query($params);
+        } else {
+            // GET запит - параметри в URL
+            $curlOptions[CURLOPT_URL] = API_URL . '?' . http_build_query($params);
+        }
+        
+        curl_setopt_array($ch, $curlOptions);
         
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -254,7 +277,9 @@ class MurKirCleanup {
         $data = json_decode($response, true);
         
         if (!$data) {
-            return array('status' => 'error', 'message' => 'Invalid JSON');
+            // v1.2: Покращене повідомлення про помилку
+            $preview = substr($response, 0, 100);
+            return array('status' => 'error', 'message' => "Invalid JSON. Response: $preview...");
         }
         
         if (isset($data['status'])) {
@@ -324,21 +349,24 @@ class MurKirCleanup {
                 'pattern' => REDIS_PREFIX . 'ua_blocked:*',
                 'description' => 'UA Blocks (new format)',
                 'api_unblock' => true,
-                'ip_from_key' => true  // IP береться з ключа
+                'ip_from_key' => true,
+                'ip_key_prefix' => 'ua_blocked:'  // v1.2: Префікс до IP в ключі
             ),
             // v1.1: Старий формат UA rotation blocks
             array(
                 'pattern' => REDIS_PREFIX . 'ua_rotation_blocked:*',
                 'description' => 'UA Rotation Blocks (old format)',
                 'api_unblock' => true,
-                'ip_from_key' => true
+                'ip_from_key' => true,
+                'ip_key_prefix' => 'ua_rotation_blocked:'
             ),
             // No-cookie blocks
             array(
                 'pattern' => REDIS_PREFIX . 'blocked:no_cookie:*',
                 'description' => 'No-Cookie Attack Blocks',
                 'api_unblock' => true,
-                'ip_from_key' => true
+                'ip_from_key' => true,
+                'ip_key_prefix' => 'blocked:no_cookie:'  // v1.2: Два рівні до IP!
             ),
             // Rate limit blocks (IP в даних)
             array(
@@ -363,6 +391,7 @@ class MurKirCleanup {
         $pattern = $config['pattern'];
         $useAPI = $config['api_unblock'];
         $ipFromKey = isset($config['ip_from_key']) ? $config['ip_from_key'] : false;
+        $ipKeyPrefix = isset($config['ip_key_prefix']) ? $config['ip_key_prefix'] : '';  // v1.2
         $exclude = isset($config['exclude']) ? $config['exclude'] : array();
         
         $iterator = null;
@@ -417,10 +446,25 @@ class MurKirCleanup {
                     // Отримуємо IP
                     $ip = null;
                     
-                    if ($ipFromKey) {
-                        // IP в ключі: bot_protection:ua_blocked:1.2.3.4
-                        $parts = explode(':', $key);
-                        $ip = end($parts);
+                    if ($ipFromKey && $ipKeyPrefix) {
+                        // v1.2: Виправлено для IPv6!
+                        // Ключ: bot_protection:ua_blocked:1.2.3.4
+                        // Або:  bot_protection:ua_blocked:2a03:3f40:2:e:0:4:0:2
+                        // Або:  bot_protection:blocked:no_cookie:2a03:3f40:2:e:0:4:0:2
+                        // Використовуємо ip_key_prefix для точного визначення де починається IP
+                        
+                        $fullPrefix = REDIS_PREFIX . $ipKeyPrefix;  // bot_protection:ua_blocked:
+                        if (strpos($key, $fullPrefix) === 0) {
+                            $ip = substr($key, strlen($fullPrefix));  // Все після префіксу = IP
+                        }
+                    } elseif ($ipFromKey) {
+                        // Fallback: старий метод (для сумісності)
+                        $prefixLen = strlen(REDIS_PREFIX);
+                        $withoutPrefix = substr($key, $prefixLen);
+                        $firstColon = strpos($withoutPrefix, ':');
+                        if ($firstColon !== false) {
+                            $ip = substr($withoutPrefix, $firstColon + 1);
+                        }
                     } else {
                         // IP в даних
                         $data = $this->redis->get($key);
@@ -951,8 +995,8 @@ try {
     $startTime = microtime(true);
     
     echo "╔══════════════════════════════════════════════════════════════╗\n";
-    echo "║    MurKir Security - Advanced Cleanup v1.1                   ║\n";
-    echo "║    Сумісний з inline_check_lite.php v3.8.2+                  ║\n";
+    echo "║    MurKir Security - Advanced Cleanup v1.2                   ║\n";
+    echo "║    Сумісний з inline_check_lite.php v3.8.12+                 ║\n";
     echo "╚══════════════════════════════════════════════════════════════╝\n";
     echo "Started: " . date('Y-m-d H:i:s') . "\n";
     echo "Mode: " . ($isCLI ? "CLI" : "WEB") . "\n";
@@ -965,6 +1009,7 @@ try {
     echo "\nSettings:\n";
     echo "  Redis: " . REDIS_HOST . ":" . REDIS_PORT . " (DB " . REDIS_DATABASE . ")\n";
     echo "  API: " . (API_ENABLED ? API_URL : 'Disabled') . "\n";
+    echo "  API Method: " . (defined('API_METHOD') ? API_METHOD : 'POST') . "\n";
     echo "  TTL threshold: " . TTL_THRESHOLD . " seconds\n";
     echo "  Cleanup threshold: " . CLEANUP_THRESHOLD . " keys\n";
     echo "  Force cleanup: " . ($forceCleanup ? "YES" : "NO") . "\n\n";
