@@ -1,9 +1,10 @@
 <?php
 /**
- * MurKir Security - Redis Bot Protection v3.8.12
+ * MurKir Security - Redis Bot Protection v3.8.13
  * PoW JS Challenge + Rate Limit + IP Whitelist + Custom UA Logging
  * Security hardened: IP validation, input sanitization, Open Redirect protection
  * 
+ * v3.8.13: Додано Admin URL whitelist в inline JS Challenge секцію
  * v3.8.12: Додано підтримку GET/POST методів для API запитів
  */
 
@@ -32,8 +33,8 @@ $ADMIN_IP_WHITELIST = array(
 $ADMIN_URL_WHITELIST_ENABLED = true;
 
 $ADMIN_URL_WHITELIST = array(
-    'redis-bot_admin.php',
-	'iptables.php',
+    '/js_challenge_lite',
+	'/redis-bot_protection/api',
 	'/admin',
     '/engine/ajax',
     '/engine/admin',
@@ -3036,6 +3037,12 @@ if ($_JSC_CONFIG['enabled']) {
         // Логування вже зроблено в _is_admin_ip() або _is_search_engine_ip()
     }
     
+    // ПРІОРИТЕТ 0.5: ADMIN URL WHITELIST (v3.8.13)
+    // URL адмінки та API пропускаються без JS Challenge
+    if (!$_jsc_skip && _is_admin_url()) {
+        $_jsc_skip = true;
+    }
+    
     // ПРІОРИТЕТ 1: ВЛАСНІ USER AGENTS
     if (!$_jsc_skip && _is_custom_ua($userAgent)) {
         $_jsc_skip = true;
@@ -3061,6 +3068,14 @@ if ($_JSC_CONFIG['enabled']) {
         
         if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
             $_jsc_skip = true;
+        }
+        
+        // v3.8.13: Запити з параметром api=1 (API виклики) теж пропускаємо
+        if (!$_jsc_skip && (isset($_GET['api']) && $_GET['api'] == '1')) {
+            // Додаткова перевірка: тільки якщо URL в admin whitelist
+            if (_is_admin_url()) {
+                $_jsc_skip = true;
+            }
         }
     }
     
