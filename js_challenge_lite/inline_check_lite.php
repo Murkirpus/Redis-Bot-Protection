@@ -10,13 +10,6 @@
 // ВЛАСНІ USER AGENTS (пропускаються без JS Challenge)
 $CUSTOM_USER_AGENTS = array(
     // Додай свої User Agents тут:
-    'hosttracker',           // ✅ OK - моніторинг
-    'sitecheckerbotcrawler',
-	'mj12bot',
-	'claudebot',
-	'claude-user',
-    'chatgpt-user',
-	'archive.st',
 	'botprotection',
 	'murkir-cleanup',
     
@@ -470,9 +463,47 @@ $_JSC_CONFIG = array(
     
     // PROOF OF WORK (PoW) НАЛАШТУВАННЯ - v3.8.0
     'pow_enabled' => true,             // Увімкнути PoW замість простого challenge
-    'pow_difficulty' => 4,             // Кількість нулів (4 = ~1-3 сек, 5 = ~10-30 сек)
+    'pow_difficulty' => 3,             // Кількість нулів (4 = ~1-3 сек, 5 = ~10-30 сек)
     'pow_timeout' => 60,               // Максимальний час виконання (секунди)
     'pow_style' => 'cloudflare',       // 'cloudflare' або 'smf' (стиль сторінки)
+    
+    // v3.8.12: РЕЖИМ РОБОТИ JS CHALLENGE
+    // 'always' - завжди показувати (стара поведінка)
+    // 'never'  - ніколи не показувати
+    // 'auto'   - тільки при аномальній активності (рекомендовано)
+    'mode' => 'auto',
+);
+
+// v3.8.12: НАЛАШТУВАННЯ АВТОМАТИЧНОГО РЕЖИМУ JS CHALLENGE
+// Ці пороги визначають коли показувати Challenge в режимі 'auto'
+
+$_JSC_AUTO_CONFIG = array(
+    // Поріг запитів без cookies (новий відвідувач або бот)
+    'no_cookie_threshold' => 3,        // Кількість запитів без bot_protection_uid
+    'no_cookie_window' => 30,          // За скільки секунд (вікно)
+    
+    // Поріг швидких запитів (burst detection)
+    'burst_threshold' => 5,            // Запитів за короткий період
+    'burst_window' => 10,              // Секунд
+    
+    // Загальний rate limit для показу Challenge
+    'rate_threshold' => 15,            // Запитів за хвилину для тригеру
+    'rate_window' => 60,               // Секунд
+    
+    // Підозрілі ознаки (кожна додає "бали підозрілості")
+    'check_empty_ua' => true,          // Порожній User-Agent = +2 бали
+    'check_suspicious_ua' => true,     // Підозрілий UA (curl, wget, python) = +1 бал
+    'check_no_referer' => false,       // Без Referer на внутрішніх сторінках = +1 бал
+    'check_no_accept_language' => true, // Без Accept-Language = +1 бал
+    
+    // Поріг балів для показу Challenge
+    'suspicion_threshold' => 2,        // При скількох балах показувати Challenge
+    
+    // Whitelist перших N запитів (дати шанс новим користувачам)
+    'grace_requests' => 3,             // Перші N запитів пропускаємо без Challenge
+    
+    // Логування
+    'log_triggers' => true,            // Логувати причини показу Challenge
 );
 
 // v3.8.7: НАЛАШТУВАННЯ ЗАХИСТУ ВІД HAMMER АТАК (долбіння сторінок)
@@ -515,6 +546,209 @@ $_API_CONFIG = array(
 );
 
 // ШВИДКА ПЕРЕВІРКА ВЛАСНИХ USER AGENTS (ПЕРЕД JS CHALLENGE!)
+
+/**
+ * v3.8.12: Перевірка аномальної активності для автоматичного режиму JS Challenge
+ * 
+ * Повертає true якщо виявлено підозрілу активність і потрібно показати Challenge
+ * 
+ * @param string $ip IP адреса клієнта
+ * @param string $userAgent User-Agent клієнта
+ * @return bool|array false якщо все ОК, або масив з причиною
+ */
+function _jsc_check_anomaly($ip, $userAgent) {
+    global $_JSC_AUTO_CONFIG;
+    
+    static $redis = null;
+    static $connected = false;
+    
+    // Підключення до Redis
+    if ($redis === null) {
+        try {
+            $redis = new Redis();
+            $connected = $redis->connect('127.0.0.1', 6379, 0.5);
+            if ($connected) {
+                $redis->select(1);
+                $redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_PHP);
+            }
+        } catch (Exception $e) {
+            // Без Redis - показуємо Challenge для безпеки
+            return array('reason' => 'redis_unavailable', 'score' => 99);
+        }
+    }
+    
+    if (!$connected) {
+        return array('reason' => 'redis_unavailable', 'score' => 99);
+    }
+    
+    $prefix = 'bot_protection:';
+    $now = time();
+    $suspicionScore = 0;
+    $triggers = array();
+    
+    // ========================================
+    // ПЕРЕВІРКА 1: Бали підозрілості за ознаками
+    // ========================================
+    
+    // Порожній User-Agent
+    if ($_JSC_AUTO_CONFIG['check_empty_ua'] && empty($userAgent)) {
+        $suspicionScore += 2;
+        $triggers[] = 'empty_ua';
+    }
+    
+    // Підозрілий User-Agent (боти, скрипти)
+    if ($_JSC_AUTO_CONFIG['check_suspicious_ua'] && !empty($userAgent)) {
+        $suspiciousPatterns = array('curl', 'wget', 'python', 'java/', 'libwww', 'httpclient', 'axios', 'node-fetch', 'go-http', 'scrapy');
+        $uaLower = strtolower($userAgent);
+        foreach ($suspiciousPatterns as $pattern) {
+            if (strpos($uaLower, $pattern) !== false) {
+                $suspicionScore += 1;
+                $triggers[] = 'suspicious_ua:' . $pattern;
+                break;
+            }
+        }
+    }
+    
+    // Без Accept-Language (браузери завжди надсилають)
+    if ($_JSC_AUTO_CONFIG['check_no_accept_language']) {
+        if (empty($_SERVER['HTTP_ACCEPT_LANGUAGE'])) {
+            $suspicionScore += 1;
+            $triggers[] = 'no_accept_language';
+        }
+    }
+    
+    // Без Referer на внутрішніх сторінках
+    if ($_JSC_AUTO_CONFIG['check_no_referer']) {
+        $uri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/';
+        // Тільки для не-головних сторінок
+        if ($uri !== '/' && empty($_SERVER['HTTP_REFERER'])) {
+            $suspicionScore += 1;
+            $triggers[] = 'no_referer';
+        }
+    }
+    
+    // ========================================
+    // ПЕРЕВІРКА 2: Кількість запитів (rate check)
+    // ========================================
+    
+    $requestKey = $prefix . 'jsc_auto:requests:' . $ip;
+    
+    try {
+        // Отримуємо історію запитів
+        $requests = $redis->get($requestKey);
+        if (!$requests || !is_array($requests)) {
+            $requests = array();
+        }
+        
+        // Додаємо поточний запит
+        $requests[] = $now;
+        
+        // Видаляємо старі записи (старше 60 секунд)
+        $requests = array_filter($requests, function($t) use ($now) {
+            return ($now - $t) < 60;
+        });
+        $requests = array_values($requests);
+        
+        // Зберігаємо оновлений список
+        $redis->setex($requestKey, 120, $requests);
+        
+        $totalRequests = count($requests);
+        
+        // Grace period - перші N запитів пропускаємо
+        if ($totalRequests <= $_JSC_AUTO_CONFIG['grace_requests']) {
+            // Новий користувач - даємо шанс
+            if (!empty($_JSC_AUTO_CONFIG['log_triggers']) && !empty($triggers)) {
+                error_log("JSC AUTO: IP=$ip in grace period (request #$totalRequests), triggers: " . implode(', ', $triggers));
+            }
+            return false;
+        }
+        
+        // Перевірка burst (багато запитів за короткий час)
+        $burstWindow = $_JSC_AUTO_CONFIG['burst_window'];
+        $burstCount = 0;
+        foreach ($requests as $t) {
+            if (($now - $t) < $burstWindow) {
+                $burstCount++;
+            }
+        }
+        
+        if ($burstCount >= $_JSC_AUTO_CONFIG['burst_threshold']) {
+            $suspicionScore += 3;
+            $triggers[] = "burst:$burstCount/{$burstWindow}s";
+        }
+        
+        // Перевірка загального rate limit
+        if ($totalRequests >= $_JSC_AUTO_CONFIG['rate_threshold']) {
+            $suspicionScore += 2;
+            $triggers[] = "rate:$totalRequests/60s";
+        }
+        
+    } catch (Exception $e) {
+        // При помилці Redis - не блокуємо
+    }
+    
+    // ========================================
+    // ПЕРЕВІРКА 3: Запити без cookies
+    // ========================================
+    
+    $hasCookie = isset($_COOKIE['bot_protection_uid']) && !empty($_COOKIE['bot_protection_uid']);
+    
+    if (!$hasCookie) {
+        $noCookieKey = $prefix . 'jsc_auto:no_cookie:' . $ip;
+        
+        try {
+            $noCookieRequests = $redis->get($noCookieKey);
+            if (!$noCookieRequests || !is_array($noCookieRequests)) {
+                $noCookieRequests = array();
+            }
+            
+            // Фільтруємо за вікном
+            $window = $_JSC_AUTO_CONFIG['no_cookie_window'];
+            $noCookieRequests = array_filter($noCookieRequests, function($t) use ($now, $window) {
+                return ($now - $t) < $window;
+            });
+            $noCookieRequests = array_values($noCookieRequests);
+            $noCookieRequests[] = $now;
+            
+            $redis->setex($noCookieKey, $window * 2, $noCookieRequests);
+            
+            $noCookieCount = count($noCookieRequests);
+            
+            if ($noCookieCount >= $_JSC_AUTO_CONFIG['no_cookie_threshold']) {
+                $suspicionScore += 2;
+                $triggers[] = "no_cookie:$noCookieCount/{$window}s";
+            }
+            
+        } catch (Exception $e) {
+            // При помилці - не блокуємо
+        }
+    }
+    
+    // ========================================
+    // РІШЕННЯ: показувати Challenge чи ні
+    // ========================================
+    
+    if ($suspicionScore >= $_JSC_AUTO_CONFIG['suspicion_threshold']) {
+        if (!empty($_JSC_AUTO_CONFIG['log_triggers'])) {
+            error_log(sprintf(
+                "JSC AUTO TRIGGERED: IP=%s, score=%d (threshold=%d), triggers=[%s], UA=%s",
+                $ip,
+                $suspicionScore,
+                $_JSC_AUTO_CONFIG['suspicion_threshold'],
+                implode(', ', $triggers),
+                substr($userAgent, 0, 80)
+            ));
+        }
+        
+        return array(
+            'reason' => 'anomaly_detected',
+            'score' => $suspicionScore,
+            'triggers' => $triggers
+        );
+    }
+    
+    return false;
+}
 
 /**
  * Перевірка чи User Agent в whitelist власних UA
@@ -2831,10 +3065,38 @@ if ($_JSC_CONFIG['enabled']) {
     }
     
     // ПОКАЗ JS CHALLENGE (тільки для звичайних користувачів)
+    // v3.8.12: Підтримка режимів 'always', 'auto', 'never'
     if (!$_jsc_skip && !_jsc_isVerified($_JSC_CONFIG['secret_key'], $_JSC_CONFIG['cookie_name'])) {
-        $challenge = _jsc_generateChallenge($_JSC_CONFIG['secret_key']);
-        $currentUrl = _jsc_getSafeCurrentUrl();
-        _jsc_showChallengePage($challenge, $currentUrl);
+        
+        $mode = isset($_JSC_CONFIG['mode']) ? $_JSC_CONFIG['mode'] : 'always';
+        $showChallenge = false;
+        
+        switch ($mode) {
+            case 'never':
+                // Ніколи не показувати Challenge
+                $showChallenge = false;
+                break;
+                
+            case 'auto':
+                // Показувати тільки при аномальній активності
+                $anomaly = _jsc_check_anomaly($clientIP, $userAgent);
+                if ($anomaly !== false) {
+                    $showChallenge = true;
+                }
+                break;
+                
+            case 'always':
+            default:
+                // Завжди показувати (стара поведінка)
+                $showChallenge = true;
+                break;
+        }
+        
+        if ($showChallenge) {
+            $challenge = _jsc_generateChallenge($_JSC_CONFIG['secret_key']);
+            $currentUrl = _jsc_getSafeCurrentUrl();
+            _jsc_showChallengePage($challenge, $currentUrl);
+        }
     }
 }
 
@@ -2893,8 +3155,8 @@ class SimpleBotProtection {
         'max_requests_per_hour' => 500,
         'burst_threshold' => 10,
         'block_duration' => 900,
-        'cookie_multiplier' => 1.5,
-        'js_verified_multiplier' => 2.0,
+        'cookie_multiplier' => 2.0,
+        'js_verified_multiplier' => 3.0,
     );
     
     // Налаштування UA Rotation
@@ -2924,10 +3186,10 @@ class SimpleBotProtection {
      */
     
     // Скільки запитів без bot_protection_uid перед блокуванням
-    private $noCookieThreshold = 3;
+    private $noCookieThreshold = 10;
     
     // За який період часу рахувати (секунди)
-    private $noCookieTimeWindow = 30;
+    private $noCookieTimeWindow = 60;
     
     /**
      * Жорсткі rate limits для користувачів БЕЗ bot_protection_uid cookie
