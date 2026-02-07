@@ -35,6 +35,7 @@ $ADMIN_URL_WHITELIST_ENABLED = true;
 $ADMIN_URL_WHITELIST = array(
     '/js_challenge_lite',
 	'/redis-bot_protection/api',
+	'/engine/classes',
 	'/admin',
     '/engine/ajax',
     '/engine/admin',
@@ -479,16 +480,17 @@ $_JSC_CONFIG = array(
 // Ці пороги визначають коли показувати Challenge в режимі 'auto'
 
 $_JSC_AUTO_CONFIG = array(
-    // Поріг запитів без cookies (новий відвідувач або бот)
-    'no_cookie_threshold' => 3,        // Кількість запитів без bot_protection_uid
+    // Поріг запитів без cookies (вимкнено - блокуємо тільки швидких ботів)
+    'no_cookie_threshold' => 9999,     // Вимкнено: не караємо за відсутність cookie
     'no_cookie_window' => 30,          // За скільки секунд (вікно)
     
-    // Поріг швидких запитів (burst detection)
-    'burst_threshold' => 5,            // Запитів за короткий період
-    'burst_window' => 10,              // Секунд
+    // Поріг швидких запитів (burst detection) - ГОЛОВНИЙ тригер для ботів
+    // Правило: 1 запит на 2 секунди. 2 запити за 2 сек = занадто швидко
+    'burst_threshold' => 2,            // 2 запити за burst_window = тригер
+    'burst_window' => 2,               // Вікно 2 секунди (1 запит/2сек)
     
     // Загальний rate limit для показу Challenge
-    'rate_threshold' => 15,            // Запитів за хвилину для тригеру
+    'rate_threshold' => 30,            // Запитів за хвилину для тригеру (30 = 1 на 2 сек)
     'rate_window' => 60,               // Секунд
     
     // Підозрілі ознаки (кожна додає "бали підозрілості")
@@ -501,7 +503,8 @@ $_JSC_AUTO_CONFIG = array(
     'suspicion_threshold' => 2,        // При скількох балах показувати Challenge
     
     // Whitelist перших N запитів (дати шанс новим користувачам)
-    'grace_requests' => 3,             // Перші N запитів пропускаємо без Challenge
+    'grace_requests' => 1,             // З cookies - пропускаємо 1 запит
+    'grace_requests_no_cookie' => 1,   // Без cookies - пропускаємо 1 запит
     
     // Логування
     'log_triggers' => true,            // Логувати причини показу Challenge
@@ -588,6 +591,33 @@ function _jsc_check_anomaly($ip, $userAgent) {
     $triggers = array();
     
     // ========================================
+    // ПЕРЕВІРКА 0: Незавершений Challenge
+    // Якщо Challenge був показаний, але не пройдений - показуємо знову
+    // ========================================
+    $pendingKey = $prefix . 'jsc_auto:pending:' . $ip;
+    try {
+        if ($connected && $redis->exists($pendingKey)) {
+            $hasCookieCheck = isset($_COOKIE['bot_protection_uid']) && !empty($_COOKIE['bot_protection_uid']);
+            if (!$hasCookieCheck) {
+                // Challenge був показаний, cookie немає - показуємо знову
+                if (!empty($_JSC_AUTO_CONFIG['log_triggers'])) {
+                    error_log("JSC AUTO: IP=$ip has pending challenge (not completed), showing again");
+                }
+                return array(
+                    'reason' => 'pending_challenge',
+                    'score' => 99,
+                    'triggers' => array('pending_challenge')
+                );
+            } else {
+                // Cookie з'явився - Challenge пройдено, видаляємо pending
+                $redis->del($pendingKey);
+            }
+        }
+    } catch (Exception $e) {
+        // При помилці Redis - продовжуємо звичайну перевірку
+    }
+    
+    // ========================================
     // ПЕРЕВІРКА 1: Бали підозрілості за ознаками
     // ========================================
     
@@ -632,7 +662,15 @@ function _jsc_check_anomaly($ip, $userAgent) {
     // ПЕРЕВІРКА 2: Кількість запитів (rate check)
     // ========================================
     
-    $requestKey = $prefix . 'jsc_auto:requests:' . $ip;
+    // Рахуємо запити ПО COOKIE якщо є, інакше по IP
+    // Це дозволяє кільком користувачам з одного IP не впливати один на одного
+    $hasCookieRate = isset($_COOKIE['bot_protection_uid']) && !empty($_COOKIE['bot_protection_uid']);
+    if ($hasCookieRate) {
+        $userIdentifier = 'uid:' . hash('md5', $_COOKIE['bot_protection_uid']);
+    } else {
+        $userIdentifier = 'ip:' . $ip;
+    }
+    $requestKey = $prefix . 'jsc_auto:requests:' . $userIdentifier;
     
     try {
         // Отримуємо історію запитів
@@ -655,8 +693,12 @@ function _jsc_check_anomaly($ip, $userAgent) {
         
         $totalRequests = count($requests);
         
-        // Grace period - перші N запитів пропускаємо
-        if ($totalRequests <= $_JSC_AUTO_CONFIG['grace_requests']) {
+        // Grace period - залежить від наявності cookie
+        $hasCookieGrace = isset($_COOKIE['bot_protection_uid']) && !empty($_COOKIE['bot_protection_uid']);
+        $graceLimit = $hasCookieGrace 
+            ? $_JSC_AUTO_CONFIG['grace_requests'] 
+            : $_JSC_AUTO_CONFIG['grace_requests_no_cookie'];
+        if ($totalRequests <= $graceLimit) {
             // Новий користувач - даємо шанс
             if (!empty($_JSC_AUTO_CONFIG['log_triggers']) && !empty($triggers)) {
                 error_log("JSC AUTO: IP=$ip in grace period (request #$totalRequests), triggers: " . implode(', ', $triggers));
@@ -1863,9 +1905,10 @@ function _jsc_showChallengePage($challenge, $redirect_url) {
     $isPow = isset($challenge['type']) && $challenge['type'] === 'pow';
     $style = isset($challenge['style']) ? $challenge['style'] : 'cloudflare';
     
-    http_response_code(200);
+    http_response_code(503);
     header('Content-Type: text/html; charset=UTF-8');
     header('Cache-Control: no-cache, no-store, must-revalidate');
+    header('Retry-After: 5');
     header('X-Robots-Tag: noindex, nofollow');
     
     // v3.8.0: Вибір стилю сторінки
@@ -2763,6 +2806,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_JSC_RESPONS
         setcookie($cookie_name, $token, time() + $lifetime, '/', '', $secure, true);
     }
     
+    // Видаляємо pending challenge - Challenge пройдено успішно
+    try {
+        $pendingRedis = new Redis();
+        $pendingRedis->connect('127.0.0.1', 6379, 1);
+        $pendingRedis->select(1);
+        $pendingRedis->del('bot_protection:jsc_auto:pending:' . $ip);
+        $pendingRedis->close();
+    } catch (Exception $e) {}
+    
     echo json_encode(array('success' => true, 'token' => $token));
     exit;
 }
@@ -2817,9 +2869,10 @@ function _show_502_error() {
     $ip = _jsc_getClientIP();
     _track_page_hammer($ip, 'blocked');
     
-    http_response_code(502);
+    http_response_code(503);
     header('Content-Type: text/html; charset=UTF-8');
     header('Cache-Control: no-cache, no-store');
+    header('Retry-After: 60');
     
     echo '<!DOCTYPE html>
 <html lang="ru">
@@ -2946,10 +2999,7 @@ function _show_502_error() {
             color: #666;
             border-top: 1px solid #bbb;
         }
-        #countdown {
-            font-weight: bold;
-            color: #1e5380;
-        }
+
     </style>
 </head>
 <body>
@@ -2988,7 +3038,6 @@ function _show_502_error() {
                 </div>
                 
                 <div class="smalltext">
-                    Автоматическое обновление через <span id="countdown">10</span> секунд...<br>
                     Если проблема сохраняется, обратитесь к администратору сайта.
                 </div>
             </div>
@@ -2998,21 +3047,6 @@ function _show_502_error() {
         </div>
     </div>
     
-    <script>
-        var counter = 10;
-        var countdownEl = document.getElementById("countdown");
-        
-        var interval = setInterval(function() {
-            counter--;
-            if (countdownEl) {
-                countdownEl.textContent = counter;
-            }
-            if (counter <= 0) {
-                clearInterval(interval);
-                location.reload();
-            }
-        }, 1000);
-    </script>
 </body>
 </html>';
     exit;
@@ -3108,6 +3142,16 @@ if ($_JSC_CONFIG['enabled']) {
         }
         
         if ($showChallenge) {
+            // Запам'ятовуємо що Challenge був показаний (для повторного показу)
+            try {
+                $pendingRedis = new Redis();
+                $pendingRedis->connect('127.0.0.1', 6379, 1);
+                $pendingRedis->select(1);
+                $pendingRedis->setex('bot_protection:jsc_auto:pending:' . $clientIP, 300, time());
+                $pendingRedis->close();
+            } catch (Exception $e) {
+                // Не блокуємо показ Challenge при помилці Redis
+            }
             $challenge = _jsc_generateChallenge($_JSC_CONFIG['secret_key']);
             $currentUrl = _jsc_getSafeCurrentUrl();
             _jsc_showChallengePage($challenge, $currentUrl);
@@ -3201,7 +3245,7 @@ class SimpleBotProtection {
      */
     
     // Скільки запитів без bot_protection_uid перед блокуванням
-    private $noCookieThreshold = 10;
+    private $noCookieThreshold = 9999;
     
     // За який період часу рахувати (секунди)
     private $noCookieTimeWindow = 60;
@@ -3213,11 +3257,11 @@ class SimpleBotProtection {
      * Звичайні користувачі з cookie використовують rateLimitSettings.
      */
     private $noCookieRateLimits = array(
-        'minute' => 10,      // Замість 20 (звичайний)
-        '5min' => 30,        // Замість 100
-        'hour' => 200,       // Замість 1000
-        'day' => 1000,       // Замість 5000
-        'burst' => 5,        // Замість 20 (10 секунд)
+        'minute' => 30,      // 1 запит/2сек = макс 30 за хвилину
+        '5min' => 150,       // 1 запит/2сек = макс 150 за 5 хвилин
+        'hour' => 500,       // Годинний ліміт
+        'day' => 2000,       // Денний ліміт
+        'burst' => 5,        // 1 запит/2сек = макс 5 за 10 секунд
     );
     
     /**
