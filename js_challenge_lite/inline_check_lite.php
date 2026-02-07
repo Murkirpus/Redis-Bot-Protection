@@ -146,6 +146,19 @@ function _jsc_getClientIP() {
     return filter_var($ip, FILTER_VALIDATE_IP) ? $ip : '0.0.0.0';
 }
 
+/** Отримання поточного домену для ізоляції Redis ключів між сайтами */
+function _get_site_id() {
+    static $siteId = null;
+    if ($siteId === null) {
+        $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'default';
+        // Видаляємо порт і нормалізуємо
+        $host = preg_replace('/:\d+$/', '', strtolower(trim($host)));
+        // Короткий хеш для компактності ключів
+        $siteId = substr(md5($host), 0, 8);
+    }
+    return $siteId;
+}
+
 /** Shared Redis підключення для standalone функцій */
 function _get_shared_redis() {
     static $redis = null;
@@ -460,7 +473,7 @@ function _track_page_hammer($ip, $pageType = 'challenge') {
     
     $redis = _get_shared_redis();
     if (!$redis) return false;
-    $prefix = 'bot_protection:';
+    $prefix = 'bot_protection:' . _get_site_id() . ':';
     $key = $prefix . $keyPrefix . $ip;
     $now = time();
     
@@ -563,7 +576,7 @@ function _call_block_api($config, $ip, $reason, $ua = null) {
 function _is_hammer_blocked($ip) {
     $redis = _get_shared_redis();
     if (!$redis) return false;
-    try { return $redis->exists('bot_protection:blocked:hammer:' . $ip); }
+    try { return $redis->exists('bot_protection:' . _get_site_id() . ':blocked:hammer:' . $ip); }
     catch (Exception $e) { return false; }
 }
 
@@ -575,12 +588,13 @@ function _jsc_check_anomaly($ip, $userAgent) {
     $redis = _get_shared_redis();
     if (!$redis) return array('reason' => 'redis_unavailable', 'score' => 99);
     
-    $prefix = 'bot_protection:';
+    $siteId = _get_site_id();
+    $prefix = 'bot_protection:' . $siteId . ':';
     $now = time();
     $suspicionScore = 0;
     $triggers = array();
     
-    // Незавершений Challenge
+    // Незавершений Challenge (per-site)
     $pendingKey = $prefix . 'jsc_auto:pending:' . $ip;
     try {
         if ($redis->exists($pendingKey)) {
@@ -707,7 +721,7 @@ function _jsc_logStats($type, $ip = null) {
     $redis = _get_shared_redis();
     if (!$redis) return;
     try {
-        $prefix = 'bot_protection:jsc_stats:';
+        $prefix = 'bot_protection:' . _get_site_id() . ':jsc_stats:';
         $today = date('Y-m-d');
         $hour = date('Y-m-d:H');
         $redis->incr($prefix . 'total:' . $type);
@@ -941,7 +955,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_JSC_RESPONS
     }
     try {
         $pr = new Redis(); $pr->connect('127.0.0.1', 6379, 1); $pr->select(1);
-        $pr->del('bot_protection:jsc_auto:pending:' . $ip); $pr->close();
+        $pr->del('bot_protection:' . _get_site_id() . ':jsc_auto:pending:' . $ip); $pr->close();
     } catch (Exception $e) {}
     echo json_encode(array('success' => true, 'token' => $token));
     exit;
@@ -951,11 +965,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SERVER['HTTP_X_JSC_RESPONS
 
 function _quick_block_check() {
     try {
+        // Адмінський IP завжди пропускається
+        $ip = _jsc_getClientIP();
+        if (_is_admin_ip($ip)) return false;
+        
         $redis = new Redis();
         $redis->connect('127.0.0.1', 6379, 1);
         $redis->select(1);
-        $ip = _jsc_getClientIP();
-        $prefix = 'bot_protection:';
+        $siteId = _get_site_id();
+        $prefix = 'bot_protection:' . $siteId . ':';
         if ($redis->exists($prefix . 'blocked:hammer:' . $ip)) return true;
         if ($redis->exists($prefix . 'ua_blocked:' . $ip)) return true;
         $ua = isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '';
@@ -1036,7 +1054,7 @@ if ($_JSC_CONFIG['enabled']) {
         if ($showChallenge) {
             try {
                 $pr = new Redis(); $pr->connect('127.0.0.1', 6379, 1); $pr->select(1);
-                $pr->setex('bot_protection:jsc_auto:pending:' . $clientIP, 300, time()); $pr->close();
+                $pr->setex('bot_protection:' . _get_site_id() . ':jsc_auto:pending:' . $clientIP, 300, time()); $pr->close();
             } catch (Exception $e) {}
             _jsc_showChallengePage(_jsc_generateChallenge($_JSC_CONFIG['secret_key']), _jsc_getSafeCurrentUrl());
         }
@@ -1062,7 +1080,7 @@ class SimpleBotProtection {
     private $redisPort = 6379;
     private $redisDB = 1;
     private $redisPassword = '';
-    private $redisPrefix = 'bot_protection:';
+    private $redisPrefix = 'bot_protection:'; // буде оновлено в __construct з _get_site_id()
     private $debugMode = false;
     
     private $rateLimitSettings = array(
@@ -1171,6 +1189,8 @@ class SimpleBotProtection {
         global $CUSTOM_USER_AGENTS, $_API_CONFIG;
         $this->customUserAgents = $CUSTOM_USER_AGENTS;
         $this->apiSettings = $_API_CONFIG;
+        // Per-site ізоляція: кожен домен має окремі лічильники rate limit
+        $this->redisPrefix = 'bot_protection:' . _get_site_id() . ':';
         $this->connectRedis();
     }
     
