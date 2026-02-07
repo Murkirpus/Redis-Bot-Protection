@@ -1,10 +1,17 @@
 <?php
 /**
  * ============================================================================
- * MurKir Security - Admin Panel v1.6
+ * MurKir Security - Admin Panel v1.7
  * ============================================================================
  * 
  * Полноценная админ-панель для управления Redis Bot Protection
+ * 
+ * НОВОЕ v1.7 (2026-02-07):
+ * ✅ Per-site Redis ізоляція: автоматичне виявлення всіх site_id
+ * ✅ Dashboard/блокування/сесії агрегуються по всіх сайтах
+ * ✅ Розблокування IP видаляє ключі з усіх site prefixes
+ * ✅ clearAllBlocks працює по всіх сайтах + legacy
+ * ✅ Сумісність з inline_check_lite.php v3.8.13+
  * 
  * НОВОЕ v1.6 (2026-02-02):
  * ✅ API розблокування в iptables при натисканні "Розблокувати"
@@ -84,7 +91,7 @@ $config = [
     // v1.6: API iptables (для розблокування IP)
     'api_enabled' => true,
     'api_url' => 'https://blog.dj-x.info/redis-bot_protection/API/iptables.php',
-    'api_key' => 'Asd123456',
+    'api_key' => 'Asd12345',
     'api_timeout' => 5,
     
     // Панель
@@ -120,6 +127,80 @@ try {
 } catch (Exception $e) {
     $redisError = $e->getMessage();
     $redis = null;
+}
+
+// ============================================================================
+// v1.7: PER-SITE PREFIX DISCOVERY
+// ============================================================================
+
+$sitePrefixes = [];  // Per-site: ['bot_protection:a1b2c3d4:', ...]
+$basePrefix = $config['redis_prefix']; // 'bot_protection:'
+
+if ($redis) {
+    $siteIds = [];
+    $iterator = null;
+    do {
+        $keys = $redis->scan($iterator, $basePrefix . '*', 500);
+        if ($keys === false) break;
+        foreach ($keys as $key) {
+            $afterBase = substr($key, strlen($basePrefix));
+            if (preg_match('/^([a-f0-9]{8}):/', $afterBase, $m)) {
+                $siteIds[$m[1]] = true;
+            }
+        }
+    } while ($iterator > 0);
+    
+    foreach (array_keys($siteIds) as $siteId) {
+        $sitePrefixes[] = $basePrefix . $siteId . ':';
+    }
+}
+
+/**
+ * v1.7: Отримати всі ключі по суфіксу з усіх site prefixes + legacy
+ */
+function getAllKeys($redis, $suffix, $includeLegacy = true) {
+    global $sitePrefixes, $basePrefix;
+    $allKeys = [];
+    foreach ($sitePrefixes as $prefix) {
+        $keys = $redis->keys($prefix . $suffix);
+        if (is_array($keys)) $allKeys = array_merge($allKeys, $keys);
+    }
+    if ($includeLegacy) {
+        $keys = $redis->keys($basePrefix . $suffix);
+        if (is_array($keys)) $allKeys = array_merge($allKeys, $keys);
+    }
+    return array_unique($allKeys);
+}
+
+/**
+ * v1.7: Побудувати масив прямих ключів для IP по всіх site prefixes + legacy
+ */
+function getAllDirectKeys($suffix) {
+    global $sitePrefixes, $basePrefix;
+    $keys = [];
+    foreach ($sitePrefixes as $prefix) {
+        $keys[] = $prefix . $suffix;
+    }
+    $keys[] = $basePrefix . $suffix;
+    return $keys;
+}
+
+/**
+ * v1.7: Витягнути IP з ключа (per-site або legacy формат)
+ * bot_protection:{site_id}:ua_blocked:1.2.3.4 → 1.2.3.4
+ * bot_protection:ua_blocked:1.2.3.4 → 1.2.3.4
+ */
+function extractIPFromAnyKey($key, $ipKeyPart) {
+    global $sitePrefixes, $basePrefix;
+    // Per-site format
+    foreach ($sitePrefixes as $prefix) {
+        $full = $prefix . $ipKeyPart;
+        if (strpos($key, $full) === 0) return substr($key, strlen($full));
+    }
+    // Legacy format
+    $legacy = $basePrefix . $ipKeyPart;
+    if (strpos($key, $legacy) === 0) return substr($key, strlen($legacy));
+    return null;
 }
 
 // ============================================================================
@@ -185,64 +266,60 @@ function logout() {
 function getStats($redis, $prefix) {
     if (!$redis) return null;
     
-    $keys = $redis->keys($prefix . '*');
+    // v1.7: Збираємо ключі з усіх site prefixes + legacy
+    $keys = getAllKeys($redis, '*', true);
     
     $stats = [
         'total_tracked' => 0,
         'blocked_rate_limit' => 0,
         'blocked_ua_rotation' => 0,
-        'blocked_no_cookie' => 0,      // v1.3: blocked:no_cookie
+        'blocked_no_cookie' => 0,
+        'blocked_hammer' => 0,
         'rate_limit_keys' => 0,
         'ua_rotation_tracked' => 0,
         'rdns_cache' => 0,
-        'ip_whitelist_cache' => 0,     // v1.3: ip_whitelist кеш
+        'ip_whitelist_cache' => 0,
         'active_users' => 0,
+        'sites_count' => count($GLOBALS['sitePrefixes']),
     ];
     
+    // v1.7: Збираємо всі можливі prefix варіанти для перевірки
+    $allPrefixes = array_merge($GLOBALS['sitePrefixes'], [$prefix]);
+    
     foreach ($keys as $key) {
-        // ВИПРАВЛЕННЯ: Використовуємо сувору перевірку префікса (початок ключа),
-        // замість пошуку входження підстроки де завгодно.
-        
-        // 1. UA Rotation & UA Blocked
-        if (strpos($key, $prefix . 'ua_rotation_blocked:') === 0 || strpos($key, $prefix . 'ua_blocked:') === 0) {
-            $stats['blocked_ua_rotation']++;
-        } 
-        // 2. Blocked No Cookie
-        elseif (strpos($key, $prefix . 'blocked:no_cookie:') === 0) {
-            $stats['blocked_no_cookie']++;
-        } 
-        // 3. Blocked Rate Limit (звичайна блокировка)
-        elseif (strpos($key, $prefix . 'blocked:') === 0) {
-            $stats['blocked_rate_limit']++;
-        } 
-        // 4. Rate Limit Keys (Активні сесії)
-        elseif (strpos($key, $prefix . 'rate:') === 0) {
-            $stats['rate_limit_keys']++;
-            $stats['total_tracked']++;
-        } 
-        // 5. UA Rotation Tracking
-        elseif (strpos($key, $prefix . 'ua_rotation_5min:') === 0 || strpos($key, $prefix . 'ua_rotation_hour:') === 0 || strpos($key, $prefix . 'ua:') === 0) {
-            $stats['ua_rotation_tracked']++;
-        } 
-        // 6. rDNS Cache
-        elseif (strpos($key, $prefix . 'rdns:cache:') === 0) { // Тут потрібно перевірити чи префікс rdns входить в загальний prefix
-            // Зазвичай rdns: має свій префікс, але в поточному коді ми скануємо $prefix.*
-            // Якщо rDNS ключі лежать окремо, вони не потраплять в цей цикл, якщо prefix не пустий.
-            // Але якщо вони під загальним префіксом:
-            $stats['rdns_cache']++;
-        }
-        elseif (strpos($key, 'rdns:cache:') !== false && $prefix === '') {
-             // Fallback для rDNS якщо немає префікса бота
-             $stats['rdns_cache']++;
-        }
-        // 7. IP Whitelist Cache
-        elseif (strpos($key, $prefix . 'ip_whitelist:') === 0) {
-            $stats['ip_whitelist_cache']++;
+        $matched = false;
+        foreach ($allPrefixes as $p) {
+            if ($matched) break;
+            
+            if (strpos($key, $p . 'ua_rotation_blocked:') === 0 || strpos($key, $p . 'ua_blocked:') === 0) {
+                $stats['blocked_ua_rotation']++; $matched = true;
+            }
+            elseif (strpos($key, $p . 'blocked:hammer:') === 0) {
+                $stats['blocked_hammer']++; $matched = true;
+            }
+            elseif (strpos($key, $p . 'blocked:no_cookie:') === 0) {
+                $stats['blocked_no_cookie']++; $matched = true;
+            }
+            elseif (strpos($key, $p . 'blocked:') === 0) {
+                $stats['blocked_rate_limit']++; $matched = true;
+            }
+            elseif (strpos($key, $p . 'rate:') === 0) {
+                $stats['rate_limit_keys']++; $stats['total_tracked']++; $matched = true;
+            }
+            elseif (strpos($key, $p . 'ua_rotation_5min:') === 0 || strpos($key, $p . 'ua_rotation_hour:') === 0 || strpos($key, $p . 'ua:') === 0) {
+                $stats['ua_rotation_tracked']++; $matched = true;
+            }
+            elseif (strpos($key, $p . 'rdns:cache:') === 0) {
+                $stats['rdns_cache']++; $matched = true;
+            }
+            elseif (strpos($key, $p . 'ip_whitelist:') === 0) {
+                $stats['ip_whitelist_cache']++; $matched = true;
+            }
         }
     }
     
     $stats['active_users'] = $stats['rate_limit_keys'];
-    $stats['total_blocked'] = $stats['blocked_rate_limit'] + $stats['blocked_ua_rotation'] + $stats['blocked_no_cookie'];
+    $stats['total_blocked'] = $stats['blocked_rate_limit'] + $stats['blocked_ua_rotation'] + $stats['blocked_no_cookie'] + $stats['blocked_hammer'];
     
     return $stats;
 }
@@ -252,27 +329,25 @@ function getBlockedIPs($redis, $prefix, $type = 'all', $page = 1, $perPage = 20)
     
     $blocked = [];
     
-    // Rate limit blocks (включая no_cookie)
-    if ($type === 'all' || $type === 'rate_limit' || $type === 'no_cookie') {
-        $keys = $redis->keys($prefix . 'blocked:*');
+    // Rate limit blocks (включая no_cookie, hammer)
+    if ($type === 'all' || $type === 'rate_limit' || $type === 'no_cookie' || $type === 'hammer') {
+        // v1.7: Збираємо з усіх site prefixes
+        $keys = getAllKeys($redis, 'blocked:*', true);
         if (is_array($keys)) {
             foreach ($keys as $key) {
                 $data = $redis->get($key);
                 $ttl = $redis->ttl($key);
                 $ip = extractIP($key);
                 
-                // v1.3: Визначаємо тип блокування
                 $blockType = 'rate_limit';
-                if (strpos($key, ':blocked:no_cookie:') !== false) {
+                if (strpos($key, 'blocked:no_cookie:') !== false) {
                     $blockType = 'no_cookie';
+                } elseif (strpos($key, 'blocked:hammer:') !== false) {
+                    $blockType = 'hammer';
                 }
                 
-                // Фільтр по типу
-                if ($type !== 'all' && $type !== $blockType) {
-                    continue;
-                }
+                if ($type !== 'all' && $type !== $blockType) continue;
                 
-                // Handle both array data and simple values
                 if (is_array($data)) {
                     $blocked[] = [
                         'key' => $key,
@@ -280,15 +355,14 @@ function getBlockedIPs($redis, $prefix, $type = 'all', $page = 1, $perPage = 20)
                         'ip' => $data['ip'] ?? $ip,
                         'user_id' => $data['user_id'] ?? null,
                         'violations' => $data['violations'] ?? [],
-                        'reason' => $data['reason'] ?? null,  // v1.3: причина блокування
-                        'attempts' => $data['attempts'] ?? null,  // v1.3: кількість спроб
+                        'reason' => $data['reason'] ?? null,
+                        'attempts' => $data['attempts'] ?? null,
                         'time' => $data['time'] ?? null,
                         'has_cookie' => $data['has_cookie'] ?? false,
                         'ttl' => $ttl,
                         'expires' => $ttl > 0 ? date('Y-m-d H:i:s', time() + $ttl) : 'N/A',
                     ];
                 } else {
-                    // Simple value (true, 1, timestamp, etc)
                     $blocked[] = [
                         'key' => $key,
                         'type' => $blockType,
@@ -307,27 +381,22 @@ function getBlockedIPs($redis, $prefix, $type = 'all', $page = 1, $perPage = 20)
         }
     }
     
-    // UA Rotation blocks (обидва формати ключів)
+    // UA Rotation blocks
     if ($type === 'all' || $type === 'ua_rotation') {
-        // v1.3: Перевіряємо обидва формати ключів
-        $uaKeys1 = $redis->keys($prefix . 'ua_rotation_blocked:*');
-        $uaKeys2 = $redis->keys($prefix . 'ua_blocked:*');
-        $keys = array_merge(
-            is_array($uaKeys1) ? $uaKeys1 : [],
-            is_array($uaKeys2) ? $uaKeys2 : []
-        );
-        $keys = array_unique($keys);
+        // v1.7: Збираємо з усіх site prefixes
+        $uaKeys1 = getAllKeys($redis, 'ua_rotation_blocked:*', true);
+        $uaKeys2 = getAllKeys($redis, 'ua_blocked:*', true);
+        $keys = array_unique(array_merge($uaKeys1, $uaKeys2));
         
         foreach ($keys as $key) {
                 $data = $redis->get($key);
                 $ttl = $redis->ttl($key);
                 
-                // v1.3: Витягуємо IP з обох форматів ключів
-                $ip = $key;
-                $ip = str_replace($prefix . 'ua_rotation_blocked:', '', $ip);
-                $ip = str_replace($prefix . 'ua_blocked:', '', $ip);
+                // v1.7: Витягуємо IP з per-site або legacy ключа
+                $ip = extractIPFromAnyKey($key, 'ua_rotation_blocked:');
+                if (!$ip) $ip = extractIPFromAnyKey($key, 'ua_blocked:');
+                if (!$ip) $ip = 'unknown';
                 
-                // v1.3: Додаємо count_5min та count_hour з нового формату
                 $count5min = 0;
                 $countHour = 0;
                 if (is_array($data)) {
@@ -335,7 +404,6 @@ function getBlockedIPs($redis, $prefix, $type = 'all', $page = 1, $perPage = 20)
                     $countHour = $data['unique_ua_hour'] ?? $data['count_hour'] ?? 0;
                 }
                 
-                // Handle both array data and simple values
                 if (is_array($data)) {
                     $blocked[] = [
                         'key' => $key,
@@ -349,7 +417,6 @@ function getBlockedIPs($redis, $prefix, $type = 'all', $page = 1, $perPage = 20)
                         'expires' => $ttl > 0 ? date('Y-m-d H:i:s', time() + $ttl) : 'N/A',
                     ];
                 } else {
-                    // Simple value
                     $blocked[] = [
                         'key' => $key,
                         'type' => 'ua_rotation',
@@ -384,15 +451,22 @@ function getBlockedIPs($redis, $prefix, $type = 'all', $page = 1, $perPage = 20)
 }
 
 function extractIP($key) {
-    // Формат 1: blocked:no_cookie:{IP} (v3.6.6+)
+    // v1.7: Per-site format: bot_protection:{site_id}:blocked:no_cookie:{IP}
+    // Legacy format: bot_protection:blocked:no_cookie:{IP}
+    
+    // Формат: blocked:hammer:{IP}
+    if (preg_match('/blocked:hammer:([0-9a-f:\.]+)$/i', $key, $matches)) {
+        return $matches[1];
+    }
+    // Формат: blocked:no_cookie:{IP}
     if (preg_match('/blocked:no_cookie:([0-9a-f:\.]+)$/i', $key, $matches)) {
         return $matches[1];
     }
-    // Формат 2: blocked:{IP} (старий формат з прямим IP)
+    // Формат: blocked:{IP} (прямий IP)
     if (preg_match('/blocked:([0-9a-f:\.]+)$/i', $key, $matches)) {
         return $matches[1];
     }
-    // Формат 3: blocked:{hash} (MD5 хеш) - повертаємо unknown
+    // Формат: blocked:{hash} (MD5 хеш)
     return 'unknown';
 }
 
@@ -400,14 +474,15 @@ function getActiveSessions($redis, $prefix, $page = 1, $perPage = 20) {
     if (!$redis) return ['items' => [], 'total' => 0, 'pages' => 0];
     
     $sessions = [];
-    $keys = $redis->keys($prefix . 'rate:*');
+    // v1.7: Збираємо rate: з усіх site prefixes
+    $keys = getAllKeys($redis, 'rate:*', true);
     
-    if (!is_array($keys)) {
+    if (!is_array($keys) || empty($keys)) {
         return ['items' => [], 'total' => 0, 'pages' => 0];
     }
     
     // Собираем все blocked записи для определения IP по user_id
-    $blockedKeys = $redis->keys($prefix . 'blocked:*');
+    $blockedKeys = getAllKeys($redis, 'blocked:*', true);
     $userToIP = [];
     if (is_array($blockedKeys)) {
         foreach ($blockedKeys as $bKey) {
@@ -418,6 +493,9 @@ function getActiveSessions($redis, $prefix, $page = 1, $perPage = 20) {
             }
         }
     }
+    
+    // v1.7: Побудувати масив для видалення rate: prefix
+    $allPrefixes = array_merge($GLOBALS['sitePrefixes'], [$prefix]);
     
     foreach ($keys as $key) {
         $data = $redis->get($key);
@@ -431,18 +509,20 @@ function getActiveSessions($redis, $prefix, $page = 1, $perPage = 20) {
                 }
             }
             
-            // Извлекаем hash из ключа (rate:HASH)
-            $keyHash = str_replace($prefix . 'rate:', '', $key);
+            // v1.7: Витягуємо hash з per-site або legacy ключа
+            $keyHash = $key;
+            foreach ($allPrefixes as $p) {
+                if (strpos($key, $p . 'rate:') === 0) {
+                    $keyHash = substr($key, strlen($p . 'rate:'));
+                    break;
+                }
+            }
             
-            // Пробуем найти IP
             $ip = $userToIP[$keyHash] ?? null;
-            
-            // Если в данных есть IP напрямую
             if (!$ip && isset($data['ip'])) {
                 $ip = $data['ip'];
             }
             
-            // Определяем тип сессии
             $sessionType = 'user';
             if (strpos($key, 'ip:') !== false) {
                 $sessionType = 'ip';
@@ -689,6 +769,7 @@ function unblockViaAPI($ip) {
     $url = $config['api_url'] . '?' . http_build_query([
         'action' => 'unblock',
         'ip' => $ip,
+        'api' => 1,
         'api_key' => $config['api_key']
     ]);
     
@@ -701,7 +782,7 @@ function unblockViaAPI($ip) {
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_SSL_VERIFYHOST => false,
-            CURLOPT_USERAGENT => 'MurKir-Admin/1.6',
+            CURLOPT_USERAGENT => 'MurKir-Admin/1.7',
             CURLOPT_HTTPHEADER => [
                 'Accept: application/json',
                 'Cache-Control: no-cache'
@@ -752,31 +833,46 @@ function unblockIP($redis, $prefix, $ip) {
         $apiResult = unblockViaAPI($ip);
     }
     
-    // Прямые ключи для удаления
-    $directKeys = [
-        $prefix . 'blocked:' . $ip,
-        $prefix . 'blocked:' . hash('md5', 'ip:' . $ip),
-        $prefix . 'blocked:no_cookie:' . $ip,          // v1.3: no_cookie блокування
-        $prefix . 'ua_rotation_blocked:' . $ip,
-        $prefix . 'ua_blocked:' . $ip,                 // v1.3: альтернативний ключ
-        $prefix . 'rate:' . $ip,
-        $prefix . 'rate:' . hash('md5', 'ip:' . $ip),
-        $prefix . 'ua_rotation_5min:' . $ip,
-        $prefix . 'ua_rotation_hour:' . $ip,
-        $prefix . 'ua:' . $ip,                         // v1.3: альтернативний ключ
-        $prefix . 'no_cookie_attempts:' . $ip,         // v1.3: лічильник спроб без cookie
-        $prefix . 'ip_whitelist:' . $ip,               // v1.3: кеш IP whitelist
+    // v1.7: Генеруємо ключі для ВСІХ site prefixes + legacy
+    $suffixes = [
+        'blocked:' . $ip,
+        'blocked:' . hash('md5', 'ip:' . $ip),
+        'blocked:no_cookie:' . $ip,
+        'blocked:hammer:' . $ip,
+        'ua_rotation_blocked:' . $ip,
+        'ua_blocked:' . $ip,
+        'rate:' . $ip,
+        'rate:' . hash('md5', 'ip:' . $ip),
+        'ua_rotation_5min:' . $ip,
+        'ua_rotation_hour:' . $ip,
+        'ua:' . $ip,
+        'no_cookie_attempts:' . $ip,
+        'jsc_auto:' . $ip,
     ];
     
-    // Удаляем прямые ключи
-    foreach ($directKeys as $key) {
+    // Shared keys (без site_id)
+    $sharedKeys = [
+        $prefix . 'ip_whitelist:' . $ip,
+    ];
+    
+    // Per-site + legacy ключі
+    foreach ($suffixes as $suffix) {
+        foreach (getAllDirectKeys($suffix) as $key) {
+            if ($redis->del($key)) {
+                $deleted++;
+            }
+        }
+    }
+    
+    // Shared ключі
+    foreach ($sharedKeys as $key) {
         if ($redis->del($key)) {
             $deleted++;
         }
     }
     
     // Ищем блокировки по IP в данных (для user-based блокировок)
-    $allBlockedKeys = $redis->keys($prefix . 'blocked:*');
+    $allBlockedKeys = getAllKeys($redis, 'blocked:*', true);
     if (is_array($allBlockedKeys)) {
         foreach ($allBlockedKeys as $key) {
             $data = $redis->get($key);
@@ -849,21 +945,14 @@ function clearAllBlocks($redis, $prefix) {
     $deleted = 0;
     $apiSuccess = 0;
     $apiFailed = 0;
-    $processedIPs = [];  // Щоб не викликати API двічі для одного IP
+    $processedIPs = [];
     
-    // Получаем все ключи блокировок (все форматы)
-    $blockedKeys = $redis->keys($prefix . 'blocked:*');
-    $uaRotationKeys = $redis->keys($prefix . 'ua_rotation_blocked:*');
-    $uaBlockedKeys = $redis->keys($prefix . 'ua_blocked:*');  // v1.6: новий формат
+    // v1.7: Збираємо ключі блокувань з усіх site prefixes + legacy
+    $blockedKeys = getAllKeys($redis, 'blocked:*', true);
+    $uaRotationKeys = getAllKeys($redis, 'ua_rotation_blocked:*', true);
+    $uaBlockedKeys = getAllKeys($redis, 'ua_blocked:*', true);
     
-    $keys = array_merge(
-        is_array($blockedKeys) ? $blockedKeys : [],
-        is_array($uaRotationKeys) ? $uaRotationKeys : [],
-        is_array($uaBlockedKeys) ? $uaBlockedKeys : []
-    );
-    
-    // Видаляємо дублікати
-    $keys = array_unique($keys);
+    $keys = array_unique(array_merge($blockedKeys, $uaRotationKeys, $uaBlockedKeys));
     
     foreach ($keys as $key) {
         // v1.6: Витягуємо IP для API
@@ -918,13 +1007,28 @@ function clearAllBlocks($redis, $prefix) {
 function getUARotationInfo($redis, $prefix, $ip) {
     if (!$redis) return null;
     
-    $key5min = $prefix . 'ua_rotation_5min:' . $ip;
-    $keyHour = $prefix . 'ua_rotation_hour:' . $ip;
-    $blockKey = $prefix . 'ua_rotation_blocked:' . $ip;
+    // v1.7: Перевіряємо всі site prefixes + legacy
+    $allPrefixes = array_merge($GLOBALS['sitePrefixes'], [$prefix]);
     
-    $data5min = $redis->get($key5min);
-    $dataHour = $redis->get($keyHour);
-    $blockData = $redis->get($blockKey);
+    $data5min = null;
+    $dataHour = null;
+    $blockData = null;
+    $isBlocked = false;
+    
+    foreach ($allPrefixes as $p) {
+        $d5 = $redis->get($p . 'ua_rotation_5min:' . $ip);
+        if ($d5) $data5min = $d5;
+        
+        $dH = $redis->get($p . 'ua_rotation_hour:' . $ip);
+        if ($dH) $dataHour = $dH;
+        
+        if ($redis->exists($p . 'ua_rotation_blocked:' . $ip) || $redis->exists($p . 'ua_blocked:' . $ip)) {
+            $isBlocked = true;
+            $bd = $redis->get($p . 'ua_rotation_blocked:' . $ip);
+            if (!$bd) $bd = $redis->get($p . 'ua_blocked:' . $ip);
+            if ($bd) $blockData = $bd;
+        }
+    }
     
     $uniqueUAs = [];
     if ($data5min && is_array($data5min)) {
@@ -936,7 +1040,7 @@ function getUARotationInfo($redis, $prefix, $ip) {
     
     return [
         'ip' => $ip,
-        'is_blocked' => $redis->exists($blockKey),
+        'is_blocked' => $isBlocked,
         'unique_ua_5min' => $data5min && is_array($data5min) ? count($data5min) : 0,
         'unique_ua_hour' => $dataHour && is_array($dataHour) ? count($dataHour) : 0,
         'block_info' => $blockData ?: null,
@@ -1188,148 +1292,142 @@ function clearSearchBotLog($logFile) {
 function getJSChallengeStats($redis, $prefix) {
     if (!$redis) return null;
     
-    $statsPrefix = $prefix . 'jsc_stats:';
+    // v1.7: Агрегуємо jsc_stats з усіх site prefixes + legacy
+    $allPrefixes = array_merge($GLOBALS['sitePrefixes'], [$prefix]);
     $today = date('Y-m-d');
     
-    // Загальна статистика
     $stats = [
-        'total' => [
-            'shown' => (int)$redis->get($statsPrefix . 'total:shown') ?: 0,
-            'passed' => (int)$redis->get($statsPrefix . 'total:passed') ?: 0,
-            'failed' => (int)$redis->get($statsPrefix . 'total:failed') ?: 0,
-            'expired' => (int)$redis->get($statsPrefix . 'total:expired') ?: 0,
-        ],
-        'today' => [
-            'shown' => (int)$redis->get($statsPrefix . 'daily:' . $today . ':shown') ?: 0,
-            'passed' => (int)$redis->get($statsPrefix . 'daily:' . $today . ':passed') ?: 0,
-            'failed' => (int)$redis->get($statsPrefix . 'daily:' . $today . ':failed') ?: 0,
-            'expired' => (int)$redis->get($statsPrefix . 'daily:' . $today . ':expired') ?: 0,
-        ],
+        'total' => ['shown' => 0, 'passed' => 0, 'failed' => 0, 'expired' => 0],
+        'today' => ['shown' => 0, 'passed' => 0, 'failed' => 0, 'expired' => 0],
         'hourly' => [],
-        'recent_logs' => [
-            'shown' => [],
-            'passed' => [],
-            'failed' => [],
-            'expired' => [],
-        ],
+        'recent_logs' => ['shown' => [], 'passed' => [], 'failed' => [], 'expired' => []],
     ];
     
-    // Підраховуємо загальні показники
+    // Агрегуємо лічильники з усіх prefixes
+    foreach ($allPrefixes as $p) {
+        $sp = $p . 'jsc_stats:';
+        foreach (['shown', 'passed', 'failed', 'expired'] as $t) {
+            $stats['total'][$t] += (int)$redis->get($sp . 'total:' . $t) ?: 0;
+            $stats['today'][$t] += (int)$redis->get($sp . 'daily:' . $today . ':' . $t) ?: 0;
+        }
+    }
+    
     $stats['total']['total'] = $stats['total']['shown'];
     $stats['total']['success_rate'] = $stats['total']['shown'] > 0 
-        ? round(($stats['total']['passed'] / $stats['total']['shown']) * 100, 2) 
-        : 0;
-    
+        ? round(($stats['total']['passed'] / $stats['total']['shown']) * 100, 2) : 0;
     $stats['today']['total'] = $stats['today']['shown'];
     $stats['today']['success_rate'] = $stats['today']['shown'] > 0 
-        ? round(($stats['today']['passed'] / $stats['today']['shown']) * 100, 2) 
-        : 0;
+        ? round(($stats['today']['passed'] / $stats['today']['shown']) * 100, 2) : 0;
     
-    // Погодинна статистика (останні 24 години)
+    // Погодинна статистика (агрегована)
     for ($i = 23; $i >= 0; $i--) {
         $hour = date('Y-m-d:H', strtotime("-$i hours"));
         $hourDisplay = date('H:00', strtotime("-$i hours"));
+        $hourData = ['hour' => $hourDisplay, 'shown' => 0, 'passed' => 0, 'failed' => 0, 'expired' => 0];
         
-        $stats['hourly'][] = [
-            'hour' => $hourDisplay,
-            'shown' => (int)$redis->get($statsPrefix . 'hourly:' . $hour . ':shown') ?: 0,
-            'passed' => (int)$redis->get($statsPrefix . 'hourly:' . $hour . ':passed') ?: 0,
-            'failed' => (int)$redis->get($statsPrefix . 'hourly:' . $hour . ':failed') ?: 0,
-            'expired' => (int)$redis->get($statsPrefix . 'hourly:' . $hour . ':expired') ?: 0,
-        ];
+        foreach ($allPrefixes as $p) {
+            $sp = $p . 'jsc_stats:';
+            foreach (['shown', 'passed', 'failed', 'expired'] as $t) {
+                $hourData[$t] += (int)$redis->get($sp . 'hourly:' . $hour . ':' . $t) ?: 0;
+            }
+        }
+        $stats['hourly'][] = $hourData;
     }
     
-    // v1.5: Спочатку збираємо passed/failed/expired для визначення статусу shown
-    $passedIndex = [];  // IP|UA => time
+    // v1.5: Збираємо passed/failed/expired для визначення статусу shown
+    $passedIndex = [];
     $failedIndex = [];
     $expiredIndex = [];
     
-    // Збираємо passed записи
-    $passedLogs = $redis->lRange($statsPrefix . 'log:passed', 0, 99);
-    if ($passedLogs) {
-        foreach ($passedLogs as $log) {
-            if (is_array($log) && isset($log['ip'])) {
-                $key = $log['ip'] . '|' . ($log['ua'] ?? '');
-                $passedIndex[$key] = $log['date'] ?? '';
-            }
-        }
-    }
-    
-    // Збираємо failed записи
-    $failedLogs = $redis->lRange($statsPrefix . 'log:failed', 0, 99);
-    if ($failedLogs) {
-        foreach ($failedLogs as $log) {
-            if (is_array($log) && isset($log['ip'])) {
-                $key = $log['ip'] . '|' . ($log['ua'] ?? '');
-                $failedIndex[$key] = $log['date'] ?? '';
-            }
-        }
-    }
-    
-    // Збираємо expired записи
-    $expiredLogs = $redis->lRange($statsPrefix . 'log:expired', 0, 99);
-    if ($expiredLogs) {
-        foreach ($expiredLogs as $log) {
-            if (is_array($log) && isset($log['ip'])) {
-                $key = $log['ip'] . '|' . ($log['ua'] ?? '');
-                $expiredIndex[$key] = $log['date'] ?? '';
-            }
-        }
-    }
-    
-    // Останні логи (останні 20 записів для кожного типу)
-    $logTypes = ['shown', 'passed', 'failed', 'expired'];
-    foreach ($logTypes as $type) {
-        $logKey = $statsPrefix . 'log:' . $type;
-        $logs = $redis->lRange($logKey, 0, 19); // Отримуємо останні 20
+    // Збираємо логи з усіх prefixes
+    foreach ($allPrefixes as $p) {
+        $sp = $p . 'jsc_stats:';
         
-        if ($logs) {
-            foreach ($logs as $log) {
-                if (is_array($log)) {
-                    // v1.4: Додаємо rDNS до кожного запису
-                    if (isset($log['ip']) && filter_var($log['ip'], FILTER_VALIDATE_IP)) {
-                        $log['rdns'] = resolveRDNS($log['ip'], $redis);
-                    }
-                    
-                    // v1.5: Для shown записів визначаємо статус
-                    if ($type === 'shown' && isset($log['ip'])) {
-                        $key = $log['ip'] . '|' . ($log['ua'] ?? '');
-                        $shownTime = strtotime($log['date'] ?? 'now');
-                        
-                        // Перевіряємо passed (пріоритет)
-                        if (isset($passedIndex[$key])) {
-                            $passedTime = strtotime($passedIndex[$key]);
-                            // Passed має бути після shown і не більше 10 хвилин
-                            if ($passedTime >= $shownTime && ($passedTime - $shownTime) < 600) {
-                                $log['status'] = 'passed';
-                            }
-                        }
-                        
-                        // Перевіряємо failed
-                        if (!isset($log['status']) && isset($failedIndex[$key])) {
-                            $failedTime = strtotime($failedIndex[$key]);
-                            if ($failedTime >= $shownTime && ($failedTime - $shownTime) < 600) {
-                                $log['status'] = 'failed';
-                            }
-                        }
-                        
-                        // Перевіряємо expired
-                        if (!isset($log['status']) && isset($expiredIndex[$key])) {
-                            $expiredTime = strtotime($expiredIndex[$key]);
-                            if ($expiredTime >= $shownTime && ($expiredTime - $shownTime) < 600) {
-                                $log['status'] = 'expired';
-                            }
-                        }
-                        
-                        // Якщо статус не визначено - pending
-                        if (!isset($log['status'])) {
-                            $log['status'] = 'pending';
-                        }
-                    }
-                    
-                    $stats['recent_logs'][$type][] = $log;
+        $passedLogs = $redis->lRange($sp . 'log:passed', 0, 99);
+        if ($passedLogs) {
+            foreach ($passedLogs as $log) {
+                if (is_array($log) && isset($log['ip'])) {
+                    $key = $log['ip'] . '|' . ($log['ua'] ?? '');
+                    $passedIndex[$key] = $log['date'] ?? '';
                 }
             }
+        }
+        
+        $failedLogs = $redis->lRange($sp . 'log:failed', 0, 99);
+        if ($failedLogs) {
+            foreach ($failedLogs as $log) {
+                if (is_array($log) && isset($log['ip'])) {
+                    $key = $log['ip'] . '|' . ($log['ua'] ?? '');
+                    $failedIndex[$key] = $log['date'] ?? '';
+                }
+            }
+        }
+        
+        $expiredLogs = $redis->lRange($sp . 'log:expired', 0, 99);
+        if ($expiredLogs) {
+            foreach ($expiredLogs as $log) {
+                if (is_array($log) && isset($log['ip'])) {
+                    $key = $log['ip'] . '|' . ($log['ua'] ?? '');
+                    $expiredIndex[$key] = $log['date'] ?? '';
+                }
+            }
+        }
+    }
+    
+    // Останні логи (агреговані з усіх prefixes, останні 20)
+    $logTypes = ['shown', 'passed', 'failed', 'expired'];
+    foreach ($logTypes as $type) {
+        $allLogs = [];
+        foreach ($allPrefixes as $p) {
+            $logKey = $p . 'jsc_stats:log:' . $type;
+            $logs = $redis->lRange($logKey, 0, 19);
+            if ($logs) {
+                foreach ($logs as $log) {
+                    if (is_array($log)) $allLogs[] = $log;
+                }
+            }
+        }
+        
+        // Сортуємо по даті (новіші першими)
+        usort($allLogs, function($a, $b) {
+            return strcmp($b['date'] ?? '', $a['date'] ?? '');
+        });
+        $allLogs = array_slice($allLogs, 0, 20);
+        
+        foreach ($allLogs as $log) {
+            if (isset($log['ip']) && filter_var($log['ip'], FILTER_VALIDATE_IP)) {
+                $log['rdns'] = resolveRDNS($log['ip'], $redis);
+            }
+            
+            // v1.5: Для shown записів визначаємо статус
+            if ($type === 'shown' && isset($log['ip'])) {
+                $key = $log['ip'] . '|' . ($log['ua'] ?? '');
+                $shownTime = strtotime($log['date'] ?? 'now');
+                
+                if (isset($passedIndex[$key])) {
+                    $passedTime = strtotime($passedIndex[$key]);
+                    if ($passedTime >= $shownTime && ($passedTime - $shownTime) < 600) {
+                        $log['status'] = 'passed';
+                    }
+                }
+                if (!isset($log['status']) && isset($failedIndex[$key])) {
+                    $failedTime = strtotime($failedIndex[$key]);
+                    if ($failedTime >= $shownTime && ($failedTime - $shownTime) < 600) {
+                        $log['status'] = 'failed';
+                    }
+                }
+                if (!isset($log['status']) && isset($expiredIndex[$key])) {
+                    $expiredTime = strtotime($expiredIndex[$key]);
+                    if ($expiredTime >= $shownTime && ($expiredTime - $shownTime) < 600) {
+                        $log['status'] = 'expired';
+                    }
+                }
+                if (!isset($log['status'])) {
+                    $log['status'] = 'pending';
+                }
+            }
+            
+            $stats['recent_logs'][$type][] = $log;
         }
     }
     
@@ -1454,7 +1552,6 @@ if (isset($_GET['api'])) {
             
         case 'jsc_stats':
             echo json_encode(getJSChallengeStats($redis, $prefix));
-            break;
             break;
         
         // v1.3: IP Whitelist кеш статистика
@@ -2874,7 +2971,7 @@ if (isLoggedIn() && $redis) {
                 <div class="logo-icon">🛡️</div>
                 <div class="logo-text">
                     <h1>MurKir Security</h1>
-                    <span>Admin Panel v1.0</span>
+                    <span>Admin Panel v1.7</span>
                 </div>
             </div>
             
@@ -3005,6 +3102,12 @@ if (isLoggedIn() && $redis) {
                 <div class="stat-value" id="statRDNSMin"><?= number_format($rdnsStats['current_minute'] ?? 0) ?></div>
                 <div class="stat-label">rDNS/хв</div>
             </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon cyan">🌍</div>
+                <div class="stat-value" id="statSitesCount"><?= number_format($stats['sites_count'] ?? 0) ?></div>
+                <div class="stat-label">Сайтів</div>
+            </div>
         </div>
         
         <!-- Quick Actions -->
@@ -3060,6 +3163,8 @@ if (isLoggedIn() && $redis) {
                             <option value="all">Всі типи</option>
                             <option value="rate_limit">Rate Limit</option>
                             <option value="ua_rotation">UA Rotation</option>
+                            <option value="no_cookie">No Cookie</option>
+                            <option value="hammer">Hammer</option>
                         </select>
                         <select id="blockedPerPage" class="per-page-select" onchange="loadBlockedPage(1)">
                             <option value="10">10</option>
@@ -3589,7 +3694,13 @@ if (isLoggedIn() && $redis) {
                     <td>
                         ${item.type === 'rate_limit' 
                             ? '<span class="badge badge-danger">⚡ Rate Limit</span>'
-                            : '<span class="badge badge-purple">🔄 UA Rotation</span>'}
+                            : item.type === 'ua_rotation'
+                            ? '<span class="badge badge-purple">🔄 UA Rotation</span>'
+                            : item.type === 'no_cookie'
+                            ? '<span class="badge badge-warning">🍪 No Cookie</span>'
+                            : item.type === 'hammer'
+                            ? '<span class="badge badge-danger">🔨 Hammer</span>'
+                            : '<span class="badge badge-warning">' + escapeHtml(item.type) + '</span>'}
                     </td>
                     <td>
                         ${(item.violations || []).map(v => `<span class="badge badge-warning">${escapeHtml(v)}</span>`).join(' ')}
@@ -3958,6 +4069,9 @@ if (isLoggedIn() && $redis) {
                 document.getElementById('statBlocked').textContent = stats.total_blocked?.toLocaleString() || '0';
                 document.getElementById('statRateLimit').textContent = stats.blocked_rate_limit?.toLocaleString() || '0';
                 document.getElementById('statUARotation').textContent = stats.blocked_ua_rotation?.toLocaleString() || '0';
+                // v1.7: Sites count
+                const sitesEl = document.getElementById('statSitesCount');
+                if (sitesEl) sitesEl.textContent = stats.sites_count?.toLocaleString() || '0';
             }
             
             // Memory
