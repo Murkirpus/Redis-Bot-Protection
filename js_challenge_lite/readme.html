@@ -65,6 +65,7 @@
 
         .alert { padding: 15px; border-left: 4px solid var(--warning); background: rgba(255, 170, 0, 0.1); margin: 20px 0; border-radius: 0 4px 4px 0; }
         .alert-danger { border-left-color: var(--danger); background: rgba(255, 77, 77, 0.1); }
+        .alert-success { border-left-color: var(--success); background: rgba(0, 204, 102, 0.1); }
         
         footer { text-align: center; margin-top: 50px; color: var(--text-muted); font-size: 0.9rem; border-top: 1px solid var(--border); padding-top: 20px; }
     </style>
@@ -175,10 +176,10 @@ maxmemory-samples 10
         <p>Основной скрипт. Работает автономно. Если API выключен, блокирует через PHP. Если включен — шлет команды в API.</p>
 
         <h3>2. redis-bot_admin.php <span class="badge b-green">Админка</span></h3>
-        <p>Панель управления. Логин/Пароль по умолчанию: <code>info@murkir.pp.ua</code>.</p>
+        <p>Панель управления. Логин/Пароль: <code>info@murkir.pp.ua</code> (Смените!).</p>
         
         <h3>3. iptables.php <span class="badge b-red">API Бан (PRO)</span></h3>
-        <p>Скрипт-мост между PHP и Linux Iptables. Принимает команды "Забанить/Разбанить". Поддерживает IPv4 и IPv6.</p>
+        <p>Скрипт-мост между PHP и Linux Iptables. Принимает команды "Забанить/Разбанить".</p>
         
         <h3>4. cleanup.php <span class="badge b-purple">Очистка (PRO)</span></h3>
         <p>Запускается по CRON. Проверяет Redis на истекшие баны и дает команду в Iptables разблокировать IP.</p>
@@ -210,16 +211,136 @@ maxmemory-samples 10
         <h4>1. Создайте файл правил</h4>
         <pre>sudo nano /etc/sudoers.d/iptables</pre>
 
-        <h4>2. Вставьте настройки (Специальные Алиасы)</h4>
-        <p>Этот код содержит точные правила безопасности для вашей системы:</p>
+        <h4>2. Вставьте настройки (Расширенная версия)</h4>
+        <p>Скопируйте этот блок <strong>полностью</strong>. Он включает поддержку IPv4, IPv6, Nginx Reload и команд принятия трафика (ACCEPT):</p>
         <pre>
-# Группировка команд (Aliases)
-Cmnd_Alias IPTABLES_IPV4 = /sbin/iptables -C INPUT *, /sbin/iptables -I INPUT *, /sbin/iptables -D INPUT *
-Cmnd_Alias IPTABLES_IPV6 = /sbin/ip6tables -C INPUT *, /sbin/ip6tables -I INPUT *, /sbin/ip6tables -D INPUT *
-Cmnd_Alias IPTABLES_MISC = /sbin/iptables-save, /usr/sbin/iptables-save, /sbin/ip6tables-save, /usr/sbin/ip6tables-save, /sbin/iptables -L*, /sbin/ip6tables -L*
+# Используем Cmnd_Alias для группировки команд
+# Правила для IPv4
+Cmnd_Alias IPTABLES_IPV4 = /sbin/iptables -C INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /sbin/iptables -C INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /sbin/iptables -I INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /sbin/iptables -I INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /sbin/iptables -D INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /sbin/iptables -D INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /sbin/iptables -D INPUT -s * -j DROP, \
+                           /usr/sbin/iptables -C INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /usr/sbin/iptables -C INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /usr/sbin/iptables -I INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /usr/sbin/iptables -I INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /usr/sbin/iptables -D INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /usr/sbin/iptables -D INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /usr/sbin/iptables -D INPUT -s * -j DROP, \
+                           /bin/iptables -C INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /bin/iptables -C INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /bin/iptables -I INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /bin/iptables -I INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /bin/iptables -D INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /bin/iptables -D INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /bin/iptables -D INPUT -s * -j DROP
 
-# Права для веб-сервера (www-data)
-www-data ALL=(ALL) NOPASSWD: IPTABLES_IPV4, IPTABLES_IPV6, IPTABLES_MISC
+# Правила для IPv6
+Cmnd_Alias IPTABLES_IPV6 = /sbin/ip6tables -C INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /sbin/ip6tables -C INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /sbin/ip6tables -I INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /sbin/ip6tables -I INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /sbin/ip6tables -D INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /sbin/ip6tables -D INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /sbin/ip6tables -D INPUT -s * -j DROP, \
+                           /usr/sbin/ip6tables -C INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /usr/sbin/ip6tables -C INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /usr/sbin/ip6tables -I INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /usr/sbin/ip6tables -I INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /usr/sbin/ip6tables -D INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /usr/sbin/ip6tables -D INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /usr/sbin/ip6tables -D INPUT -s * -j DROP, \
+                           /bin/ip6tables -C INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /bin/ip6tables -C INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /bin/ip6tables -I INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /bin/ip6tables -I INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /bin/ip6tables -D INPUT -s * -p tcp --dport 80 -j DROP, \
+                           /bin/ip6tables -D INPUT -s * -p tcp --dport 443 -j DROP, \
+                           /bin/ip6tables -D INPUT -s * -j DROP
+
+# Информационные команды
+Cmnd_Alias IPTABLES_INFO = /sbin/iptables -S INPUT, \
+                          /sbin/iptables -L INPUT -n -v, \
+                          /sbin/ip6tables -S INPUT, \
+                          /sbin/ip6tables -L INPUT -n -v, \
+                          /sbin/iptables-save, \
+                          /sbin/ip6tables-save, \
+                          /usr/sbin/iptables -S INPUT, \
+                          /usr/sbin/iptables -L INPUT -n -v, \
+                          /usr/sbin/ip6tables -S INPUT, \
+                          /usr/sbin/ip6tables -L INPUT -n -v, \
+                          /usr/sbin/iptables-save, \
+                          /usr/sbin/ip6tables-save
+
+# Команды для сохранения правил
+Cmnd_Alias IPTABLES_SAVE = /bin/sh -c *iptables-save*rules.v4*, \
+                          /bin/sh -c *ip6tables-save*rules.v6*, \
+                          /usr/bin/service iptables save, \
+                          /usr/bin/service ip6tables save, \
+                          /usr/sbin/service iptables save, \
+                          /usr/sbin/service ip6tables save, \
+                          /bin/systemctl restart iptables, \
+                          /bin/systemctl restart ip6tables, \
+                          /usr/bin/systemctl restart iptables, \
+                          /usr/bin/systemctl restart ip6tables
+
+# Дополнительные команды
+Cmnd_Alias IPTABLES_MISC = /bin/mkdir -p /etc/iptables, \
+                          /usr/bin/mkdir -p /etc/iptables, \
+                          /usr/bin/chmod 755 /etc/iptables, \
+                          /bin/chmod 755 /etc/iptables, \
+                          /usr/bin/chown root\:root /etc/iptables/rules.v4, \
+                          /usr/bin/chown root\:root /etc/iptables/rules.v6, \
+                          /bin/chown root\:root /etc/iptables/rules.v4, \
+                          /bin/chown root\:root /etc/iptables/rules.v6
+
+# Перезагрузка Nginx
+Cmnd_Alias NGINX_RELOAD = /usr/sbin/nginx -s reload, \
+                         /usr/bin/nginx -s reload, \
+                         /bin/systemctl reload nginx, \
+                         /usr/bin/systemctl reload nginx
+
+# НОВЫЕ ПРАВИЛА ДЛЯ ПОДДЕРЖКИ IP.PHP
+
+# Правила ACCEPT для IPv4
+Cmnd_Alias IPTABLES_IPV4_ACCEPT = /sbin/iptables -A INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /sbin/iptables -C INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /sbin/iptables -D INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /usr/sbin/iptables -A INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /usr/sbin/iptables -C INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /usr/sbin/iptables -D INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /bin/iptables -A INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /bin/iptables -C INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /bin/iptables -D INPUT -p tcp -s * --dport * -j ACCEPT
+
+# Правила ACCEPT для IPv6
+Cmnd_Alias IPTABLES_IPV6_ACCEPT = /sbin/ip6tables -A INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /sbin/ip6tables -C INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /sbin/ip6tables -D INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /usr/sbin/ip6tables -A INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /usr/sbin/ip6tables -C INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /usr/sbin/ip6tables -D INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /bin/ip6tables -A INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /bin/ip6tables -C INPUT -p tcp -s * --dport * -j ACCEPT, \
+                                  /bin/ip6tables -D INPUT -p tcp -s * --dport * -j ACCEPT
+
+# Информационные команды для полного списка правил
+Cmnd_Alias IPTABLES_FULL_INFO = /sbin/iptables -L, \
+                               /usr/sbin/iptables -L, \
+                               /bin/iptables -L, \
+                               /sbin/ip6tables -L, \
+                               /usr/sbin/ip6tables -L, \
+                               /bin/ip6tables -L
+
+# Назначаем права для всех возможных пользователей web-сервера
+# РАСКОММЕНТИРУЙТЕ ТУ СТРОКУ, КОТОРАЯ СООТВЕТСТВУЕТ ВАШЕМУ СЕРВЕРУ:
+nginx ALL=(ALL) NOPASSWD: IPTABLES_IPV4, IPTABLES_IPV6, IPTABLES_INFO, IPTABLES_MISC, IPTABLES_SAVE, NGINX_RELOAD, IPTABLES_IPV4_ACCEPT, IPTABLES_IPV6_ACCEPT, IPTABLES_FULL_INFO
+#www-data ALL=(ALL) NOPASSWD: IPTABLES_IPV4, IPTABLES_IPV6, IPTABLES_INFO, IPTABLES_MISC, IPTABLES_SAVE, NGINX_RELOAD, IPTABLES_IPV4_ACCEPT, IPTABLES_IPV6_ACCEPT, IPTABLES_FULL_INFO
+#apache ALL=(ALL) NOPASSWD: IPTABLES_IPV4, IPTABLES_IPV6, IPTABLES_INFO, IPTABLES_MISC, IPTABLES_SAVE, NGINX_RELOAD, IPTABLES_IPV4_ACCEPT, IPTABLES_IPV6_ACCEPT, IPTABLES_FULL_INFO
+#nobody ALL=(ALL) NOPASSWD: IPTABLES_IPV4, IPTABLES_IPV6, IPTABLES_INFO, IPTABLES_MISC, IPTABLES_SAVE, NGINX_RELOAD, IPTABLES_IPV4_ACCEPT, IPTABLES_IPV6_ACCEPT, IPTABLES_FULL_INFO
         </pre>
 
         <h4>3. Установите права (КРИТИЧЕСКИ ВАЖНО)</h4>
@@ -229,7 +350,14 @@ sudo chown root:root /etc/sudoers.d/iptables
 sudo chmod 0440 /etc/sudoers.d/iptables
         </pre>
         
-        <h4>4. Включите API в конфигах</h4>
+        <h4>4. Проверка синтаксиса (Безопасность)</h4>
+        <p>Перед тем как идти дальше, проверьте, что вы не допустили опечаток в файле. Ошибка в sudoers может сломать команду sudo!</p>
+        <pre>sudo visudo -c</pre>
+        <div class="alert alert-success">
+            Должно написать: <strong>/etc/sudoers.d/iptables: parsed OK</strong>
+        </div>
+
+        <h4>5. Включите API в конфигах</h4>
         <p>В файлах <code>inline_check_lite.php</code> и <code>redis-bot_admin.php</code> установите <code>'api_enabled' => true</code> и укажите <code>api_key</code> (из settings.php).</p>
     </div>
 
