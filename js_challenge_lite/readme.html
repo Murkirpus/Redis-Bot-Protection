@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MurKir Security v3.8 - Полная Документация</title>
+    <style>
+        :root {
+            --bg-body: #121212;
+            --bg-card: #1e1e1e;
+            --bg-nav: #252525;
+            --text-main: #e0e0e0;
+            --text-muted: #a0a0a0;
+            --accent: #3d91ff;
+            --success: #00cc66;
+            --danger: #ff4d4d;
+            --warning: #ffaa00;
+            --purple: #9b59b6;
+            --code-bg: #2a2a2a;
+            --border: #333;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-body);
+            color: var(--text-main);
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+        }
+        .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
+        
+        /* Header & Nav */
+        header { text-align: center; padding: 40px 0; border-bottom: 1px solid var(--border); margin-bottom: 40px; }
+        h1 { margin: 0; color: var(--accent); font-size: 2.5rem; }
+        .subtitle { color: var(--text-muted); font-size: 1.1rem; margin-top: 10px; }
+        
+        .nav-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 30px; }
+        .nav-btn { background: var(--bg-card); padding: 12px; text-align: center; text-decoration: none; color: var(--text-main); border: 1px solid var(--border); border-radius: 8px; transition: 0.2s; font-weight: 500; font-size: 0.9rem; }
+        .nav-btn:hover { border-color: var(--accent); background: var(--bg-nav); color: var(--accent); }
+
+        /* Cards */
+        .card { background: var(--bg-card); border-radius: 12px; padding: 30px; margin-bottom: 30px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); border: 1px solid var(--border); }
+        h2 { color: #fff; border-bottom: 2px solid var(--accent); padding-bottom: 10px; margin-top: 0; }
+        h3 { color: var(--text-main); margin-top: 25px; font-weight: 600; }
+
+        /* Tables */
+        .compare-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        .compare-table th, .compare-table td { padding: 12px; border: 1px solid #333; text-align: left; }
+        .compare-table th { background: #252525; color: var(--accent); }
+        .compare-table td { vertical-align: top; }
+        .check-ok { color: var(--success); font-weight: bold; }
+        .check-bad { color: var(--danger); font-weight: bold; }
+
+        /* Code & Alerts */
+        code { font-family: 'Fira Code', 'Consolas', monospace; background: var(--code-bg); padding: 2px 6px; border-radius: 4px; color: #ff9d00; font-size: 0.9em; }
+        pre { background: #000; padding: 15px; border-radius: 8px; overflow-x: auto; border: 1px solid var(--border); color: #a5d6ff; font-size: 0.85rem; white-space: pre-wrap; word-break: break-all; }
+        
+        .badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 0.75em; font-weight: bold; text-transform: uppercase; margin-left: 10px; }
+        .b-blue { background: rgba(61, 145, 255, 0.2); color: var(--accent); }
+        .b-green { background: rgba(0, 204, 102, 0.2); color: var(--success); }
+        .b-red { background: rgba(255, 77, 77, 0.2); color: var(--danger); }
+        .b-orange { background: rgba(255, 170, 0, 0.2); color: var(--warning); }
+        .b-purple { background: rgba(155, 89, 182, 0.2); color: var(--purple); }
+
+        .alert { padding: 15px; border-left: 4px solid var(--warning); background: rgba(255, 170, 0, 0.1); margin: 20px 0; border-radius: 0 4px 4px 0; }
+        
+        footer { text-align: center; margin-top: 50px; color: var(--text-muted); font-size: 0.9rem; border-top: 1px solid var(--border); padding-top: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>🛡️ MurKir Security</h1>
+        <div class="subtitle">Система защиты сайта от агрессивных ботов и DDoS-атак (v3.8 Lite)</div>
+    </header>
+
+    <div class="nav-grid">
+        <a href="#about" class="nav-btn">О системе</a>
+        <a href="#redis" class="nav-btn" style="border-color: var(--warning); color:var(--warning)">Redis Настройка</a>
+        <a href="#install" class="nav-btn">Установка</a>
+        <a href="#cron" class="nav-btn" style="color:var(--purple)">CRON Очистка</a>
+        <a href="#usage" class="nav-btn">Админка</a>
+        <a href="#api" class="nav-btn" style="color:var(--danger)">Advanced API</a>
+    </div>
+
+    <div id="about" class="card">
+        <h2>⚡ Как это работает?</h2>
+        <p><strong>inline_check_lite.php</strong> — это модульная система защиты. Основа работы — база данных Redis. Без Redis скрипт работать не будет!</p>
+
+        <h3>Режимы защиты:</h3>
+        <table class="compare-table">
+            <thead>
+                <tr>
+                    <th>Режим</th>
+                    <th>Компоненты</th>
+                    <th>Принцип действия</th>
+                    <th>Нагрузка</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Легкий</strong><br>(Обычный хостинг)</td>
+                    <td>PHP + Redis</td>
+                    <td>Выдает ошибку <code>503 Service Temporarily Unavailable</code>.</td>
+                    <td class="check-bad">Средняя</td>
+                </tr>
+                <tr>
+                    <td><strong>PRO</strong><br>(VPS + Root)</td>
+                    <td>PHP + Redis + API</td>
+                    <td>Полная блокировка сети (Iptables DROP).</td>
+                    <td class="check-ok">Нулевая</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div id="redis" class="card" style="border-color: var(--warning);">
+        <h2 style="color:var(--warning); border-color: var(--warning);">🔋 Обязательно: Настройка Redis</h2>
+        <p>Redis используется для хранения счетчиков запросов и списков банов. Он должен быть установлен и правильно настроен, иначе защита зависнет при атаке.</p>
+
+        <h3>1. Установка</h3>
+        <div style="background:#222; padding:15px; border-radius:6px;">
+            <strong>Ubuntu / Debian:</strong><br>
+            <code>sudo apt update && sudo apt install redis-server</code><br><br>
+            <strong>CentOS / AlmaLinux:</strong><br>
+            <code>sudo yum install redis</code>
+        </div>
+
+        <h3>2. Конфигурация (Важно!)</h3>
+        <p>Откройте файл настроек: <code>sudo nano /etc/redis/redis.conf</code></p>
+        <p>Найдите и измените (или добавьте) следующие строки:</p>
+        <pre>
+# Ограничение памяти (иначе Redis съест всё RAM и сервер упадет)
+maxmemory 10mb
+
+# Политика удаления: удалять всё самое старое, когда память забита
+maxmemory-policy allkeys-lru
+
+# Точность проверки (оптимально 10)
+maxmemory-samples 10
+        </pre>
+        <p>После изменений перезагрузите Redis: <code>sudo systemctl restart redis</code></p>
+
+        <h3>3. Сколько памяти выделять? (maxmemory)</h3>
+        <p>Значение <code>10mb</code> подходит для небольших и средних сайтов. При сильной атаке Redis будет заполняться ключами забаненных IP.</p>
+        
+        <table class="compare-table">
+            <thead>
+                <tr>
+                    <th>Посещаемость / Сила атаки</th>
+                    <th>Рекомендуемая память</th>
+                    <th>Примерная емкость (IP адресов)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Обычный сайт / Легкая атака</td>
+                    <td><code>10mb</code></td>
+                    <td>~40,000 записей</td>
+                </tr>
+                <tr>
+                    <td>Крупный портал / Средняя атака</td>
+                    <td><code>50mb</code></td>
+                    <td>~200,000 записей</td>
+                </tr>
+                <tr>
+                    <td>High Load / Мощный DDoS</td>
+                    <td><code>256mb</code> - <code>512mb</code></td>
+                    <td>~1,000,000+ записей</td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="alert">
+            <strong>Почему allkeys-lru?</strong> Это критически важно! Если память заполнится, Redis начнет автоматически удалять старые записи (например, IP, которые были забанены давно), освобождая место для новых атакующих. Без этой настройки Redis выдаст ошибку и защита упадет.
+        </div>
+    </div>
+
+    <div id="files" class="card">
+        <h2>📂 Файлы системы</h2>
+        <ul>
+            <li><code>inline_check_lite.php</code> — Ядро защиты (PHP).</li>
+            <li><code>redis-bot_admin.php</code> — Админ-панель.</li>
+            <li><code>settings.php</code> — Настройки.</li>
+            <li><code>iptables.php</code> — (Только PRO) API для связи с Linux.</li>
+            <li><code>cleanup.php</code> — (Только PRO) Скрипт для Cron, удаляет старые баны из iptables.</li>
+        </ul>
+    </div>
+
+    <div id="install" class="card">
+        <h2>🛠️ Подключение к сайту</h2>
+        <p>Добавьте эту строку в <strong>самый верх</strong> файла <code>index.php</code>:</p>
+        <pre>require_once $_SERVER['DOCUMENT_ROOT'] . '/js_challenge_lite/inline_check_lite.php';</pre>
+    </div>
+
+    <div id="cron" class="card" style="border-color: var(--purple);">
+        <h2 style="color:var(--purple); border-color: var(--purple);">🔄 Авто-очистка (Только для PRO)</h2>
+        <p>Если используется API, добавьте в Cron (<code>crontab -e</code>):</p>
+        <pre>*/3 * * * * php /полный/путь/к/cleanup.php > /dev/null 2>&1</pre>
+    </div>
+
+    <div id="api" class="card" style="border-color: var(--danger);">
+        <h2 style="border-color: var(--danger);">🔥 Настройка PRO (Sudoers)</h2>
+        <p>Для работы API создайте файл <code>/etc/sudoers.d/iptables</code> со следующим содержимым:</p>
+        <pre>
+Cmnd_Alias IPTABLES_IPV4 = /sbin/iptables, /usr/sbin/iptables, /bin/iptables
+Cmnd_Alias IPTABLES_IPV6 = /sbin/ip6tables, /usr/sbin/ip6tables, /bin/ip6tables
+Cmnd_Alias IPTABLES_MISC = /sbin/iptables-save, /usr/sbin/iptables-save, /sbin/ip6tables-save, /usr/sbin/ip6tables-save, /sbin/iptables -L*, /sbin/ip6tables -L*
+www-data ALL=(ALL) NOPASSWD: IPTABLES_IPV4, IPTABLES_IPV6, IPTABLES_MISC
+        </pre>
+        <p><strong>Обязательно установите права:</strong></p>
+        <pre>
+sudo chown root:root /etc/sudoers.d/iptables
+sudo chmod 0440 /etc/sudoers.d/iptables
+        </pre>
+    </div>
+
+    <footer>
+        MurKir Security Documentation | 2026 © <br>
+        Optimized for High Load & DDoS Protection
+    </footer>
+</div>
+
+</body>
+</html>
