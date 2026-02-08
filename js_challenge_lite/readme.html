@@ -27,21 +27,22 @@
             margin: 0;
             padding: 0;
         }
-        .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
+        .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
         
         /* Header & Nav */
         header { text-align: center; padding: 40px 0; border-bottom: 1px solid var(--border); margin-bottom: 40px; }
         h1 { margin: 0; color: var(--accent); font-size: 2.5rem; }
         .subtitle { color: var(--text-muted); font-size: 1.1rem; margin-top: 10px; }
         
-        .nav-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 30px; }
+        .nav-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 30px; }
         .nav-btn { background: var(--bg-card); padding: 12px; text-align: center; text-decoration: none; color: var(--text-main); border: 1px solid var(--border); border-radius: 8px; transition: 0.2s; font-weight: 500; font-size: 0.9rem; }
         .nav-btn:hover { border-color: var(--accent); background: var(--bg-nav); color: var(--accent); }
 
         /* Cards */
         .card { background: var(--bg-card); border-radius: 12px; padding: 30px; margin-bottom: 30px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); border: 1px solid var(--border); }
         h2 { color: #fff; border-bottom: 2px solid var(--accent); padding-bottom: 10px; margin-top: 0; }
-        h3 { color: var(--text-main); margin-top: 25px; font-weight: 600; }
+        h3 { color: var(--text-main); margin-top: 25px; font-weight: 600; font-size: 1.2rem; }
+        h4 { color: var(--accent); margin-top: 15px; margin-bottom: 5px; }
 
         /* Tables */
         .compare-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
@@ -63,6 +64,7 @@
         .b-purple { background: rgba(155, 89, 182, 0.2); color: var(--purple); }
 
         .alert { padding: 15px; border-left: 4px solid var(--warning); background: rgba(255, 170, 0, 0.1); margin: 20px 0; border-radius: 0 4px 4px 0; }
+        .alert-danger { border-left-color: var(--danger); background: rgba(255, 77, 77, 0.1); }
         
         footer { text-align: center; margin-top: 50px; color: var(--text-muted); font-size: 0.9rem; border-top: 1px solid var(--border); padding-top: 20px; }
     </style>
@@ -77,16 +79,16 @@
 
     <div class="nav-grid">
         <a href="#about" class="nav-btn">О системе</a>
-        <a href="#redis" class="nav-btn" style="border-color: var(--warning); color:var(--warning)">Redis Настройка</a>
-        <a href="#install" class="nav-btn">Установка</a>
-        <a href="#cron" class="nav-btn" style="color:var(--purple)">CRON Очистка</a>
-        <a href="#usage" class="nav-btn">Админка</a>
-        <a href="#api" class="nav-btn" style="color:var(--danger)">Advanced API</a>
+        <a href="#redis" class="nav-btn" style="border-color: var(--warning); color:var(--warning)">1. Redis (Важно)</a>
+        <a href="#files" class="nav-btn">2. Файлы</a>
+        <a href="#install" class="nav-btn">3. Установка</a>
+        <a href="#api" class="nav-btn" style="color:var(--danger)">4. PRO: API Sudoers</a>
+        <a href="#cron" class="nav-btn" style="color:var(--purple)">5. PRO: CRON</a>
     </div>
 
     <div id="about" class="card">
-        <h2>⚡ Как это работает?</h2>
-        <p><strong>inline_check_lite.php</strong> — это модульная система защиты. Основа работы — база данных Redis. Без Redis скрипт работать не будет!</p>
+        <h2>🚀 Что это и как работает?</h2>
+        <p>Это система фильтрации трафика на PHP + Redis. Скрипт анализирует каждого посетителя <strong>до</strong> того, как загрузится CMS, что критически снижает нагрузку на сервер. У него есть два режима работы.</p>
 
         <h3>Режимы защиты:</h3>
         <table class="compare-table">
@@ -96,123 +98,148 @@
                     <th>Компоненты</th>
                     <th>Принцип действия</th>
                     <th>Нагрузка</th>
+                    <th>Требования</th>
                 </tr>
             </thead>
             <tbody>
                 <tr>
-                    <td><strong>Легкий</strong><br>(Обычный хостинг)</td>
+                    <td><strong>Легкий</strong></td>
                     <td>PHP + Redis</td>
-                    <td>Выдает ошибку <code>503 Service Temporarily Unavailable</code>.</td>
+                    <td>Выдает ошибку <code>503</code> (Soft Ban).</td>
                     <td class="check-bad">Средняя</td>
+                    <td>Обычный хостинг</td>
                 </tr>
                 <tr>
-                    <td><strong>PRO</strong><br>(VPS + Root)</td>
+                    <td><strong>PRO</strong></td>
                     <td>PHP + Redis + API</td>
-                    <td>Полная блокировка сети (Iptables DROP).</td>
+                    <td>Полная блокировка сети <code>iptables DROP</code> (Hard Ban).</td>
                     <td class="check-ok">Нулевая</td>
+                    <td>VPS / Root</td>
                 </tr>
             </tbody>
         </table>
+        
+        <p><strong>Преимущества PRO режима:</strong> При атаке в 10,000 запросов/сек, обычный режим заставит PHP отвечать 10,000 раз ошибкой 403. PRO режим заблокирует IP на уровне ядра Linux, и PHP даже не запустится.</p>
     </div>
 
     <div id="redis" class="card" style="border-color: var(--warning);">
-        <h2 style="color:var(--warning); border-color: var(--warning);">🔋 Обязательно: Настройка Redis</h2>
-        <p>Redis используется для хранения счетчиков запросов и списков банов. Он должен быть установлен и правильно настроен, иначе защита зависнет при атаке.</p>
+        <h2 style="color:var(--warning); border-color: var(--warning);">🔋 Шаг 1: Настройка Redis (Обязательно)</h2>
+        <p>Без Redis защита работать не будет. Redis хранит списки банов и счетчики.</p>
 
         <h3>1. Установка</h3>
-        <div style="background:#222; padding:15px; border-radius:6px;">
-            <strong>Ubuntu / Debian:</strong><br>
-            <code>sudo apt update && sudo apt install redis-server</code><br><br>
-            <strong>CentOS / AlmaLinux:</strong><br>
-            <code>sudo yum install redis</code>
-        </div>
-
-        <h3>2. Конфигурация (Важно!)</h3>
-        <p>Откройте файл настроек: <code>sudo nano /etc/redis/redis.conf</code></p>
-        <p>Найдите и измените (или добавьте) следующие строки:</p>
         <pre>
-# Ограничение памяти (иначе Redis съест всё RAM и сервер упадет)
+# Ubuntu / Debian:
+sudo apt update && sudo apt install redis-server
+
+# CentOS / AlmaLinux:
+sudo yum install redis
+        </pre>
+
+        <h3>2. Конфигурация (Критически важно!)</h3>
+        <p>Откройте файл настроек: <code>sudo nano /etc/redis/redis.conf</code></p>
+        <p>Найдите и измените (или добавьте) следующие строки, чтобы сервер не упал от переполнения памяти:</p>
+        <pre>
+# Ограничение памяти (10mb для малых сайтов, 50-100mb для крупных)
 maxmemory 10mb
 
-# Политика удаления: удалять всё самое старое, когда память забита
+# Политика удаления: удалять старые ключи, когда память полна
 maxmemory-policy allkeys-lru
 
-# Точность проверки (оптимально 10)
+# Точность проверки
 maxmemory-samples 10
         </pre>
         <p>После изменений перезагрузите Redis: <code>sudo systemctl restart redis</code></p>
 
-        <h3>3. Сколько памяти выделять? (maxmemory)</h3>
-        <p>Значение <code>10mb</code> подходит для небольших и средних сайтов. При сильной атаке Redis будет заполняться ключами забаненных IP.</p>
-        
+        <h3>3. Расчет памяти</h3>
         <table class="compare-table">
-            <thead>
-                <tr>
-                    <th>Посещаемость / Сила атаки</th>
-                    <th>Рекомендуемая память</th>
-                    <th>Примерная емкость (IP адресов)</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>Обычный сайт / Легкая атака</td>
-                    <td><code>10mb</code></td>
-                    <td>~40,000 записей</td>
-                </tr>
-                <tr>
-                    <td>Крупный портал / Средняя атака</td>
-                    <td><code>50mb</code></td>
-                    <td>~200,000 записей</td>
-                </tr>
-                <tr>
-                    <td>High Load / Мощный DDoS</td>
-                    <td><code>256mb</code> - <code>512mb</code></td>
-                    <td>~1,000,000+ записей</td>
-                </tr>
-            </tbody>
+            <tr>
+                <td>Обычный сайт</td>
+                <td><code>10mb</code> (~40k записей)</td>
+            </tr>
+            <tr>
+                <td>Крупный портал</td>
+                <td><code>50mb</code> (~200k записей)</td>
+            </tr>
+            <tr>
+                <td>High Load / DDoS</td>
+                <td><code>256mb+</code></td>
+            </tr>
         </table>
-        <div class="alert">
-            <strong>Почему allkeys-lru?</strong> Это критически важно! Если память заполнится, Redis начнет автоматически удалять старые записи (например, IP, которые были забанены давно), освобождая место для новых атакующих. Без этой настройки Redis выдаст ошибку и защита упадет.
-        </div>
     </div>
 
     <div id="files" class="card">
-        <h2>📂 Файлы системы</h2>
-        <ul>
-            <li><code>inline_check_lite.php</code> — Ядро защиты (PHP).</li>
-            <li><code>redis-bot_admin.php</code> — Админ-панель.</li>
-            <li><code>settings.php</code> — Настройки.</li>
-            <li><code>iptables.php</code> — (Только PRO) API для связи с Linux.</li>
-            <li><code>cleanup.php</code> — (Только PRO) Скрипт для Cron, удаляет старые баны из iptables.</li>
-        </ul>
+        <h2>📂 Шаг 2: Файлы системы</h2>
+        <p>Загрузите все файлы в папку <code>/js_challenge_lite/</code>.</p>
+
+        <h3>1. inline_check_lite.php <span class="badge b-blue">Ядро</span></h3>
+        <p>Основной скрипт. Работает автономно. Если API выключен, блокирует через PHP. Если включен — шлет команды в API.</p>
+
+        <h3>2. redis-bot_admin.php <span class="badge b-green">Админка</span></h3>
+        <p>Панель управления. Логин/Пароль по умолчанию: <code>info@murkir.pp.ua</code>.</p>
+        
+        <h3>3. iptables.php <span class="badge b-red">API Бан (PRO)</span></h3>
+        <p>Скрипт-мост между PHP и Linux Iptables. Принимает команды "Забанить/Разбанить". Поддерживает IPv4 и IPv6.</p>
+        
+        <h3>4. cleanup.php <span class="badge b-purple">Очистка (PRO)</span></h3>
+        <p>Запускается по CRON. Проверяет Redis на истекшие баны и дает команду в Iptables разблокировать IP.</p>
+
+        <h3>5. settings.php <span class="badge b-orange">Конфиг</span></h3>
+        <p>Настройки API (ключи, лимиты балансировки нагрузки).</p>
     </div>
 
     <div id="install" class="card">
-        <h2>🛠️ Подключение к сайту</h2>
-        <p>Добавьте эту строку в <strong>самый верх</strong> файла <code>index.php</code>:</p>
+        <h2>🛠️ Шаг 3: Подключение к сайту</h2>
+        
+        <h4>Способ А: Через index.php (Простой)</h4>
+        <p>Вставьте эту строку в <strong>самый верх</strong> файла <code>index.php</code>:</p>
         <pre>require_once $_SERVER['DOCUMENT_ROOT'] . '/js_challenge_lite/inline_check_lite.php';</pre>
-    </div>
 
-    <div id="cron" class="card" style="border-color: var(--purple);">
-        <h2 style="color:var(--purple); border-color: var(--purple);">🔄 Авто-очистка (Только для PRO)</h2>
-        <p>Если используется API, добавьте в Cron (<code>crontab -e</code>):</p>
-        <pre>*/3 * * * * php /полный/путь/к/cleanup.php > /dev/null 2>&1</pre>
+        <h4>Способ Б: Через PHP-FPM (Для профи)</h4>
+        <p>В конфиг пула (<code>/etc/php/8.3/fpm/pool.d/www.conf</code>):</p>
+        <pre>php_admin_value[auto_prepend_file] = "/home/kinoprostor/dj-x.info/js_challenge_lite/inline_check_lite.php"</pre>
     </div>
 
     <div id="api" class="card" style="border-color: var(--danger);">
-        <h2 style="border-color: var(--danger);">🔥 Настройка PRO (Sudoers)</h2>
-        <p>Для работы API создайте файл <code>/etc/sudoers.d/iptables</code> со следующим содержимым:</p>
+        <h2 style="border-color: var(--danger);">🔥 Шаг 4: Настройка PRO режима (Sudoers)</h2>
+        <p>Чтобы PHP мог управлять фаерволом, нужно настроить права. Мы используем безопасный метод через <code>/etc/sudoers.d/</code>.</p>
+        
+        <div class="alert alert-danger">
+            <strong>Внимание!</strong> Это нужно только для PRO режима (Hard Ban). Для обычного режима пропустите этот шаг и оставьте <code>'api_enabled' => false</code>.
+        </div>
+
+        <h4>1. Создайте файл правил</h4>
+        <pre>sudo nano /etc/sudoers.d/iptables</pre>
+
+        <h4>2. Вставьте настройки (Специальные Алиасы)</h4>
+        <p>Этот код содержит точные правила безопасности для вашей системы:</p>
         <pre>
-Cmnd_Alias IPTABLES_IPV4 = /sbin/iptables, /usr/sbin/iptables, /bin/iptables
-Cmnd_Alias IPTABLES_IPV6 = /sbin/ip6tables, /usr/sbin/ip6tables, /bin/ip6tables
+# Группировка команд (Aliases)
+Cmnd_Alias IPTABLES_IPV4 = /sbin/iptables -C INPUT *, /sbin/iptables -I INPUT *, /sbin/iptables -D INPUT *
+Cmnd_Alias IPTABLES_IPV6 = /sbin/ip6tables -C INPUT *, /sbin/ip6tables -I INPUT *, /sbin/ip6tables -D INPUT *
 Cmnd_Alias IPTABLES_MISC = /sbin/iptables-save, /usr/sbin/iptables-save, /sbin/ip6tables-save, /usr/sbin/ip6tables-save, /sbin/iptables -L*, /sbin/ip6tables -L*
+
+# Права для веб-сервера (www-data)
 www-data ALL=(ALL) NOPASSWD: IPTABLES_IPV4, IPTABLES_IPV6, IPTABLES_MISC
         </pre>
-        <p><strong>Обязательно установите права:</strong></p>
+
+        <h4>3. Установите права (КРИТИЧЕСКИ ВАЖНО)</h4>
+        <p>Без этого sudo не заработает:</p>
         <pre>
 sudo chown root:root /etc/sudoers.d/iptables
 sudo chmod 0440 /etc/sudoers.d/iptables
         </pre>
+        
+        <h4>4. Включите API в конфигах</h4>
+        <p>В файлах <code>inline_check_lite.php</code> и <code>redis-bot_admin.php</code> установите <code>'api_enabled' => true</code> и укажите <code>api_key</code> (из settings.php).</p>
+    </div>
+
+    <div id="cron" class="card" style="border-color: var(--purple);">
+        <h2 style="color:var(--purple); border-color: var(--purple);">🔄 Шаг 5: Авто-очистка (CRON)</h2>
+        <p>В PRO режиме (с API) это <strong>обязательно</strong>. Иначе баны в iptables останутся навечно.</p>
+        
+        <p>1. Откройте крон: <code>crontab -e</code></p>
+        <p>2. Добавьте строку (Ваш путь):</p>
+        <pre>*/3 * * * * php /home/kinoprostor/dj-x.info/js_challenge_lite/cleanup.php > /dev/null 2>&1</pre>
     </div>
 
     <footer>
