@@ -87,31 +87,31 @@ $SEARCH_ENGINE_IP_RANGES = array(
 // JS CHALLENGE КОНФІГУРАЦІЯ
 $_JSC_CONFIG = array(
     'enabled' => true,
-    'secret_key' => 'CHANGE_THIS_SECRET_KEY_123!',
+    'secret_key' => 'CHANGE_THIS_SECRET_KEY_1234!',
     'cookie_name' => 'mk_verified',
     'token_lifetime' => 129600,
     'pow_enabled' => true,
     'pow_difficulty' => 3,
     'pow_timeout' => 60,
-    'pow_style' => 'cloudflare',
+    'pow_style' => 'smf',
     'mode' => 'auto',
 );
 
 $_JSC_AUTO_CONFIG = array(
-    'no_cookie_threshold' => 9999, 'no_cookie_window' => 30,
-    'burst_threshold' => 2, 'burst_window' => 2,
+    'no_cookie_threshold' => 35, 'no_cookie_window' => 300,
+    'burst_threshold' => 5, 'burst_window' => 3,
     'rate_threshold' => 30, 'rate_window' => 60,
     'check_empty_ua' => true, 'check_suspicious_ua' => true,
-    'check_no_referer' => false, 'check_no_accept_language' => true,
+    'check_no_referer' => true, 'check_no_accept_language' => true,
     'suspicion_threshold' => 3,
-    'grace_requests' => 2, 'grace_requests_no_cookie' => 2,
+    'grace_requests' => 5, 'grace_requests_no_cookie' => 4,
     'log_triggers' => true,
 );
 
 $_HAMMER_PROTECTION = array(
     'enabled' => true,
-    'challenge_threshold' => 3, 'challenge_window' => 60,
-    'blocked_threshold' => 5, 'blocked_window' => 30,
+    'challenge_threshold' => 10, 'challenge_window' => 60,
+    'blocked_threshold' => 10, 'blocked_window' => 30,
     'api_block_enabled' => true,
     'log_enabled' => true, 'redis_stats' => true,
 );
@@ -682,7 +682,7 @@ function _jsc_check_anomaly($ip, $userAgent) {
             $ncr[] = $now;
             $redis->setex($noCookieKey, $w * 2, $ncr);
             if (count($ncr) >= $_JSC_AUTO_CONFIG['no_cookie_threshold']) {
-                $suspicionScore += 2;
+                $suspicionScore += 3;
                 $triggers[] = "no_cookie:" . count($ncr) . "/{$w}s";
             }
         } catch (Exception $e) {}
@@ -1095,8 +1095,8 @@ class SimpleBotProtection {
     );
     
     private $apiSettings = array();
-    private $noCookieThreshold = 9999;
-    private $noCookieTimeWindow = 60;
+    private $noCookieThreshold = 38;
+    private $noCookieTimeWindow = 300;
     private $noCookieRateLimits = array('minute' => 30, '5min' => 150, 'hour' => 500, 'day' => 2000, 'burst' => 5);
     
     private $rdnsSettings = array(
