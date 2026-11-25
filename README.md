@@ -1,3 +1,6 @@
+Новинка - просто смотрит логи в реальном времени и блокирует по ipset API.
+https://github.com/Murkirpus/murkir-shield
+
 05.02.2026  js_challenge_lite + API + Ubuntu - очень удачно получилось! Нормальных людей и медленных ботов вообще не трогает, а всех быстрых в бан на час!
 Демонстрация работы js_challenge_lite https://kinoprostor.xyz/
 
